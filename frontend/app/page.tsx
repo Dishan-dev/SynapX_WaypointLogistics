@@ -1,433 +1,628 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import {
   Truck,
-  Boxes,
   ShieldCheck,
-  Activity,
   ArrowRight,
-  CheckCircle2,
   ExternalLink,
   Lock,
-  Globe2,
-  Sparkles,
+  Building2,
+  Navigation,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Database,
   Server,
-  Zap,
+  Radio,
+  ScanBarcode,
+  Terminal,
 } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from "@/components/ui/card";
+
+interface HealthCheckData {
+  keycloak: {
+    status: "online" | "offline";
+    latency: number;
+    url: string;
+    realm: string;
+    error?: string;
+  };
+  backend: {
+    status: "online" | "offline";
+    latency: number;
+    url: string;
+    version?: string;
+    error?: string;
+  };
+  database: {
+    status: "online" | "offline" | "unknown";
+    provider: string;
+    details?: string;
+  };
+  bridge: {
+    status: "connected" | "disconnected";
+  };
+  timestamp: string;
+}
+
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"fleet" | "inventory" | "tracking">("fleet");
+  const [healthData, setHealthData] = useState<HealthCheckData | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [lastChecked, setLastChecked] = useState<string>("");
 
   const keycloakUrl = process.env.NEXT_PUBLIC_KEYCLOAK_URL || "https://auth.tenderease.me";
   const keycloakRealm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "waypointlogistics";
   const keycloakClientId = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || "waypoint-frontend";
 
-  // Construct direct Keycloak login URL for instant SSO testing
   const keycloakLoginUrl = `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth?client_id=${keycloakClientId}&response_type=code&scope=openid%20profile%20email&redirect_uri=${encodeURIComponent(
     typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
   )}`;
 
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 selection:bg-indigo-500 selection:text-white flex flex-col">
-      {/* Background glowing effects */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl" />
-        <div className="absolute top-1/3 -right-40 w-[30rem] h-[30rem] bg-cyan-600/15 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 left-1/3 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl" />
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b0f_1px,transparent_1px),linear-gradient(to_bottom,#1e293b0f_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)]" />
-      </div>
+  const fetchHealth = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch("/api/health-check", {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data: HealthCheckData = await res.json();
+        setHealthData(data);
+      } else {
+        // Fallback default structure
+        setHealthData({
+          keycloak: { status: "offline", latency: 0, url: keycloakUrl, realm: keycloakRealm, error: "Health check route error" },
+          backend: { status: "offline", latency: 0, url: "http://localhost:5000/api/v1", error: "Offline" },
+          database: { status: "offline", provider: "Neon Serverless PostgreSQL", details: "Unavailable" },
+          bridge: { status: "disconnected" },
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : "Health check request failed";
+      setHealthData({
+        keycloak: { status: "offline", latency: 0, url: keycloakUrl, realm: keycloakRealm, error: errMsg },
+        backend: { status: "offline", latency: 0, url: "http://localhost:5000/api/v1", error: errMsg },
+        database: { status: "offline", provider: "Neon Serverless PostgreSQL" },
+        bridge: { status: "disconnected" },
+        timestamp: new Date().toISOString(),
+      });
+    } finally {
+      setIsLoading(false);
+      setLastChecked(new Date().toLocaleTimeString());
+    }
+  }, [keycloakRealm, keycloakUrl]);
 
-      {/* Header */}
-      <header className="relative z-10 border-b border-slate-800/80 bg-slate-950/75 backdrop-blur-md sticky top-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchHealth();
+    }, 10);
+    return () => clearTimeout(timer);
+  }, [fetchHealth]);
+
+  const isKeycloakUp = healthData?.keycloak.status === "online";
+  const isBackendUp = healthData?.backend.status === "online";
+  const isDatabaseUp = healthData?.database.status === "online";
+  const isBridgeUp = healthData?.bridge.status === "connected";
+
+  const totalServices = 4;
+  const onlineCount = (isKeycloakUp ? 1 : 0) + (isBackendUp ? 1 : 0) + (isDatabaseUp ? 1 : 0) + (isBridgeUp ? 1 : 0);
+
+  const roles = [
+    {
+      id: "dispatcher",
+      title: "Dispatcher",
+      subtitle: "Central Fleet & Trip Operations",
+      badgeText: "Desktop Console",
+      badgeStyle: "bg-blue-100 text-blue-800 border-blue-300 font-semibold",
+      description:
+        "Coordinate multi-stop vehicle dispatches, assign manifests to drivers, evaluate route sequences, and track real-time delivery performance.",
+      href: "/dispatcher",
+      icon: <Truck className="size-5 text-[#092C4C]" />,
+      features: [
+        "Live Manifest Schedule & Trip Timeline",
+        "Vehicle & Driver Staging Allocations",
+        "Dynamic Multi-Stop Delivery Sequencing",
+      ],
+    },
+    {
+      id: "loader",
+      title: "Loader",
+      subtitle: "Loading Bay & Barcode Staging",
+      badgeText: "Dock Scanner",
+      badgeStyle: "bg-teal-100 text-teal-900 border-teal-300 font-semibold",
+      description:
+        "Manage loading bay pallet queues, verify carton barcodes in reverse drop order, verify cold-chain temperatures, and report inventory shortfalls.",
+      href: "/loader",
+      icon: <ScanBarcode className="size-5 text-[#0f766e]" />,
+      features: [
+        "Bay Staging Queue & Barcode Verification",
+        "Strict Reverse Drop Sequence Loading",
+        "Instant Shortfall & Damage Discrepancy Reporting",
+      ],
+    },
+    {
+      id: "driver",
+      title: "Driver",
+      subtitle: "Turn-by-Turn Mobile Trips",
+      badgeText: "Mobile Safe",
+      badgeStyle: "bg-indigo-100 text-indigo-900 border-indigo-300 font-semibold",
+      description:
+        "Phone-optimized trip interface with next-stop address, arrival countdown, one-tap GPS navigation, and digital proof of delivery with offline caching.",
+      href: "/driver",
+      icon: <Navigation className="size-5 text-[#092C4C]" />,
+      features: [
+        "Next Drop Address & Arrival ETA Countdown",
+        "One-Tap Turn-by-Turn GPS Navigation",
+        "Digital Signature & Photo POD with Offline Sync",
+      ],
+    },
+    {
+      id: "store",
+      title: "Store Manager",
+      subtitle: "Inbound Deliveries & Orders",
+      badgeText: "Store Portal",
+      badgeStyle: "bg-emerald-100 text-emerald-900 border-emerald-300 font-semibold",
+      description:
+        "Inspect estimated delivery arrival windows, review incoming carton counts, place store replenishment orders, and confirm physical delivery receipt.",
+      href: "/store",
+      icon: <Building2 className="size-5 text-[#0f766e]" />,
+      features: [
+        "Real-Time Inbound Delivery Arrival Windows",
+        "One-Click Replenishment Order Requests",
+        "Carton Count Tally & Delivery Sign-Off",
+      ],
+    },
+    {
+      id: "admin",
+      title: "Admin",
+      subtitle: "Keycloak IAM & Security",
+      badgeText: "System Admin",
+      badgeStyle: "bg-purple-100 text-purple-900 border-purple-300 font-semibold",
+      description:
+        "Configure Keycloak OIDC federation, manage role-based access permissions (RBAC), inspect security audit logs, and monitor database migrations.",
+      href: "/admin",
+      icon: <ShieldCheck className="size-5 text-[#092C4C]" />,
+      features: [
+        "Keycloak OIDC Realm & Client Federation",
+        "Role-Based Access Control (RBAC) Assignment",
+        "System Health & Security Audit Logging",
+      ],
+    },
+  ];
+
+  return (
+    <div className="min-h-screen bg-[#F6F7F9] text-slate-900 font-sans flex flex-col antialiased">
+      {/* Top Application Header */}
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-md shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+          {/* Logo & Product Identity */}
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/25 flex items-center justify-center">
-              <div className="h-full w-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-                <Truck className="h-5 w-5 text-indigo-400" />
-              </div>
+            <div className="h-10 w-10 rounded-xl bg-[#092C4C] flex items-center justify-center text-white shadow-sm">
+              <Truck className="h-5 w-5 text-white" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+                <span className="font-bold text-base tracking-tight text-slate-900">
                   Waypoint Logistics
                 </span>
-                <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                  Enterprise
+                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300">
+                  SynapX
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 hidden sm:block">Supply Chain &amp; Warehouse Orchestration</p>
+              <p className="text-xs text-slate-600 hidden sm:block font-medium">
+                Operations Portal &amp; Role Launchpad
+              </p>
             </div>
           </div>
 
+          {/* Right Action: Keycloak SSO & Status */}
           <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-300">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-slate-400 font-medium">Realm:</span>
-              <span className="text-indigo-300 font-semibold">{keycloakRealm}</span>
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100 text-xs border border-slate-200">
+              <span className={`h-2.5 w-2.5 rounded-full ${isKeycloakUp ? "bg-emerald-600 animate-pulse" : "bg-red-500"}`} />
+              <span className="text-slate-600 font-medium">Realm:</span>
+              <span className="font-mono text-xs font-bold text-slate-900">{keycloakRealm}</span>
             </div>
 
-            <a
-              href={keycloakLoginUrl}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white text-sm font-semibold shadow-md shadow-indigo-600/30 transition-all active:scale-95"
-            >
-              <Lock className="h-4 w-4" />
-              <span>Keycloak SSO</span>
-            </a>
+            <Button asChild size="sm" className="bg-[#092C4C] text-white hover:bg-[#061e34] shadow-xs font-medium">
+              <a href={keycloakLoginUrl} className="flex items-center gap-1.5">
+                <Lock className="size-3.5" />
+                <span>Keycloak SSO</span>
+              </a>
+            </Button>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="relative z-10 flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col justify-between">
-        {/* Hero Section */}
-        <section className="text-center max-w-4xl mx-auto mb-16">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-950/60 border border-indigo-500/30 text-indigo-300 text-xs font-medium mb-6 backdrop-blur-sm shadow-inner">
-            <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-            <span>Next.js 16 • FastAPI 0.115 • Hosted Keycloak OIDC</span>
+      {/* Main Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        {/* Operations Gateway Intro */}
+        <div className="border-b border-slate-200 pb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-bold uppercase tracking-wider bg-teal-50 text-teal-800 border border-teal-200">
+                Enterprise Logistics Network
+              </span>
+              <span className="text-xs font-medium text-slate-500">&bull; Single Sign-On Active</span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
+              Waypoint Operations Portal
+            </h1>
+            <p className="text-sm text-slate-600 mt-1 max-w-2xl font-normal leading-relaxed">
+              Operational mission control for Dispatchers, Loaders, Drivers, Store Managers, and System Administrators.
+            </p>
           </div>
 
-          <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight text-white mb-6 leading-tight">
-            Intelligent Supply Chain &amp;{" "}
-            <span className="bg-gradient-to-r from-indigo-400 via-cyan-300 to-teal-300 bg-clip-text text-transparent">
-              Operations Control
-            </span>
-          </h1>
-
-          <p className="text-lg sm:text-xl text-slate-400 max-w-2xl mx-auto mb-8 font-normal leading-relaxed">
-            Coordinating multi-facility inventory, real-time shipment dispatch, delivery tracking, and enterprise identity security for Waypoint Group.
-          </p>
-
-          <div className="flex flex-wrap items-center justify-center gap-4">
-            <a
-              href={keycloakLoginUrl}
-              className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm shadow-lg shadow-indigo-600/30 transition-all hover:translate-y-[-1px]"
+          <div className="flex items-center gap-3 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchHealth}
+              disabled={isLoading}
+              className="gap-2 text-xs font-semibold border-slate-300 bg-white text-slate-800 hover:bg-slate-50 shadow-xs"
             >
-              <span>Authenticate with SSO</span>
-              <ArrowRight className="h-4 w-4" />
-            </a>
+              <RefreshCw className={`size-3.5 text-slate-600 ${isLoading ? "animate-spin" : ""}`} />
+              <span>{isLoading ? "Pinging Services..." : "Recheck Connectivity"}</span>
+            </Button>
+            {lastChecked && (
+              <span className="text-xs text-slate-600 font-mono hidden sm:inline bg-slate-100 px-2 py-1 rounded border border-slate-200">
+                Checked: {lastChecked}
+              </span>
+            )}
+          </div>
+        </div>
 
+        {/* Live Infrastructure & Active Connectivity Section */}
+        <section className="space-y-4">
+          {/* Diagnostic Status Alert Banner */}
+          {onlineCount === totalServices ? (
+            <div className="p-3.5 rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-900 flex items-center justify-between gap-3 text-xs sm:text-sm font-semibold shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="size-5 text-emerald-700 shrink-0" />
+                <span>All 4 Systems Operational &bull; Frontend, Backend, Database, and Keycloak Fully Connected</span>
+              </div>
+              <span className="px-2 py-0.5 rounded bg-emerald-200 text-emerald-900 text-xs font-mono font-bold">
+                4/4 ONLINE
+              </span>
+            </div>
+          ) : (
+            <div className="p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm shadow-xs">
+              <div className="flex items-start sm:items-center gap-2.5">
+                <AlertTriangle className="size-5 text-amber-700 shrink-0 mt-0.5 sm:mt-0" />
+                <div>
+                  <div className="font-bold text-amber-900">
+                    Service Disruption Notice: {totalServices - onlineCount} of {totalServices} Services Offline
+                  </div>
+                  <div className="text-xs text-amber-800 mt-0.5">
+                    FastAPI backend is offline on port 5000. Start it to restore database connectivity.
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="px-2.5 py-1 rounded-md bg-amber-200/80 text-amber-900 text-xs font-mono font-bold">
+                  {onlineCount}/{totalServices} ONLINE
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* 4 Diagnostic Service Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* 1. Keycloak Status */}
+            <Card className={`border shadow-xs transition-all ${isKeycloakUp ? "border-emerald-300 bg-white" : "border-red-300 bg-red-50/20"}`}>
+              <CardContent className="p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Lock className="size-3.5 text-[#092C4C]" /> Keycloak OIDC
+                  </span>
+                  {isLoading ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">
+                      Pinging...
+                    </span>
+                  ) : isKeycloakUp ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <CheckCircle2 className="size-3 text-emerald-700" /> ONLINE
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-red-100 text-red-800 border border-red-300">
+                      <XCircle className="size-3 text-red-700" /> OFFLINE
+                    </span>
+                  )}
+                </div>
+
+                <div className="font-extrabold text-sm text-slate-900 truncate">
+                  auth.tenderease.me
+                </div>
+
+                <div className="text-xs text-slate-600 flex flex-col gap-1 border-t border-slate-200 pt-2 font-mono">
+                  <div className="flex justify-between">
+                    <span>Realm:</span>
+                    <span className="font-semibold text-slate-800">{keycloakRealm}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Latency:</span>
+                    <span className="font-semibold text-emerald-700">
+                      {healthData?.keycloak.latency ? `${healthData.keycloak.latency}ms` : "Live"}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 font-sans mt-0.5">
+                    {isKeycloakUp ? "SSO Authentication Ready" : healthData?.keycloak.error || "Cannot reach auth server"}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 2. FastAPI Backend Status */}
+            <Card className={`border shadow-xs transition-all ${isBackendUp ? "border-emerald-300 bg-white" : "border-red-300 bg-red-50/20"}`}>
+              <CardContent className="p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Server className="size-3.5 text-[#092C4C]" /> FastAPI Backend
+                  </span>
+                  {isLoading ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">
+                      Pinging...
+                    </span>
+                  ) : isBackendUp ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <CheckCircle2 className="size-3 text-emerald-700" /> ONLINE
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-red-100 text-red-800 border border-red-300">
+                      <XCircle className="size-3 text-red-700" /> OFFLINE
+                    </span>
+                  )}
+                </div>
+
+                <div className="font-extrabold text-sm text-slate-900 truncate">
+                  Port 5000 (API v1)
+                </div>
+
+                <div className="text-xs text-slate-600 flex flex-col gap-1 border-t border-slate-200 pt-2 font-mono">
+                  <div className="flex justify-between">
+                    <span>Endpoint:</span>
+                    <span className="font-semibold text-slate-800">/api/v1/health</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Response:</span>
+                    <span className={`font-semibold ${isBackendUp ? "text-emerald-700" : "text-red-700"}`}>
+                      {isBackendUp ? `${healthData?.backend.latency}ms` : "Down (No Response)"}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-sans mt-0.5 font-medium">
+                    {isBackendUp ? (
+                      <span className="text-emerald-700">REST API &amp; Swagger Active</span>
+                    ) : (
+                      <span className="text-red-700">Action: Run python main.py in backend/</span>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 3. Neon PostgreSQL Status */}
+            <Card className={`border shadow-xs transition-all ${isDatabaseUp ? "border-emerald-300 bg-white" : isBackendUp ? "border-red-300 bg-red-50/20" : "border-amber-300 bg-amber-50/20"}`}>
+              <CardContent className="p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Database className="size-3.5 text-teal-700" /> Neon PostgreSQL
+                  </span>
+                  {isLoading ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">
+                      Checking...
+                    </span>
+                  ) : isDatabaseUp ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <CheckCircle2 className="size-3 text-emerald-700" /> CONNECTED
+                    </span>
+                  ) : isBackendUp ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-red-100 text-red-800 border border-red-300">
+                      <XCircle className="size-3 text-red-700" /> DB DOWN
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                      <AlertTriangle className="size-3 text-amber-700" /> STANDBY
+                    </span>
+                  )}
+                </div>
+
+                <div className="font-extrabold text-sm text-slate-900 truncate">
+                  waypoint @ Neon Cloud
+                </div>
+
+                <div className="text-xs text-slate-600 flex flex-col gap-1 border-t border-slate-200 pt-2 font-mono">
+                  <div className="flex justify-between">
+                    <span>Pooler Port:</span>
+                    <span className="font-semibold text-slate-800">5432 (SSL Active)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Driver:</span>
+                    <span className="font-semibold text-slate-800">psycopg2-binary</span>
+                  </div>
+                  <div className="text-[11px] font-sans mt-0.5">
+                    {isDatabaseUp ? (
+                      <span className="text-emerald-700 font-medium">Session query (SELECT 1) succeeded</span>
+                    ) : (
+                      <span className="text-slate-600">Awaiting backend connection probe</span>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 4. Frontend & Backend Link */}
+            <Card className={`border shadow-xs transition-all ${isBridgeUp ? "border-emerald-300 bg-white" : "border-amber-300 bg-amber-50/20"}`}>
+              <CardContent className="p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                    <Radio className="size-3.5 text-[#092C4C]" /> FE &harr; BE Bridge
+                  </span>
+                  {isLoading ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-300">
+                      Checking...
+                    </span>
+                  ) : isBridgeUp ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <CheckCircle2 className="size-3 text-emerald-700" /> LINKED
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                      <AlertTriangle className="size-3 text-amber-700" /> NOT LINKED
+                    </span>
+                  )}
+                </div>
+
+                <div className="font-extrabold text-sm text-slate-900 truncate">
+                  {isBridgeUp ? ":3000 &harr; :5000 Active" : "Waiting for :5000"}
+                </div>
+
+                <div className="text-xs text-slate-600 flex flex-col gap-1 border-t border-slate-200 pt-2 font-mono">
+                  <div className="flex justify-between">
+                    <span>Next.js Client:</span>
+                    <span className="font-semibold text-slate-800">Port 3000</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>FastAPI Target:</span>
+                    <span className="font-semibold text-slate-800">Port 5000</span>
+                  </div>
+                  <div className="text-[11px] font-sans mt-0.5 font-medium">
+                    {isBridgeUp ? (
+                      <span className="text-emerald-700">CORS Handshake OK</span>
+                    ) : (
+                      <span className="text-amber-800">Browser cannot reach FastAPI</span>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        {/* Roles & Dashboards Launchpad */}
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+              Operational Role Dashboards
+            </h2>
+            <p className="text-base text-slate-900 font-extrabold mt-0.5">
+              Select an operational role to enter its dedicated workspace:
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {roles.map((r) => (
+              <Card
+                key={r.id}
+                className="border border-slate-200 bg-white hover:border-[#092C4C] hover:shadow-md transition-all flex flex-col justify-between"
+              >
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="h-10 w-10 rounded-xl bg-slate-100 flex items-center justify-center border border-slate-200 shadow-xs">
+                      {r.icon}
+                    </div>
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${r.badgeStyle}`}>
+                      {r.badgeText}
+                    </span>
+                  </div>
+                  <CardTitle className="text-lg font-extrabold text-slate-900 mt-3">
+                    {r.title}
+                  </CardTitle>
+                  <div className="text-xs font-bold text-teal-800 -mt-0.5">
+                    {r.subtitle}
+                  </div>
+                  <CardDescription className="text-xs text-slate-600 mt-2 leading-relaxed font-normal">
+                    {r.description}
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent className="py-2">
+                  <div className="space-y-2 border-t border-slate-100 pt-3">
+                    <div className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                      Core Operations
+                    </div>
+                    <ul className="text-xs space-y-1.5 text-slate-800">
+                      {r.features.map((feat, idx) => (
+                        <li key={idx} className="flex items-start gap-2 text-slate-700">
+                          <CheckCircle2 className="size-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                          <span className="font-medium">{feat}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </CardContent>
+
+                <CardFooter className="pt-4 border-t border-slate-100">
+                  <Button asChild className="w-full bg-[#092C4C] text-white hover:bg-[#061e34] text-xs font-bold gap-2 shadow-xs h-9">
+                    <Link href={r.href}>
+                      <span>Enter {r.title} Dashboard</span>
+                      <ArrowRight className="size-3.5" />
+                    </Link>
+                  </Button>
+                </CardFooter>
+              </Card>
+            ))}
+          </div>
+        </section>
+
+        {/* Quick Developer & Console Strip */}
+        <section className="p-4 rounded-xl border border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-slate-100 border border-slate-200 text-[#092C4C]">
+              <Terminal className="size-5 shrink-0" />
+            </div>
+            <div>
+              <div className="font-bold text-slate-900">How to launch the FastAPI Backend:</div>
+              <div className="text-slate-600 mt-0.5">
+                Open a terminal in the <code className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-900 font-bold border border-slate-200">backend/</code> directory and run <code className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-900 font-bold border border-slate-200">python main.py</code>.
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
             <a
-              href="http://localhost:5000/docs"
+              href="http://localhost:5000/api/v1/docs"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-200 border border-slate-800 font-medium text-sm transition-all"
+              className="inline-flex items-center gap-1 text-[#092C4C] hover:underline font-bold"
             >
-              <Server className="h-4 w-4 text-cyan-400" />
-              <span>FastAPI Documentation</span>
-              <ExternalLink className="h-3.5 w-3.5 text-slate-500" />
+              <span>Swagger API Docs</span>
+              <ExternalLink className="size-3" />
             </a>
-          </div>
-        </section>
-
-        {/* Live System Diagnostics & Connection Card */}
-        <section className="mb-16">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 backdrop-blur-xl p-6 shadow-2xl">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                  <Activity className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-white">Live Infrastructure Architecture</h3>
-                  <p className="text-xs text-slate-400">Real-time status of connected platform services</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-xs font-medium text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-full border border-emerald-500/20 w-fit">
-                <CheckCircle2 className="h-4 w-4" />
-                <span>All Core Services Configured</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-6">
-              {/* Keycloak Config Card */}
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Lock className="h-3.5 w-3.5" /> Identity Provider
-                    </span>
-                    <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      Live
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-semibold text-white mb-1">Keycloak OIDC</h4>
-                  <p className="text-xs text-slate-400 break-all mb-3 font-mono">{keycloakUrl}</p>
-                </div>
-                <div className="text-xs text-slate-400 space-y-1 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Realm:</span>
-                    <span className="text-indigo-300 font-mono font-medium">{keycloakRealm}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Client:</span>
-                    <span className="text-slate-300 font-mono">{keycloakClientId}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Backend API Card */}
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Server className="h-3.5 w-3.5" /> Backend Service
-                    </span>
-                    <span className="text-[11px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                      Port 5000
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-semibold text-white mb-1">FastAPI Backend</h4>
-                  <p className="text-xs text-slate-400 break-all mb-3 font-mono">http://localhost:5000/api/v1</p>
-                </div>
-                <div className="text-xs text-slate-400 space-y-1 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Auth Mechanism:</span>
-                    <span className="text-slate-300 font-medium">RS256 JWT Verify</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Docs Endpoint:</span>
-                    <span className="text-cyan-300 font-mono">/docs (OpenAPI)</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Database Card */}
-              <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-teal-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Zap className="h-3.5 w-3.5" /> Persistence
-                    </span>
-                    <span className="text-[11px] px-2 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/20">
-                      Neon Cloud
-                    </span>
-                  </div>
-                  <h4 className="text-sm font-semibold text-white mb-1">PostgreSQL DB</h4>
-                  <p className="text-xs text-slate-400 mb-3">Pooled connections with SSL enabled</p>
-                </div>
-                <div className="text-xs text-slate-400 space-y-1 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Database:</span>
-                    <span className="text-teal-300 font-mono font-medium">waypoint</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Driver:</span>
-                    <span className="text-slate-300 font-mono">psycopg2-binary</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Interactive Feature Demo Tab */}
-        <section className="mb-16">
-          <div className="text-center mb-8">
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Core Operational Modules</h2>
-            <p className="text-sm text-slate-400">Everything needed to orchestrate deliveries and distribution centers</p>
-          </div>
-
-          <div className="flex justify-center mb-8">
-            <div className="inline-flex p-1 rounded-xl bg-slate-900 border border-slate-800">
-              <button
-                onClick={() => setActiveTab("fleet")}
-                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === "fleet" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                Fleet &amp; Dispatch
-              </button>
-              <button
-                onClick={() => setActiveTab("inventory")}
-                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === "inventory" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                Warehouse Inventory
-              </button>
-              <button
-                onClick={() => setActiveTab("tracking")}
-                className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-                  activeTab === "tracking" ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/30" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                Live Tracking &amp; SLA
-              </button>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800/80 bg-slate-900/40 p-6 sm:p-8 backdrop-blur-sm">
-            {activeTab === "fleet" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-                <div>
-                  <div className="h-10 w-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center mb-4">
-                    <Truck className="h-5 w-5" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-3">Dynamic Route Planning &amp; Dispatch</h3>
-                  <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-                    Automated manifest generation, driver workload balancing, and multi-stop delivery route optimization designed for urban and regional distribution networks.
-                  </p>
-                  <ul className="space-y-2.5 text-xs text-slate-300">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      Dynamic ETA calculations taking traffic into account
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      Role-based driver dispatch views with mobile support
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      Instant digital proof of delivery (POD) capture
-                    </li>
-                  </ul>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950 p-5 font-mono text-xs">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-slate-400">
-                    <span>ACTIVE_MANIFEST #MF-2026-081</span>
-                    <span className="text-emerald-400">STATUS: ON_ROUTE</span>
-                  </div>
-                  <div className="pt-4 space-y-3">
-                    <div className="flex justify-between text-slate-300">
-                      <span>Assigned Driver:</span>
-                      <span className="text-white">Marcus Vance (Fleet ID: #TRK-14)</span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>Origin:</span>
-                      <span className="text-white">Waypoint Central Hub (Bay 4)</span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>Destinations:</span>
-                      <span className="text-white">8 Drops (Progress: 5/8 Completed)</span>
-                    </div>
-                    <div className="w-full bg-slate-900 rounded-full h-2 mt-4 overflow-hidden border border-slate-800">
-                      <div className="bg-gradient-to-r from-indigo-500 to-cyan-400 h-full rounded-full w-[62.5%]" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === "inventory" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-                <div>
-                  <div className="h-10 w-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 flex items-center justify-center mb-4">
-                    <Boxes className="h-5 w-5" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-3">Multi-Warehouse Inventory Control</h3>
-                  <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-                    Bin-level stock localization, real-time inventory counts, automated low-stock replenishment triggers, and cross-docking visibility.
-                  </p>
-                  <ul className="space-y-2.5 text-xs text-slate-300">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      SKU barcode scanning and batch tracking
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      Automated safety stock and reorder point alerts
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      Multi-facility transfer requests &amp; tracking
-                    </li>
-                  </ul>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950 p-5 font-mono text-xs">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-slate-400">
-                    <span>FACILITY: HUB_NORTH_A</span>
-                    <span className="text-cyan-400">CAPACITY: 88.4%</span>
-                  </div>
-                  <div className="pt-4 space-y-3">
-                    <div className="flex justify-between text-slate-300">
-                      <span>Total SKUs Active:</span>
-                      <span className="text-white">14,290 items</span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>Items Pending Inbound:</span>
-                      <span className="text-white">1,400 units</span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>Low Stock Warnings:</span>
-                      <span className="text-amber-400">2 SKUs flagged</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === "tracking" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-                <div>
-                  <div className="h-10 w-10 rounded-xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center mb-4">
-                    <Globe2 className="h-5 w-5" />
-                  </div>
-                  <h3 className="text-xl font-bold text-white mb-3">Live Telemetry &amp; SLA Tracking</h3>
-                  <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-                    End-to-end milestone audits with geofencing triggers. Instant customer notifications and compliance verification across all routes.
-                  </p>
-                  <ul className="space-y-2.5 text-xs text-slate-300">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      Geofenced automatic check-in/check-out
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      Customer-facing tracking portal links
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      SLA performance dashboard with automated logs
-                    </li>
-                  </ul>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950 p-5 font-mono text-xs">
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-800 text-slate-400">
-                    <span>CONSIGNMENT #WP-88410</span>
-                    <span className="text-emerald-400">ON TIME</span>
-                  </div>
-                  <div className="pt-4 space-y-3">
-                    <div className="flex justify-between text-slate-300">
-                      <span>Estimated Delivery:</span>
-                      <span className="text-white">Today at 16:30</span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>Current Milestone:</span>
-                      <span className="text-cyan-300">Out for Last-Mile Delivery</span>
-                    </div>
-                    <div className="flex justify-between text-slate-300">
-                      <span>Security Stamp:</span>
-                      <span className="text-slate-400 font-mono">RS256_VERIFIED</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
+            <span className="text-slate-300">&bull;</span>
+            <a
+              href={`${keycloakUrl}/admin/master/console/#/${keycloakRealm}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[#092C4C] hover:underline font-bold"
+            >
+              <span>Keycloak Console</span>
+              <ExternalLink className="size-3" />
+            </a>
           </div>
         </section>
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-slate-900 bg-slate-950/90 py-8 text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-300">Waypoint Logistics</span>
-            <span>&copy; {new Date().getFullYear()} Waypoint Group. All rights reserved.</span>
+      <footer className="border-t border-slate-200 bg-white py-4 text-xs text-slate-600 mt-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2 font-medium">
+            <span className="font-bold text-slate-900">Waypoint Logistics</span>
+            <span>&bull;</span>
+            <span>SynapX Logistics Operations Suite</span>
+            <span>&bull;</span>
+            <span>&copy; {new Date().getFullYear()} Waypoint Group</span>
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-slate-400 flex items-center gap-1.5">
-              <ShieldCheck className="h-4 w-4 text-indigo-400" /> Keycloak SSO Secured
+
+          <div className="flex items-center gap-3">
+            <span className="text-emerald-700 flex items-center gap-1.5 font-bold">
+              <span className="h-2 w-2 rounded-full bg-emerald-600" />
+              Portal Operational
             </span>
-            <span>•</span>
-            <a
-              href="https://auth.tenderease.me/admin/master/console/#/waypointlogistics"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-indigo-400 transition-colors"
-            >
-              Keycloak Admin
-            </a>
+            <span className="text-slate-300">&bull;</span>
+            <span className="text-slate-600 font-mono">Keycloak Realm: {keycloakRealm}</span>
           </div>
         </div>
       </footer>
