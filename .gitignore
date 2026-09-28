@@ -3,6 +3,8 @@
 .env.local
 .env.*.local
 !.env.example
+!**/.env.example
+
 
 # Node / Frontend
 node_modules/
@@ -58,3 +60,6 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Graphify
+graphify-out/

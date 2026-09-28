@@ -1,20 +1,37 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.api import api_router
 from app.core.config import settings
-from app.core.database import Base, engine
+from app.core.database import create_tables
+from app.core.exceptions import register_exception_handlers
 
-# Create tables in development if not present
-Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Safe auto-creation in development / test environments if needed
+    if settings.DEBUG or settings.DATABASE_URL.startswith("sqlite"):
+        try:
+            create_tables()
+        except Exception:
+            pass
+    yield
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
+    description="Waypoint Logistics Delivery Planning and Execution Platform",
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url=f"{settings.API_V1_STR}/docs",
     redoc_url=f"{settings.API_V1_STR}/redoc",
+    lifespan=lifespan,
 )
 
+# Register Domain Exception Handlers
+register_exception_handlers(app)
+
+# Configure CORS
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -24,13 +41,25 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_headers=["*"],
     )
 
+# Include API Router
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
-@app.get("/")
+@app.get("/", tags=["Root"])
 def root():
     return {
-        "name": settings.PROJECT_NAME,
+        "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "docs": f"{settings.API_V1_STR}/docs",
+        "openapi": f"{settings.API_V1_STR}/openapi.json",
+        "status": "operational",
+    }
+
+
+@app.get("/health", tags=["Health"])
+def top_level_health():
+    return {
+        "status": "healthy",
+        "service": settings.PROJECT_NAME,
+        "version": settings.VERSION,
     }

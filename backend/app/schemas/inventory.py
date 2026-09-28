@@ -1,6 +1,6 @@
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class WarehouseBase(BaseModel):
@@ -17,8 +17,7 @@ class WarehouseCreate(WarehouseBase):
 class WarehouseRead(WarehouseBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class InventoryItemBase(BaseModel):
@@ -38,5 +37,4 @@ class InventoryItemRead(InventoryItemBase):
     updated_at: datetime
     warehouse: Optional[WarehouseRead] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
