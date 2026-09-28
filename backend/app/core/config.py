@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Keycloak Configuration
     KEYCLOAK_URL: str = "http://localhost:8080"
-    KEYCLOAK_REALM: str = "waypoint"
+    KEYCLOAK_REALM: str = "waypointlogistics"
     KEYCLOAK_CLIENT_ID: str = "waypoint-backend"
     KEYCLOAK_CLIENT_SECRET: str = "your_keycloak_client_secret_here"
     KEYCLOAK_ALGORITHM: str = "RS256"
