@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Optional, Union
 from pydantic import AnyHttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,11 +14,18 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/waypoint_logistics"
+    DATABASE_URL_UNPOOLED: Optional[str] = None
+    DB_HOST: Optional[str] = None
+    DB_PORT: Optional[int] = None
+    DB_NAME: Optional[str] = None
+    DB_USER: Optional[str] = None
+    DB_PASSWORD: Optional[str] = None
+    DB_SSLMODE: Optional[str] = None
 
-    @field_validator("DATABASE_URL", mode="before")
+    @field_validator("DATABASE_URL", "DATABASE_URL_UNPOOLED", mode="before")
     @classmethod
-    def assemble_db_connection(cls, v: str) -> str:
-        if isinstance(v, str):
+    def assemble_db_connection(cls, v: Optional[str]) -> Optional[str]:
+        if isinstance(v, str) and v.strip():
             # SQLAlchemy 2.0 with psycopg2 requires postgresql+psycopg2://
             if v.startswith("postgresql://"):
                 return v.replace("postgresql://", "postgresql+psycopg2://", 1)
