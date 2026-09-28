@@ -1,6 +1,6 @@
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from app.models.shipment import ShipmentStatus
 
 
@@ -23,8 +23,7 @@ class DispatchTripRead(DispatchTripBase):
     estimated_arrival: Optional[datetime] = None
     actual_arrival: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ShipmentBase(BaseModel):
@@ -54,5 +53,4 @@ class ShipmentRead(ShipmentBase):
     last_updated: datetime
     dispatch_trip: Optional[DispatchTripRead] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
