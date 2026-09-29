@@ -7,6 +7,9 @@ import type { LoaderDock, LoaderIssue, LoaderUser, Outlet, Run, Vehicle } from "
 const DAY = "2026-05-28";
 const at = (time: string) => `${DAY}T${time}:00+05:30`;
 
+/** Fixed "now" for the mock scenario, so server and client render the same. */
+export const mockNow = at("02:20");
+
 export const mockDock: LoaderDock = {
   dock_code: "PEL-D3",
   name: "Dock 3",

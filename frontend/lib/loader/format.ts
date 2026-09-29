@@ -1,4 +1,4 @@
-import type { Run, RunOrder, RunStop } from "./types";
+import type { IssueType, LoaderIssue, LoaderUser, Run, RunOrder, RunStop } from "./types";
 
 const TIME_ZONE = "Asia/Colombo";
 
@@ -201,4 +201,121 @@ export function planSource(run: Run): PlanSource {
     acknowledgedBy: acknowledged ? run.acknowledged_by : undefined,
     acknowledgedAt: acknowledged ? run.acknowledged_at : undefined,
   };
+}
+
+const BRAND_LABELS = { fresh: "Fresh", style: "Style", tech: "Tech" } as const;
+
+/** Display fields for a run card, so components never read raw API fields. */
+export function runSummary(run: Run) {
+  const totals = runTotals(run);
+  const ready = run.status === "ready_to_depart";
+  let progressNote = `${totals.loaded} of ${totals.orders} loaded`;
+  if (ready && run.signed_off_by) {
+    progressNote += ` · signed off by ${run.signed_off_by}`;
+    if (run.signed_off_at) progressNote += ` ${formatTime(run.signed_off_at)}`;
+  } else if (run.loading_by?.length) {
+    progressNote += ` · ${run.loading_by.join(", ")}`;
+  }
+  return {
+    runCode: run.run_code,
+    status: run.status,
+    title: `${run.run_code} · ${run.vehicle.vehicle_code} · Trip ${run.trip_number}`,
+    subtitle: `${BRAND_LABELS[run.brand]} · ${run.area} · ${run.stops.length} stops`,
+    departs: formatTime(run.departs_at),
+    vehicleLabel: run.vehicle.vehicle_type === "van" ? "Van" : "Truck",
+    reefer: run.vehicle.is_reefer,
+    vanOnly: run.stops.some((s) => s.outlet.van_only),
+    capacityLabel: `${formatKg(run.vehicle.max_weight_kg)} · ${formatM3(run.vehicle.max_volume_m3)}`,
+    progress: totals.orders ? Math.round((totals.loaded / totals.orders) * 100) : 0,
+    progressNote,
+  };
+}
+
+/** "Saman J." plus initials, for the app bar, menu and tiles. */
+export function userLabel(user: LoaderUser) {
+  const [first, ...rest] = user.full_name.split(" ");
+  const last = rest.at(-1);
+  return {
+    name: user.full_name,
+    shortName: last ? `${first} ${last[0]}.` : first,
+    initials: user.initials,
+  };
+}
+
+/** "Good night" / "Good morning" / … for a depot-time ISO timestamp. */
+export function greeting(iso: string): string {
+  const hour = Number(timeFormat.format(new Date(iso)).slice(0, 2));
+  if (hour < 5 || hour >= 22) return "Good night";
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+const ISSUE_LABELS: Record<IssueType, string> = {
+  missing: "missing",
+  short: "short",
+  damaged: "damaged",
+  wont_fit: "won't fit",
+};
+
+export interface RunAlert {
+  tone: "error" | "warning" | "success";
+  message: string;
+  actionLabel: string;
+  actionHref: string;
+}
+
+/** The one alert a run card shows, most urgent first. */
+export function runAlert(run: Run, issues: LoaderIssue[]): RunAlert | undefined {
+  const open = issues.find(
+    (i) => i.run_code === run.run_code && (i.status === "sent" || i.status === "seen"),
+  );
+  if (open) {
+    return {
+      tone: "error",
+      message: `${open.order_number} ${ISSUE_LABELS[open.issue_type]} · waiting`,
+      actionLabel: "Open",
+      actionHref: `/loader/issues/${open.issue_id}`,
+    };
+  }
+  const acknowledged = run.acknowledged_plan_version;
+  if (acknowledged !== undefined && run.plan_version > acknowledged) {
+    return {
+      tone: "warning",
+      message: `Plan updated ${formatTime(run.plan_updated_at)} · v${acknowledged} → v${run.plan_version}`,
+      actionLabel: "Review",
+      actionHref: `/loader/runs/${run.run_code}`,
+    };
+  }
+  if (run.status === "ready_to_depart") {
+    return {
+      tone: "success",
+      message: "Signed off · driver can collect",
+      actionLabel: "View",
+      actionHref: `/loader/runs/${run.run_code}/release`,
+    };
+  }
+  return undefined;
+}
+
+/** Queue metric tiles: Runs · Loading · Issues · Ready. */
+export function queueMetrics(runs: Run[], issues: LoaderIssue[]) {
+  const loading = runs.filter((r) => r.status === "loading" || r.status === "issue_flagged");
+  const loaders = [...new Set(loading.flatMap((r) => r.loading_by ?? []))];
+  const openIssues = issues.filter((i) => i.status === "sent" || i.status === "seen");
+  const ready = runs.filter((r) => r.status === "ready_to_depart");
+  return {
+    runs: runs.length,
+    loading: loading.length,
+    loadingCaption: loaders.map((name) => name.split(" ")[0]).join(", "),
+    issues: openIssues.length,
+    issuesCaption: openIssues.length ? "Awaiting decision" : "None open",
+    ready: ready.length,
+    readyCaption: ready.map((r) => r.run_code).join(", "),
+  };
+}
+
+/** Dock-wide plan strip for the queue: the latest plan update across runs. */
+export function dockPlanSource(runs: Run[], fallback: string): PlanSource {
+  return { updatedAt: runs.map((r) => r.plan_updated_at).sort().at(-1) ?? fallback };
 }
