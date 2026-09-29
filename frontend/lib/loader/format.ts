@@ -62,6 +62,29 @@ export function stopsInLoadOrder(stops: RunStop[]): RunStop[] {
   return [...stops].sort((a, b) => a.load_position - b.load_position);
 }
 
+/**
+ * Status line under an order: the order's note when it has one, otherwise
+ * "Loaded 01:41 · Saman J." (or "Re-checked …" after a plan change).
+ */
+export function orderStatusLine(order: RunOrder): string | undefined {
+  if (order.note) return order.note;
+  if (order.load_state !== "loaded" || !order.checked_at) return undefined;
+  const verb = order.changed_in_version ? "Re-checked" : "Loaded";
+  const by = order.checked_by ? ` · ${order.checked_by}` : "";
+  return `${verb} ${formatTime(order.checked_at)}${by}`;
+}
+
+/** "rear_dock · 03:00–08:00 · ETA 05:20 · 1 dry + 1 chilled" */
+export function formatStopDetails(stop: RunStop): string {
+  const parts = [
+    stop.outlet.dock_type,
+    `${stop.outlet.window_start}–${stop.outlet.window_end}`,
+    `ETA ${formatTime(stop.eta)}`,
+  ];
+  if (stop.note) parts.push(stop.note);
+  return parts.join(" · ");
+}
+
 /** Orders that are part of the current plan and must be resolved before release. */
 export function isActiveOrder(order: RunOrder): boolean {
   return order.load_state !== "moved" && order.load_state !== "take_off";

@@ -150,7 +150,6 @@ const RUN_021: Run = {
           load_state: "loaded",
           checked_at: at("02:26"),
           checked_by: "Saman J.",
-          note: "Re-checked",
           changed_in_version: 3,
         },
         {
@@ -163,7 +162,6 @@ const RUN_021: Run = {
           load_state: "loaded",
           checked_at: at("02:26"),
           checked_by: "Saman J.",
-          note: "Re-checked",
           changed_in_version: 3,
         },
       ],
