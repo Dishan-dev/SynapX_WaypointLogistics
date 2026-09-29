@@ -1,14 +1,15 @@
 // Loader module types, from docs/loader/API_CONTRACT.md (loader-sachintha).
 //
-// - "Built (L0)" shapes are final: RunDetail, Vehicle, Outlet, RunStop,
-//   RunOrder, Issue, ActivityEntry.
+// - "Built (L0, L4)" shapes are final: RunDetail, Vehicle, Outlet, RunStop,
+//   RunOrder, Issue, ActivityEntry, and the check / uncheck / recheck writes.
 // - "Proposed" shapes (queue, summary, users, session, writes) follow the
 //   contract but are not final; they are read only through lib/loader/format.ts
 //   so a rename stays local.
 // - Fields marked "not in contract, pending Sachintha" are UI needs the
 //   contract does not cover yet. They stay optional.
-// - Times are ISO datetimes without offset (depot local time); delivery
-//   windows are "HH:MM:SS".
+// - Times are ISO datetimes in UTC with a Z, shown in depot time
+//   (Asia/Colombo) by lib/loader/format.ts. Delivery windows are
+//   "HH:MM:SS" in depot time and shown as-is.
 // - Client-only UI state (SyncState) stays camelCase.
 
 // ---- Shared enums (contract "Shared enums") ------------------------------
@@ -96,7 +97,8 @@ export interface RunStop {
   stop_sequence: number;
   /** Load order: 1 is loaded first (deepest, by the cab). */
   load_position: number;
-  eta: string;
+  /** Null for a stop a plan change just added, until it is routed. */
+  eta: string | null;
   handling_minutes: number;
   /** Values are not listed in the contract ("pending" in the example). */
   status: string;
@@ -143,7 +145,9 @@ export interface Run {
   /** Set while a newer plan waits to be acknowledged; release stays locked. */
   unacknowledged_plan_version: number | null;
   stops: RunStop[];
-  /** Counts loaded and flagged; re_check does not count. */
+  /** Counts loaded only: "x of y orders in". re_check does not count. */
+  orders_loaded: number;
+  /** Counts loaded and flagged: the review lock. re_check does not count. */
   orders_checked: number;
   /** Excludes take_off and moved. */
   orders_total: number;
@@ -226,6 +230,8 @@ export interface RunSummary {
   departs_at: string;
   status: RunStatus;
   stop_count: number;
+  /** The card's "x of y loaded". */
+  orders_loaded: number;
   orders_checked: number;
   orders_total: number;
   loader: string | null;
@@ -261,6 +267,7 @@ export interface QueueSummary {
 export type QueuedActionType =
   | "check"
   | "uncheck"
+  | "recheck"
   | "unload"
   | "flag"
   | "acknowledge"
@@ -270,33 +277,49 @@ export type QueuedActionType =
 /**
  * Offline write, stored in IndexedDB. client_action_id (crypto.randomUUID())
  * is generated once per tap and sent in the JSON body; the server answers a
- * replayed id with the original result and 200, so retries are safe.
+ * replayed id with 200 and the resource as it is now, so retries are safe.
  */
 export interface QueuedAction {
   client_action_id: string;
   action_type: QueuedActionType;
   run_code: string;
   payload: QueuedActionPayload;
-  /** Plan version on screen when tapped (used by acknowledge). */
+  /**
+   * Plan version on screen when tapped. Sent in every write body; the server
+   * refuses a write made on a plan that is no longer current.
+   */
   plan_version: number;
   created_at: string;
   attempts: number;
   /** Client-only: pending until sent; conflict (409) and failed are not retried. */
   status: QueuedActionStatus;
   last_error?: string;
+  /** Set with status conflict: the 409's detail.code. */
+  conflict_code?: ConflictCode;
+  /** PLAN_VERSION_STALE only: the run's plan version when the write was refused. */
+  current_plan_version?: number;
 }
 
 export type QueuedActionStatus = "pending" | "conflict" | "failed";
 
 /**
- * Every write carries the loader session (optional on the server until L2
- * sign-in exists, then required).
+ * detail.code of a 409 (API_CONTRACT.md "Errors"). None is retried:
+ * - PLAN_VERSION_STALE: made on a plan that is no longer current.
+ * - CLIENT_ACTION_ID_REUSED: the id was already used for another action (a client bug).
+ * - INVALID_STATE_TRANSITION: the row or run no longer allows it.
+ */
+export type ConflictCode = "PLAN_VERSION_STALE" | "CLIENT_ACTION_ID_REUSED" | "INVALID_STATE_TRANSITION";
+
+/**
+ * Every write carries the loader session. Null until L2 sign-in exists: the
+ * server applies the write and leaves checked_by empty. An id the server does
+ * not know is a 404.
  */
 export interface SessionPayload {
-  loader_session_id: number;
+  loader_session_id: number | null;
 }
 
-/** check / uncheck / unload. */
+/** check / uncheck / recheck / unload. */
 export interface OrderActionPayload extends SessionPayload {
   order_number: string;
 }
@@ -324,6 +347,9 @@ export interface SyncState {
   online: boolean;
   pending: number;
   syncing: boolean;
+  /** Writes refused because the plan changed since the tap (PLAN_VERSION_STALE). */
+  stale: number;
+  /** Other writes that were refused or failed and will not be retried. */
   failed: number;
   lastSyncedAt?: string;
 }

@@ -8,7 +8,7 @@ type SyncTone = "live" | "syncing" | "offline" | "failed";
 
 function syncTone(sync: SyncState): SyncTone {
   if (!sync.online) return "offline";
-  if (sync.failed > 0) return "failed";
+  if (sync.failed > 0 || sync.stale > 0) return "failed";
   if (sync.syncing || sync.pending > 0) return "syncing";
   return "live";
 }
@@ -39,7 +39,12 @@ function syncLabel(tone: SyncTone, sync: SyncState): React.ReactNode {
         </>
       );
     case "failed":
-      return `${sync.failed} not synced`;
+      return [
+        sync.stale > 0 && `${sync.stale} not saved · plan changed`,
+        sync.failed > 0 && `${sync.failed} not synced`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
   }
 }
 
