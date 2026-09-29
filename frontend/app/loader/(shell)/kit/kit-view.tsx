@@ -75,9 +75,10 @@ export function KitView() {
               key={o.order_number}
               order={o}
               onToggle={(order) =>
-                void offline.act(order.state === "loaded" ? "uncheck" : "check", {
-                  order_number: order.order_number,
-                })
+                void offline.act(
+                  order.state === "loaded" ? "uncheck" : order.state === "re_check" ? "recheck" : "check",
+                  { order_number: order.order_number },
+                )
               }
               onFlag={() => {}}
             />

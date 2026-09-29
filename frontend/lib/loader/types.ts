@@ -1,7 +1,7 @@
 // Loader module types, from docs/loader/API_CONTRACT.md (loader-sachintha).
 //
-// - "Built (L0)" shapes are final: RunDetail, Vehicle, Outlet, RunStop,
-//   RunOrder, Issue, ActivityEntry.
+// - "Built (L0, L4)" shapes are final: RunDetail, Vehicle, Outlet, RunStop,
+//   RunOrder, Issue, ActivityEntry, and the check / uncheck / recheck writes.
 // - "Proposed" shapes (queue, summary, users, session, writes) follow the
 //   contract but are not final; they are read only through lib/loader/format.ts
 //   so a rename stays local.
@@ -266,6 +266,7 @@ export interface QueueSummary {
 export type QueuedActionType =
   | "check"
   | "uncheck"
+  | "recheck"
   | "unload"
   | "flag"
   | "acknowledge"
@@ -275,14 +276,17 @@ export type QueuedActionType =
 /**
  * Offline write, stored in IndexedDB. client_action_id (crypto.randomUUID())
  * is generated once per tap and sent in the JSON body; the server answers a
- * replayed id with the original result and 200, so retries are safe.
+ * replayed id with 200 and the resource as it is now, so retries are safe.
  */
 export interface QueuedAction {
   client_action_id: string;
   action_type: QueuedActionType;
   run_code: string;
   payload: QueuedActionPayload;
-  /** Plan version on screen when tapped (used by acknowledge). */
+  /**
+   * Plan version on screen when tapped. Sent in every write body; the server
+   * refuses a write made on a plan that is no longer current.
+   */
   plan_version: number;
   created_at: string;
   attempts: number;
@@ -301,7 +305,7 @@ export interface SessionPayload {
   loader_session_id: number;
 }
 
-/** check / uncheck / unload. */
+/** check / uncheck / recheck / unload. */
 export interface OrderActionPayload extends SessionPayload {
   order_number: string;
 }

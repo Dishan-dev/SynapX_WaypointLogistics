@@ -117,9 +117,10 @@ function actionFromRequest({ method, path, body }: ActionRequest, plan: number) 
     status: "pending" as const,
     plan_version: plan,
   };
-  const order = /^\/loader\/runs\/([^/]+)\/orders\/([^/]+)\/(check|unload)$/.exec(path);
+  const order = /^\/loader\/runs\/([^/]+)\/orders\/([^/]+)\/(check|recheck|unload)$/.exec(path);
   if (order) {
-    const type: QueuedActionType = order[3] === "unload" ? "unload" : method === "DELETE" ? "uncheck" : "check";
+    const type: QueuedActionType =
+      order[3] === "check" ? (method === "DELETE" ? "uncheck" : "check") : (order[3] as "recheck" | "unload");
     return { ...base, action_type: type, run_code: decodeURIComponent(order[1]), payload: { order_number: decodeURIComponent(order[2]) } };
   }
   if (path === "/loader/issues") {
