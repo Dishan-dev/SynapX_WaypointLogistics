@@ -75,6 +75,8 @@ def test_client_action_id_contract_is_stated(contract_text):
     assert "## `client_action_id` — the write contract" in contract_text
 
     section = contract_text.split("## `client_action_id`")[1].split("\n---")[0]
+    # Collapse line wrapping, so rewrapping a paragraph cannot break a phrase check.
+    section = " ".join(section.split())
     lowered = section.lower()
 
     # A UUID the tablet generates.
