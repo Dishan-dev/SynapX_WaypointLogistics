@@ -15,6 +15,7 @@ from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     at,
     build_run_021,
     loader_client,
+    make_issue,
     make_loader,
 )
 
@@ -626,3 +627,91 @@ def test_a_reopened_run_says_when_it_was_ready(loader_client, db_session):
 
     assert body["status"] == "loading"
     assert body["plan_change"]["was_ready_at"] == "2026-05-28T01:48:00Z"
+
+
+# --- release lock --------------------------------------------------------------
+
+
+def blockers(body):
+    return {b["code"]: b["count"] for b in body["release_blockers"]}
+
+
+def check_every_open_order(db, run):
+    for stop in LoaderService.current_stops(db, run):
+        for row in stop.orders:
+            if row.state in (RunOrderState.TO_LOAD, RunOrderState.NEW, RunOrderState.RE_CHECK):
+                row.state = RunOrderState.LOADED
+    db.flush()
+
+
+def test_a_fully_loaded_run_can_be_released(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    check_every_open_order(db_session, run)
+
+    body = run_body(loader_client)
+
+    assert body["release_locked"] is False
+    assert body["release_blockers"] == []
+
+
+def test_open_orders_lock_release(loader_client, db_session):
+    build_run_021(db_session)
+    db_session.flush()
+
+    body = run_body(loader_client)
+
+    assert body["release_locked"] is True
+    assert blockers(body) == {"orders_open": 3}
+
+
+def test_an_unread_plan_locks_release(loader_client, db_session):
+    """Figma 2c #2: "Acknowledge plan v3 first"."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+
+    body = run_body(loader_client)
+
+    assert blockers(body)["plan_not_acknowledged"] == 1
+    assert [b["code"] for b in body["release_blockers"]][0] == "plan_not_acknowledged"
+
+
+def test_each_plan_change_task_locks_release(loader_client, db_session):
+    """T2b footer: unload first, then re-checks and the orders still to load."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+
+    body = run_body(loader_client)
+
+    assert blockers(body) == {
+        "unload_pending": 1,  # ORD0092308
+        "re_check_pending": 5,  # aboard at v2, apart from the one coming off
+        "orders_open": 2,  # ORD0092302 and the new ORD0092319
+    }
+    assert [b["code"] for b in body["release_blockers"]] == [
+        "unload_pending", "re_check_pending", "orders_open",
+    ]
+
+
+def test_an_outstanding_unload_locks_release_even_when_all_is_checked(loader_client, db_session):
+    """take_off is outside orders_total, so "all checked" alone is not enough."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+    check_every_open_order(db_session, run)
+
+    body = run_body(loader_client)
+
+    assert body["orders_checked"] == body["orders_total"]
+    assert blockers(body) == {"unload_pending": 1}
+
+    unload(loader_client, "ORD0092308")
+    assert run_body(loader_client)["release_locked"] is False
+
+
+def test_a_waiting_issue_locks_release(loader_client, db_session):
+    run, orders = build_run_021(db_session)
+    check_every_open_order(db_session, run)
+    make_issue(db_session, run, orders["ORD0092302"], make_loader(db_session, "Tharindu J", "Tharindu J."))
+
+    body = run_body(loader_client)
+
+    assert blockers(body) == {"issue_waiting": 1}

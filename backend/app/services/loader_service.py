@@ -179,6 +179,7 @@ class LoaderService:
         stops = LoaderService.current_stops(db, run)
         unloads = LoaderService._unloads(db, run)
         diff = LoaderService._plan_diff(db, run, stops, unloads)
+        blockers = LoaderService.release_blockers(db, run)
 
         stop_reads: List[schemas.RunStopRead] = []
         loaded = 0
@@ -271,7 +272,46 @@ class LoaderService:
             orders_loaded=loaded,
             orders_checked=checked,
             orders_total=total,
+            release_locked=bool(blockers),
+            release_blockers=blockers,
         )
+
+    @staticmethod
+    def release_blockers(db: Session, run: DeliveryRun) -> List[schemas.ReleaseBlockerRead]:
+        """Everything that must be done before the run can be released.
+
+        Empty means release is allowed. Checked by the read so the button can
+        say why it is locked ("Release locked · unload first"), and meant to be
+        checked again by POST /release (L6) before it writes anything.
+
+        take_off rows are outside orders_total, so "all checked" alone would
+        let a truck leave with an order the plan took off; unload_pending is
+        what stops that.
+        """
+        states = LoaderService._current_states(db, run)
+        blockers: List[schemas.ReleaseBlockerRead] = []
+
+        def add(code: str, count: int) -> None:
+            if count:
+                blockers.append(schemas.ReleaseBlockerRead(code=code, count=count))
+
+        current = LoaderService.get_revision(db, run, run.current_plan_version)
+        add("plan_not_acknowledged", int(current is not None and current.acknowledged_at is None))
+        add("unload_pending", states.count(RunOrderState.TAKE_OFF))
+        add("re_check_pending", states.count(RunOrderState.RE_CHECK))
+        add("orders_open", states.count(RunOrderState.TO_LOAD) + states.count(RunOrderState.NEW))
+        add(
+            "issue_waiting",
+            len(
+                db.execute(
+                    select(LoaderIssue.id).where(
+                        LoaderIssue.run_id == run.id,
+                        LoaderIssue.status.in_([IssueStatus.SENT, IssueStatus.SEEN]),
+                    )
+                ).all()
+            ),
+        )
+        return blockers
 
     @staticmethod
     def _plan_diff(
@@ -787,16 +827,22 @@ class LoaderService:
     @staticmethod
     def progress(db: Session, run: DeliveryRun) -> Tuple[int, int]:
         """(orders_checked, orders_total) for the current plan - the review gate."""
-        states = db.execute(
-            select(RunStopOrder.state)
-            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
-            .where(
-                RunStop.run_id == run.id,
-                RunStop.plan_version == run.current_plan_version,
-            )
-        ).scalars().all()
-        active = [s for s in states if s not in OFF_PLAN_STATES]
+        active = [s for s in LoaderService._current_states(db, run) if s not in OFF_PLAN_STATES]
         return sum(1 for s in active if s in RESOLVED_STATES), len(active)
+
+    @staticmethod
+    def _current_states(db: Session, run: DeliveryRun) -> List[RunOrderState]:
+        """Every row's state on the current plan version."""
+        return list(
+            db.execute(
+                select(RunStopOrder.state)
+                .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+                .where(
+                    RunStop.run_id == run.id,
+                    RunStop.plan_version == run.current_plan_version,
+                )
+            ).scalars()
+        )
 
     @staticmethod
     def get_revision(db: Session, run: DeliveryRun, version: int) -> Optional[PlanRevision]:

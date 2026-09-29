@@ -157,6 +157,18 @@ class PlanDiffRead(BaseModel):
     was_ready_at: Optional[UtcDateTime] = None
 
 
+class ReleaseBlockerRead(BaseModel):
+    """One reason release is locked, e.g. {"code": "re_check_pending", "count": 2}.
+
+    Codes, in the order the footer lists them:
+    plan_not_acknowledged, unload_pending, re_check_pending, orders_open,
+    issue_waiting.
+    """
+
+    code: str
+    count: int
+
+
 class PlanChangeRead(BaseModel):
     change_kind: PlanChangeKind
     order_number: Optional[str] = None
@@ -199,6 +211,10 @@ class RunDetailRead(BaseModel):
     orders_loaded: int
     orders_checked: int
     orders_total: int
+    # Release (L6) is locked while any blocker is listed. The same list backs
+    # LoaderService.release_blockers, which POST /release should check.
+    release_locked: bool
+    release_blockers: List[ReleaseBlockerRead]
 
 
 class IssueOptionRead(BaseModel):
