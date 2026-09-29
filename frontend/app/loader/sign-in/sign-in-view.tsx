@@ -22,6 +22,7 @@ import { mockSession } from "@/lib/loader/mock-data";
 import { createTransport, NetworkError, probeConnectivity } from "@/lib/loader/offline/transport";
 import {
   cachedUsers,
+  endSession,
   flushSessionEnds,
   IDLE_SIGN_OUT_MS,
   lastPlace,
@@ -80,11 +81,22 @@ export function SignInView({ overview, now }: { overview: SignInOverview; now: s
   const place = React.useSyncExternalStore(subscribeSession, lastPlace, () => null) ?? DEFAULT_PLACE;
   const placeName = depotName(place.depot);
 
-  // Signed in (here or in another tab): go on to the loader.
+  // Signed in (here or in another tab): go on to the loader. A link here to
+  // switch user or sign out (e.g. from the plan-change takeover) ends the
+  // session that was open when the page opened; a sign-in made on this page
+  // afterwards is kept.
   const signedIn = React.useSyncExternalStore(subscribeSession, readSession, () => null);
+  const openedChecked = React.useRef(false);
   React.useEffect(() => {
-    if (signedIn) router.replace(next);
-  }, [signedIn, next, router]);
+    // Read storage directly: the first render may still carry the server's "no session".
+    const onOpen = !openedChecked.current;
+    openedChecked.current = true;
+    if (onOpen && readSession() && (reason === "switch_user" || reason === "sign_out")) {
+      void endSession(transport, reason);
+      return;
+    }
+    if (signedIn && readSession()) router.replace(next);
+  }, [signedIn, reason, next, router, transport]);
 
   const [users, setUsers] = React.useState<LoaderUser[]>(() =>
     typeof window === "undefined" ? [] : cachedUsers(),
