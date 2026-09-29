@@ -209,6 +209,25 @@ class OrderActionRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class AcknowledgePlanRequest(BaseModel):
+    """Body for POST /loader/runs/{code}/plan/{version}/acknowledge.
+
+    plan_version must match the version in the path; it is carried in the body
+    too so every tablet write has the same shape.
+
+    loader_session_id is who the Dispatcher sees as "received by". It is
+    optional until L2 sign-in lands; without it the acknowledgement is recorded
+    with no loader.
+    TODO(L2): make loader_session_id required once sign-in is merged.
+    """
+
+    client_action_id: UUID
+    plan_version: int
+    loader_session_id: Optional[int] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
 # --- Dev-only simulation payloads ----------------------------------------
 
 

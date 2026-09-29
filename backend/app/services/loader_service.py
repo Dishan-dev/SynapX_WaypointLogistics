@@ -101,15 +101,15 @@ class ClientActionIdReusedError(InvalidStateTransitionError):
     bug; answering it with the other action's result would hide that.
     """
 
-    def __init__(self, client_action_id: str):
+    def __init__(self, client_action_id: str, entity: str = "LoadingCheck"):
         super().__init__(
             f"client_action_id {client_action_id} was already used for a different action.",
             current_state="used",
             target_state="reused",
-            entity="LoadingCheck",
+            entity=entity,
         )
         self.code = "CLIENT_ACTION_ID_REUSED"
-        self.details = {"entity": "LoadingCheck", "client_action_id": client_action_id}
+        self.details = {"entity": entity, "client_action_id": client_action_id}
 
 
 class LoaderService:
@@ -535,6 +535,91 @@ class LoaderService:
                 entity_id=session_id,
             )
         return session.loader_user
+
+    @staticmethod
+    def acknowledge_plan(
+        db: Session,
+        run_code: str,
+        version: int,
+        payload: schemas.AcknowledgePlanRequest,
+    ) -> DeliveryRun:
+        """The loader has read the plan-change diff. Returns the run.
+
+        Same order as apply_order_action: replay first, then the stale-plan
+        check, then the write in a savepoint.
+
+        Stacked changes are confirmed once: acknowledging v4 while v3 is also
+        unread stamps both, because the loader read them as one diff (v2 -> v4).
+        The client_action_id goes on the version named in the path only; the
+        column is unique, and that is the revision the tap was for.
+        """
+        run = LoaderService.get_run(db, run_code)
+        action_id = str(payload.client_action_id)
+
+        existing = db.execute(
+            select(PlanRevision).filter_by(client_action_id=action_id)
+        ).scalars().first()
+        if existing is not None:
+            if existing.run_id == run.id and existing.version == version:
+                return run
+            raise ClientActionIdReusedError(action_id, entity="PlanRevision")
+
+        if version != run.current_plan_version:
+            raise StalePlanVersionError(run, version)
+
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+
+        if run.status == RunStatus.GATED_OUT:
+            raise InvalidStateTransitionError(
+                f"{run.code} has left the gate; plan changes go to the Driver.",
+                current_state=run.status.value,
+                target_state="acknowledged",
+                entity="DeliveryRun",
+            )
+
+        revision = LoaderService.get_revision(db, run, version)
+        if revision is None:
+            raise NotFoundError(
+                f"{run.code} has no plan v{version}.", entity="PlanRevision", entity_id=version
+            )
+        # Someone else already acknowledged it (another tablet, another id).
+        if revision.acknowledged_at is not None:
+            return run
+
+        actor = LoaderService._session_actor(db, payload.loader_session_id)
+        now = datetime.now(timezone.utc)
+        unread = db.execute(
+            select(PlanRevision).where(
+                PlanRevision.run_id == run.id,
+                PlanRevision.version <= version,
+                PlanRevision.acknowledged_at.is_(None),
+            )
+        ).scalars().all()
+
+        try:
+            with db.begin_nested():
+                for rev in unread:
+                    rev.acknowledged_at = now
+                    rev.acknowledged_by_id = actor.id if actor else None
+                revision.client_action_id = action_id
+                # TODO(L2): loader_session_id becomes required; drop "unknown loader".
+                who = actor.full_name if actor else "unknown loader"
+                LoaderService.log(
+                    db, run, at=now, actor_kind=ActorKind.LOADER,
+                    event_type="plan_acknowledged", actor_id=actor.id if actor else None,
+                    message=f"Plan v{version} received · {who}",
+                )
+                db.flush()
+        except IntegrityError:
+            replay = db.execute(
+                select(PlanRevision).filter_by(client_action_id=action_id)
+            ).scalars().first()
+            if replay is not None and replay.run_id == run.id and replay.version == version:
+                db.refresh(run)
+                return run
+            raise
+
+        return run
 
     @staticmethod
     def refresh_stop_status(stop: RunStop) -> None:

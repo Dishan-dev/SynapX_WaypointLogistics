@@ -1,6 +1,7 @@
 """Loader endpoints.
 
-Scope: L4 (checklist read, and check / uncheck / recheck), the reads for L8
+Scope: L4 (checklist read, and check / uncheck / recheck), L7 (acknowledge a
+plan change, unload a take-off order), the reads for L8
 (decision) and L9 (activity, per-run and dock-wide), plus the dev-only
 simulation endpoints from L0.
 
@@ -10,7 +11,7 @@ rather than implemented here.
 """
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api import deps
@@ -113,6 +114,36 @@ def recheck_order(
 ):
     """Confirm an order a plan change put back to re_check (re_check -> loaded)."""
     return _order_action(db, code, order_number, CheckAction.RECHECK, payload)
+
+
+# ---------------------------------------------------------------------------
+# L7 writes - acknowledge a plan change
+# ---------------------------------------------------------------------------
+
+
+@router.post("/runs/{code}/plan/{version}/acknowledge", response_model=schemas.RunDetailRead)
+def acknowledge_plan(
+    code: str,
+    version: int,
+    payload: schemas.AcknowledgePlanRequest,
+    db: Session = Depends(deps.get_db),
+):
+    """The loader has read the plan-change diff; unblocks the checklist.
+
+    Acknowledging the latest version also acknowledges any unread version
+    before it, so stacked changes are confirmed once.
+    """
+    if payload.plan_version != version:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PLAN_VERSION_MISMATCH",
+                "message": f"Body plan_version {payload.plan_version} does not match v{version} in the path.",
+            },
+        )
+    run = loader_service.acknowledge_plan(db, code, version, payload)
+    db.commit()
+    return loader_service.build_run_detail(db, run)
 
 
 @router.get("/issues/{issue_id}", response_model=schemas.IssueDetailRead)
