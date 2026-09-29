@@ -51,7 +51,6 @@ export const mockSession: LoaderSession = {
   started_at: at("01:30"),
 };
 
-export const mockCurrentUser = mockUsers[0];
 
 const outlet = (
   code: string,
