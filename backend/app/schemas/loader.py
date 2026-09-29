@@ -6,6 +6,7 @@ proposed in docs/loader/API_CONTRACT.md for her to review rather than coded here
 """
 from datetime import datetime, time
 from typing import List, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -157,6 +158,30 @@ class ActivityRead(BaseModel):
     event_type: str
     order_number: Optional[str] = None
     message: str
+
+
+# --- Writes from the tablet -----------------------------------------------
+
+
+class OrderActionRequest(BaseModel):
+    """Body for check, uncheck and recheck on one checklist row.
+
+    client_action_id is generated once per tap by the tablet and reused on every
+    retry of that tap - a repeat returns the run with 200 and applies nothing.
+
+    plan_version is the version the loader was looking at when they tapped. If
+    the dispatcher has published a newer one since, the write is refused with
+    409 PLAN_VERSION_STALE rather than applied to a plan the loader never saw.
+
+    The offline outbox also sends run_code and order_number in the body; the
+    path is authoritative, so extra fields are ignored.
+    """
+
+    client_action_id: UUID
+    plan_version: int
+    loader_session_id: Optional[int] = None
+
+    model_config = ConfigDict(extra="ignore")
 
 
 # --- Dev-only simulation payloads ----------------------------------------
