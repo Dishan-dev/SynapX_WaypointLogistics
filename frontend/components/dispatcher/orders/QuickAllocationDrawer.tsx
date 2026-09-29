@@ -2,18 +2,11 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { type Order } from "@/types/order";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetFooter,
-} from "@/components/ui/sheet";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Snowflake, Package, Truck, Check, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Snowflake, Package, AlertTriangle, ShieldCheck } from "lucide-react";
 import { fetchWithFallback } from "@/lib/api";
+import { ConstraintReviewModal } from "./ConstraintReviewModal";
 
 interface Vehicle {
   id: number;
@@ -30,7 +23,7 @@ interface QuickAllocationDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   selectedOrders: Order[];
-  onAllocationSuccess: () => void;
+  onAllocationSuccess: (vehicleCode: string, count: number) => void;
 }
 
 export function QuickAllocationDrawer({
@@ -43,6 +36,7 @@ export function QuickAllocationDrawer({
   const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isConstraintReviewOpen, setIsConstraintReviewOpen] = useState(false);
 
   // Total weight and temperature check
   const totalWeight = useMemo(() => {
@@ -83,6 +77,10 @@ export function QuickAllocationDrawer({
     fetchVehicles();
   }, [isOpen, requiresChilled]);
 
+  const selectedVehicle = useMemo(() => {
+    return vehicles.find((v) => v.id === selectedVehicleId) || null;
+  }, [vehicles, selectedVehicleId]);
+
   const handleConfirmAllocation = async () => {
     if (!selectedVehicleId || selectedOrders.length === 0) return;
 
@@ -90,7 +88,6 @@ export function QuickAllocationDrawer({
     setErrorMessage(null);
 
     try {
-      // 1. Bulk allocate orders via API
       const res = await fetchWithFallback("/api/v1/orders/bulk-allocate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -104,7 +101,10 @@ export function QuickAllocationDrawer({
         throw new Error(err.detail || "Failed to allocate orders");
       }
 
-      onAllocationSuccess();
+      const vehicleCode = selectedVehicle?.code || "VEH014";
+      const count = selectedOrders.length;
+      setIsConstraintReviewOpen(false);
+      onAllocationSuccess(vehicleCode, count);
       onClose();
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : "Allocation error");
@@ -114,112 +114,78 @@ export function QuickAllocationDrawer({
   };
 
   return (
-    <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full sm:max-w-md md:max-w-lg p-0 flex flex-col h-full bg-card">
-        {/* Header */}
-        <div className="p-6 border-b border-border bg-card">
-          <div className="flex items-center justify-between gap-2">
-            <SheetTitle className="text-xl font-bold text-foreground">Allocate Selected Orders</SheetTitle>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-[#18385F] border border-slate-300">
+    <>
+      <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent className="max-w-[420px] w-full p-6 rounded-[18px] bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F] overflow-hidden">
+          {/* Header matching Figma #44:2311 */}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[20px] font-semibold tracking-tight text-[#171A1F]">
+                Allocate Selected Orders
+              </h2>
+              <p className="text-[12px] text-[#6B7280] mt-0.5 font-normal">
+                {selectedOrders.length} {selectedOrders.length === 1 ? "order" : "orders"} · {Math.round(totalWeight)} kg · {requiresChilled ? "Chilled" : "Ambient"}
+              </p>
+            </div>
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-semibold bg-[#F6F6F3] text-[#18385F] border border-[#E5E5E2] shrink-0">
               Compatible only
             </span>
           </div>
-          <SheetDescription className="mt-1 text-sm text-muted-foreground flex items-center gap-2">
-            <span>{selectedOrders.length} {selectedOrders.length === 1 ? "order" : "orders"}</span>
-            <span>·</span>
-            <span className="font-semibold text-foreground">{Math.round(totalWeight)} kg</span>
-            <span>·</span>
-            <span className="inline-flex items-center gap-1 font-medium">
-              {requiresChilled ? (
-                <>
-                  <Snowflake className="size-3 text-sky-600" />
-                  Chilled Required
-                </>
-              ) : (
-                <>
-                  <Package className="size-3 text-slate-500" />
-                  Ambient Compatible
-                </>
-              )}
-            </span>
-          </SheetDescription>
-        </div>
 
-        {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Selected Orders Section */}
-          <div>
-            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
-              Selected Orders ({selectedOrders.length})
-            </h3>
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+          <div className="w-full h-px bg-[#E5E5E2] my-2" />
+
+          {/* Section: Selected Orders */}
+          <div className="space-y-2">
+            <div className="text-[12px] font-semibold text-[#171A1F]">Selected orders</div>
+            <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
               {selectedOrders.map((order) => (
                 <div
                   key={order.id}
-                  className="flex items-center justify-between p-3 rounded-md border border-border bg-muted/30"
+                  className="flex items-center justify-between p-3 rounded-[6px] bg-[#F6F6F3] border border-[#E5E5E2]/80 h-[54px]"
                 >
-                  <div>
-                    <div className="font-semibold text-xs text-[#18385F] dark:text-sky-400">
+                  <div className="min-w-0 pr-2">
+                    <div className="text-[11px] font-medium text-[#171A1F] truncate">
                       {order.order_number} · {order.client_name}
                     </div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">
-                      {order.district || "Colombo"} · {order.delivery_window || "Standard window"}
+                    <div className="text-[10px] text-[#6B7280] truncate mt-0.5">
+                      {order.district || "Colombo"} · {order.delivery_window || "Standard"}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold text-foreground">{Math.round(order.weight_kg)} kg</span>
+                  <div className="text-[11px] font-semibold text-[#171A1F] shrink-0">
+                    {Math.round(order.weight_kg)} kg
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Compatible Vehicles Section */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                Compatible Fleet Vehicles
-              </h3>
-              <span className="text-[11px] text-muted-foreground">
-                {vehicles.length} in fleet
-              </span>
-            </div>
-
-            <div className="space-y-2.5">
+          {/* Section: Compatible Vehicles */}
+          <div className="space-y-2 mt-2">
+            <div className="text-[12px] font-semibold text-[#171A1F]">Compatible vehicles</div>
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
               {vehicles.map((v) => {
                 const isTempCompatible = !requiresChilled || v.temperature_mode?.toLowerCase() === "reefer";
                 const isOperational = v.status?.toLowerCase() !== "unavailable";
                 const isEligible = isTempCompatible && isOperational;
 
-                // Simulated load percentage calculation
-                const baseWeight = v.capacity_kg * 0.45; // simulated existing load
+                // Projected capacity calculation
+                const baseWeight = v.capacity_kg * 0.45;
                 const projectedPct = Math.min(100, Math.round(((baseWeight + totalWeight) / v.capacity_kg) * 100));
 
-                let matchBadge = null;
+                let matchLabel = "";
+                let matchColor = "";
                 if (!isTempCompatible) {
-                  matchBadge = (
-                    <span className="text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
-                      Temp mismatch
-                    </span>
-                  );
+                  matchLabel = "Temp mismatch";
+                  matchColor = "text-[#DC2626]";
                 } else if (!isOperational) {
-                  matchBadge = (
-                    <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
-                      Under maintenance
-                    </span>
-                  );
+                  matchLabel = "Unavailable";
+                  matchColor = "text-[#6B7280]";
                 } else if (projectedPct > 90) {
-                  matchBadge = (
-                    <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
-                      Near limit
-                    </span>
-                  );
+                  matchLabel = "Near limit";
+                  matchColor = "text-[#A37A3B]";
                 } else {
-                  matchBadge = (
-                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
-                      Best match
-                    </span>
-                  );
+                  matchLabel = "Best match";
+                  matchColor = "text-[#166534]";
                 }
 
                 const isSelected = selectedVehicleId === v.id;
@@ -230,48 +196,50 @@ export function QuickAllocationDrawer({
                     onClick={() => {
                       if (isEligible) setSelectedVehicleId(v.id);
                     }}
-                    className={`relative flex items-center justify-between p-3.5 rounded-lg border transition-all ${
+                    className={`relative flex items-center justify-between p-3 rounded-[6px] border transition-all h-[68px] ${
                       isSelected
-                        ? "border-[#18385F] bg-sky-50/50 dark:bg-sky-950/30 ring-1 ring-[#18385F]"
+                        ? "bg-[#F0FDF4] border-[#18385F] ring-1 ring-[#18385F]"
                         : isEligible
-                        ? "border-border hover:border-slate-400 cursor-pointer bg-card"
-                        : "border-border/60 bg-muted/40 opacity-60 cursor-not-allowed"
+                        ? "bg-white border-[#E5E5E2] hover:border-slate-400 cursor-pointer"
+                        : "bg-[#FAFAFA] border-[#E5E5E2] opacity-60 cursor-not-allowed"
                     }`}
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {/* Radio button circle */}
                       <div
-                        className={`size-4 rounded-full border flex items-center justify-center ${
+                        className={`size-4 rounded-full border flex items-center justify-center shrink-0 ${
                           isSelected
-                            ? "border-[#18385F] bg-[#18385F] text-white"
-                            : "border-slate-300 bg-card"
+                            ? "border-[#18385F] bg-[#18385F]"
+                            : "border-[#C8824333] bg-white"
                         }`}
                       >
                         {isSelected && <div className="size-1.5 rounded-full bg-white" />}
                       </div>
 
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-sm text-foreground">{v.code}</span>
-                          <span className="text-xs text-muted-foreground capitalize">
-                            · {v.vehicle_type} ({v.temperature_mode})
-                          </span>
+                      <div className="min-w-0">
+                        <div className="text-[12px] font-semibold text-[#171A1F]">
+                          {v.code}
                         </div>
-                        <div className="text-[11px] text-muted-foreground mt-0.5">
-                          Capacity: {v.capacity_kg} kg · Depot: {v.depot_name}
+                        <div className="text-[10px] text-[#6B7280] truncate capitalize mt-0.5">
+                          {v.vehicle_type} ({v.temperature_mode}) · {v.depot_name}
                         </div>
                       </div>
                     </div>
 
-                    <div className="text-right flex flex-col items-end gap-1">
+                    <div className="text-right shrink-0">
                       {isEligible ? (
                         <>
-                          <span className="text-xs font-semibold text-foreground">
+                          <div className="text-[10px] font-medium text-[#171A1F]">
                             {projectedPct}% after allocation
-                          </span>
-                          {matchBadge}
+                          </div>
+                          <div className={`text-[10px] font-semibold ${matchColor} mt-0.5`}>
+                            {matchLabel}
+                          </div>
                         </>
                       ) : (
-                        matchBadge
+                        <div className={`text-[10px] font-semibold ${matchColor}`}>
+                          {matchLabel}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -281,34 +249,46 @@ export function QuickAllocationDrawer({
           </div>
 
           {errorMessage && (
-            <div className="p-3 text-xs rounded-md bg-rose-50 border border-rose-200 text-rose-700 flex items-center gap-2">
-              <AlertTriangle className="size-4 shrink-0" />
+            <div className="p-2.5 text-[11px] rounded-[6px] bg-[#FDF2F2] border border-[#FEE2E2] text-[#DC2626] flex items-center gap-2">
+              <AlertTriangle className="size-3.5 shrink-0" />
               <span>{errorMessage}</span>
             </div>
           )}
-        </div>
 
-        {/* Footer */}
-        <SheetFooter className="p-4 border-t border-border bg-card flex flex-row items-center justify-end gap-3 sm:space-x-0">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="text-xs h-9"
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            onClick={handleConfirmAllocation}
-            disabled={!selectedVehicleId || isSubmitting}
-            className="bg-[#18385F] hover:bg-[#122b49] text-white text-xs h-9 px-5 transition-all"
-          >
-            {isSubmitting ? "Allocating..." : "Confirm Allocation"}
-          </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
+          {/* Footer matching Figma #44:2341 & #44:2343 */}
+          <div className="flex items-center justify-between gap-3 pt-3 mt-1 border-t border-[#E5E5E2]">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onClose}
+              disabled={isSubmitting}
+              className="w-[110px] h-10 text-[12px] font-semibold text-[#171A1F] border-[#E5E5E2] hover:bg-slate-50 rounded-[6px]"
+            >
+              Cancel
+            </Button>
+
+            <Button
+              type="button"
+              onClick={() => setIsConstraintReviewOpen(true)}
+              disabled={!selectedVehicleId || isSubmitting}
+              className="w-[258px] h-10 text-[12px] font-semibold bg-[#18385F] hover:bg-[#122b49] text-white rounded-[6px] shadow-sm flex items-center justify-center gap-1.5"
+            >
+              <ShieldCheck className="size-4" />
+              Review Constraints
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Constraint Review Modal (Figma Frame 163:2021) */}
+      <ConstraintReviewModal
+        isOpen={isConstraintReviewOpen}
+        onClose={() => setIsConstraintReviewOpen(false)}
+        onConfirm={handleConfirmAllocation}
+        selectedOrders={selectedOrders}
+        selectedVehicle={selectedVehicle}
+        isSubmitting={isSubmitting}
+      />
+    </>
   );
 }

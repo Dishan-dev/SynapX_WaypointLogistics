@@ -6,9 +6,11 @@ import { OrdersTable } from "@/components/dispatcher/orders/OrdersTable";
 import { OrdersFilterBar } from "@/components/dispatcher/orders/OrdersFilterBar";
 import { QuickAllocationDrawer } from "@/components/dispatcher/orders/QuickAllocationDrawer";
 import { LateOrdersDrawer } from "@/components/dispatcher/orders/LateOrdersDrawer";
+import { CapacityShortfallModal } from "@/components/dispatcher/orders/CapacityShortfallModal";
+import { AllocationSuccessBanner } from "@/components/dispatcher/orders/AllocationSuccessBanner";
 import { MetricCard } from "@/components/dispatcher/MetricCard";
 import { Button } from "@/components/ui/button";
-import { Clock, RefreshCw } from "lucide-react";
+import { AlertCircle, Clock, RefreshCw } from "lucide-react";
 import { fetchWithFallback } from "@/lib/api";
 
 export default function DispatcherOrdersPage() {
@@ -24,9 +26,16 @@ export default function DispatcherOrdersPage() {
   });
   const [isLoading, setIsLoading] = useState(true);
 
-  // Drawers
+  // Drawers and Modals
   const [isAllocationOpen, setIsAllocationOpen] = useState(false);
   const [isLateOrdersOpen, setIsLateOrdersOpen] = useState(false);
+  const [isCapacityShortfallOpen, setIsCapacityShortfallOpen] = useState(false);
+
+  // Success Banner
+  const [successBanner, setSuccessBanner] = useState<{
+    vehicleCode: string;
+    count: number;
+  } | null>(null);
 
   // Selection
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
@@ -36,7 +45,7 @@ export default function DispatcherOrdersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [brandFilter, setBrandFilter] = useState("all");
   const [districtFilter, setDistrictFilter] = useState("all");
-  const [dateFilter, setDateFilter] = useState("26 Sep 2026");
+  const [dateFilter, setDateFilter] = useState("27 Jun 2026");
 
   // Fetch orders and metrics
   const fetchOrdersAndMetrics = useCallback(async () => {
@@ -113,12 +122,12 @@ export default function DispatcherOrdersPage() {
     }
   };
 
-  const handleDeferOrder = async (order: Order) => {
+  const handleDeferOrder = async (order: Order, reason?: string) => {
     try {
       const res = await fetchWithFallback(`/api/v1/orders/${order.id}/defer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: "Capacity limitation" }),
+        body: JSON.stringify({ reason: reason || "Capacity limitation" }),
       });
       if (res.ok) {
         setSelectedOrderIds((prev) => prev.filter((id) => id !== order.id));
@@ -129,45 +138,69 @@ export default function DispatcherOrdersPage() {
     }
   };
 
-  const handleAllocationSuccess = () => {
+  const handleAllocationSuccess = (vehicleCode: string, count: number) => {
     setSelectedOrderIds([]);
+    setSuccessBanner({ vehicleCode, count });
     fetchOrdersAndMetrics();
   };
 
   return (
-    <div className="space-y-6">
-      {/* 01 Header & Late Orders Banner */}
+    <div className="space-y-6 relative">
+      {/* Allocation Success Toast matching Figma frame 30:672 */}
+      {successBanner && (
+        <AllocationSuccessBanner
+          allocatedCount={successBanner.count}
+          vehicleCode={successBanner.vehicleCode}
+          onDismiss={() => setSuccessBanner(null)}
+        />
+      )}
+
+      {/* 01 Header & Alerts */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-[#171A1F] dark:text-foreground">
             Orders
           </h1>
           <p className="text-sm text-[#6B7280] dark:text-muted-foreground mt-1">
-            Review confirmed orders, select compatible deliveries, and start allocation.
+            Manage the order queue by operating date, status, and allocation readiness.
           </p>
         </div>
 
-        {/* Late Orders Trigger Card matching Figma */}
-        <div className="flex items-center justify-between gap-4 p-3.5 px-4 rounded-lg bg-[#FBF6EC] border border-[#EBE3D3] max-w-md w-full lg:w-auto shadow-xs">
-          <div className="flex items-start gap-2.5">
-            <span className="size-2 rounded-full bg-[#A37A3B] mt-1.5 shrink-0" />
-            <div>
-              <div className="text-xs font-semibold text-[#171A1F]">Planning closed · 4:00 PM</div>
-              <div className="text-[11px] text-[#6B7280]">
-                {lateOrders.length > 0
-                  ? `${lateOrders.length} late orders queued for next operating day`
-                  : "All orders allocated on schedule"}
+        {/* Action Triggers: Late Orders & Capacity Shortfall Warning */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Capacity Shortfall Warning matching Figma frame 229:2309 */}
+          <div className="flex items-center justify-between gap-3 p-3 px-3.5 rounded-lg bg-[#FDF2F2] border border-[#FEE2E2] shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="size-2 rounded-full bg-[#DC2626] shrink-0" />
+              <div className="text-xs font-semibold text-[#171A1F]">Capacity Shortfall</div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsCapacityShortfallOpen(true)}
+              className="text-xs h-7 bg-white border-[#FEE2E2] text-[#DC2626] hover:bg-[#FDF2F2] font-semibold shrink-0"
+            >
+              Review Shortfall
+            </Button>
+          </div>
+
+          {/* Late Orders Trigger Card matching Figma frame 148:1331 */}
+          <div className="flex items-center justify-between gap-3 p-3 px-3.5 rounded-lg bg-[#FBF6EC] border border-[#EBE3D3] shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="size-2 rounded-full bg-[#A37A3B] shrink-0" />
+              <div className="text-xs font-semibold text-[#171A1F]">
+                4:00 PM Cutoff · {lateOrders.length} Late
               </div>
             </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsLateOrdersOpen(true)}
+              className="text-xs h-7 bg-white border-[#EBE3D3] text-[#18385F] hover:bg-[#FBF6EC] font-semibold shrink-0"
+            >
+              View Late Orders
+            </Button>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setIsLateOrdersOpen(true)}
-            className="text-xs h-8 bg-card border-border text-[#18385F] hover:bg-slate-50 font-medium shrink-0"
-          >
-            View Late Orders
-          </Button>
         </div>
       </div>
 
@@ -188,8 +221,8 @@ export default function DispatcherOrdersPage() {
       {/* 03 Summary Metrics Cards matching Figma 03 Summary Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard
-          title="Confirmed"
-          value={metrics.confirmed}
+          title="Total Orders"
+          value={metrics.total_orders}
           className="border-border bg-card"
         />
         <MetricCard
@@ -198,14 +231,14 @@ export default function DispatcherOrdersPage() {
           className="border-border bg-card text-[#18385F]"
         />
         <MetricCard
+          title="Allocated"
+          value={metrics.allocated}
+          className="border-border bg-card text-[#166534]"
+        />
+        <MetricCard
           title="Deferred"
           value={metrics.deferred}
           className="border-border bg-card text-amber-700"
-        />
-        <MetricCard
-          title="Priority"
-          value={metrics.priority}
-          className="border-border bg-card text-orange-700"
         />
       </div>
 
@@ -220,7 +253,7 @@ export default function DispatcherOrdersPage() {
         isLoading={isLoading}
       />
 
-      {/* Quick Allocation Sheet Drawer */}
+      {/* Quick Allocation Sheet Drawer with Constraint Review (Figma Frames 9:370 & 163:2021) */}
       <QuickAllocationDrawer
         isOpen={isAllocationOpen}
         onClose={() => setIsAllocationOpen(false)}
@@ -228,7 +261,7 @@ export default function DispatcherOrdersPage() {
         onAllocationSuccess={handleAllocationSuccess}
       />
 
-      {/* Queued Late Orders Drawer */}
+      {/* Queued Late Orders Drawer (Figma Frame 148:1331) */}
       <LateOrdersDrawer
         isOpen={isLateOrdersOpen}
         onClose={() => setIsLateOrdersOpen(false)}
@@ -237,6 +270,12 @@ export default function DispatcherOrdersPage() {
           fetchLateOrders();
           fetchOrdersAndMetrics();
         }}
+      />
+
+      {/* Capacity Shortfall Warning Modal (Figma Frame 229:2309) */}
+      <CapacityShortfallModal
+        isOpen={isCapacityShortfallOpen}
+        onClose={() => setIsCapacityShortfallOpen(false)}
       />
     </div>
   );
