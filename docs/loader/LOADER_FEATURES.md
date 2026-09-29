@@ -101,3 +101,15 @@ Each person owns whole features (backend + frontend), so you don't edit the same
 - **Dispatcher team:** run/stop/plan-version models, how plan changes and decisions reach the loader, exceptions queue for flags.
 - **Driver team:** what "Ready to depart" hands over.
 - **Not designed yet:** Issues tab list, Log tab, More tab, bell notifications.
+
+## Rules for Claude Code (both of us)
+
+- Read the three files in `docs/loader/` before starting any task.
+- Plan first; show the plan and wait for OK before changing code.
+- Only touch your own features (table above). Ask before editing the other person's files.
+- UI: use the Figma connection (page "02 — Loader") and follow `frontend/AGENTS.md`; loader touch targets are 48 px; shared loader components live in `frontend/components/loader/`.
+- Backend: endpoint → service → model/schema; add tests.
+- `backend/.env` points at the **shared Neon database** — never run migrations, seed scripts or deletes against it without asking. Use a local Postgres for development.
+- Don't change shared models (`Order`, `DispatchTrip`, `Shipment`) without flagging it first.
+- Use `graphify query "<question>"` to find code before grepping.
+- Small commits: `type(loader): description`. Never commit env files, `.venv/`, `node_modules/`, `graphify-out/`, `.gitattributes`.
