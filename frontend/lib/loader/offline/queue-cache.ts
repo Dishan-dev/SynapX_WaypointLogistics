@@ -14,7 +14,11 @@ export interface LoadedQueue extends CachedQueue {
   source: QueueSource;
 }
 
-async function cachedQueue(dock: string): Promise<CachedQueue | undefined> {
+/** Fired on window after a fresh queue is loaded; detail is the CachedQueue. */
+export const QUEUE_EVENT = "waypoint-loader-queue";
+
+/** This tablet's last copy of the dock's queue. */
+export async function cachedQueue(dock: string): Promise<CachedQueue | undefined> {
   try {
     return await getCachedQueue(dock);
   } catch {
@@ -35,6 +39,7 @@ export async function loadQueue(transport: Transport, dock: string): Promise<Loa
     } catch {
       // No IndexedDB: the queue still shows, it just is not kept.
     }
+    window.dispatchEvent(new CustomEvent<CachedQueue>(QUEUE_EVENT, { detail: entry }));
     return { ...entry, source: "server" };
   } catch (err) {
     if (!(err instanceof NetworkError)) throw err;
@@ -73,7 +78,9 @@ export async function withLocalRuns(queue: RunQueue): Promise<RunQueue> {
             orders_loaded: run.orders_loaded,
             orders_checked: run.orders_checked,
             orders_total: run.orders_total,
-            alert: card.alert ?? planChangeAlert(run),
+            // The tablet's copy decides the plan alert (warning tone, per the
+            // contract); other alerts (issues, sign-off) stay the server's.
+            alert: planChangeAlert(run) ?? (card.alert?.tone === "warning" ? null : card.alert),
           };
         }),
       ),

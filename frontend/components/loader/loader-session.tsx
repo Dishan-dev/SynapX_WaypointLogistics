@@ -4,6 +4,8 @@ import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { dockLabel, userLabel } from "@/lib/loader/format";
+import type { CachedQueue } from "@/lib/loader/offline/db";
+import { cachedQueue, QUEUE_EVENT } from "@/lib/loader/offline/queue-cache";
 import {
   endReason,
   endSession,
@@ -35,9 +37,10 @@ function useHydrated(): boolean {
  * sign-in: after a sign-out here it says why; otherwise (never signed in, or
  * signed out in another tab) it comes back to the same page afterwards.
  */
-export function SessionGate({ issueCount, children }: { issueCount?: number; children: React.ReactNode }) {
+export function SessionGate({ children }: { children: React.ReactNode }) {
   const stored = useStoredSession();
   const hydrated = useHydrated();
+  const issueCount = useIssueCount(stored?.session.dock);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -63,6 +66,31 @@ export function SessionGate({ issueCount, children }: { issueCount?: number; chi
       <IdleSignOut />
     </LoaderShell>
   );
+}
+
+/**
+ * Open issues at the dock for the Issues tab badge: the last summary this
+ * tablet loaded, updated whenever the queue loads again.
+ */
+function useIssueCount(dock: string | undefined): number | undefined {
+  const [count, setCount] = React.useState<number>();
+  React.useEffect(() => {
+    if (!dock) return;
+    let cancelled = false;
+    void cachedQueue(dock).then((cached) => {
+      if (!cancelled && cached) setCount(cached.summary.issues.count);
+    });
+    const onQueue = (e: Event) => {
+      const loaded = (e as CustomEvent<CachedQueue>).detail;
+      if (loaded.dock === dock) setCount(loaded.summary.issues.count);
+    };
+    window.addEventListener(QUEUE_EVENT, onQueue);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(QUEUE_EVENT, onQueue);
+    };
+  }, [dock]);
+  return count;
 }
 
 /**

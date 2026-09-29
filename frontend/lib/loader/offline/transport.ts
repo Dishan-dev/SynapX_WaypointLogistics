@@ -456,12 +456,34 @@ export function simulateMockPlanChange(code: string): Run | undefined {
   if (!run) return undefined;
 
   const version = run.current_plan_version + 1;
+  const now = new Date().toISOString();
+  // The diff reads from the plan last confirmed (contract "Plan diff").
+  const confirmed =
+    run.unacknowledged_plan_version === null
+      ? run.current_plan_version
+      : (run.acknowledged_plan_version ?? run.current_plan_version - 1);
+  const wasReady = run.status === "ready_to_depart";
   let marked = false;
   const next = withRecomputedCounts({
     ...run,
     current_plan_version: version,
     unacknowledged_plan_version: version,
-    plan: { ...run.plan, version, published_at: new Date().toISOString(), acknowledged_at: null, acknowledged_by: null },
+    acknowledged_plan_version: confirmed,
+    plan: { ...run.plan, version, published_at: now, acknowledged_at: null, acknowledged_by: null },
+    plan_change: {
+      from_version: confirmed,
+      to_version: version,
+      published_at: now,
+      summary: "Simulated plan change (dev kit).",
+      planned_weight_before_kg: run.capacity.planned_weight_kg,
+      planned_weight_after_kg: run.capacity.planned_weight_kg,
+      planned_volume_before_m3: run.capacity.planned_volume_m3,
+      planned_volume_after_m3: run.capacity.planned_volume_m3,
+      checks_saved: run.orders_loaded,
+      was_ready_at: wasReady ? now : null,
+    },
+    // Runs cached before L7 get the release lock from here on.
+    release_blockers: run.release_blockers ?? [],
     stops: run.stops.map((stop) => ({
       ...stop,
       orders: stop.orders.map((order) => {
@@ -471,7 +493,8 @@ export function simulateMockPlanChange(code: string): Run | undefined {
       }),
     })),
   });
-  const reopened = run.status === "loaded" && next.orders_checked < next.orders_total;
+  // A new plan reopens a Ready or fully loaded run (L7).
+  const reopened = wasReady || (run.status === "loaded" && next.orders_checked < next.orders_total);
   state[code] = { ...next, status: reopened ? "loading" : run.status };
   saveMockState(state);
   return state[code];
