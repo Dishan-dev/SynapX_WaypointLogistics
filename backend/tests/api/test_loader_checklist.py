@@ -74,8 +74,11 @@ def row_for(db, run, number):
     ).scalars().one()
 
 
-def publish_v3(db, run, **changes):
-    LoaderService.simulate_plan_change(db, run, SimulatedPlanChangeRequest(**changes))
+def publish_v3(db, run, acknowledged=True, **changes):
+    """Publish v3. Acknowledged by default: row writes wait for that."""
+    revision = LoaderService.simulate_plan_change(db, run, SimulatedPlanChangeRequest(**changes))
+    if acknowledged:
+        revision.acknowledged_at = revision.published_at
     db.flush()
 
 

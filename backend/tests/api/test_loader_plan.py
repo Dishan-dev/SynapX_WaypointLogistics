@@ -368,3 +368,78 @@ def test_an_unload_against_an_old_plan_is_409(loader_client, db_session):
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "PLAN_VERSION_STALE"
     assert row_for(db_session, run, "ORD0092308").state == RunOrderState.TAKE_OFF
+
+
+# --- row writes wait for the acknowledgement ---------------------------------
+
+
+def row_write(client, verb, number, action_id=None, plan_version=3):
+    method = "DELETE" if verb == "uncheck" else "POST"
+    path = "check" if verb == "uncheck" else verb
+    return client.request(
+        method,
+        f"{BASE}/runs/{RUN}/orders/{number}/{path}",
+        json={"client_action_id": action_id or str(uuid.uuid4()), "plan_version": plan_version},
+    )
+
+
+def test_every_row_write_waits_for_the_acknowledgement(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+
+    # The acknowledgement is checked before the row's own state.
+    for verb, number in [
+        ("check", "ORD0092302"),
+        ("uncheck", "ORD0092301"),
+        ("recheck", "ORD0092303"),
+        ("unload", "ORD0092308"),
+    ]:
+        response = row_write(loader_client, verb, number)
+        assert response.status_code == 409, (verb, response.text)
+        detail = response.json()["detail"]
+        assert detail["code"] == "PLAN_NOT_ACKNOWLEDGED", verb
+        assert detail["unacknowledged_plan_version"] == 3
+
+
+def test_row_writes_work_again_once_acknowledged(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+    assert row_write(loader_client, "check", "ORD0092302").status_code == 409
+
+    acknowledge(loader_client, 3)
+
+    assert row_write(loader_client, "check", "ORD0092302").status_code == 200
+
+
+def test_a_refused_write_changes_nothing(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+
+    row_write(loader_client, "unload", "ORD0092308")
+
+    assert row_for(db_session, run, "ORD0092308").state == RunOrderState.TAKE_OFF
+    assert activity(db_session, run, "order_unloaded") == []
+
+
+def test_a_replay_is_still_200_while_a_newer_plan_waits(loader_client, db_session):
+    """Accepted on acknowledged v3, replayed after v4 lands unread: already done."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+    action_id = str(uuid.uuid4())
+    assert row_write(loader_client, "check", "ORD0092302", action_id=action_id).status_code == 200
+    publish(db_session, run, dont_load_order_numbers=["ORD0092319"])
+
+    replay = row_write(loader_client, "check", "ORD0092302", action_id=action_id)
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["unacknowledged_plan_version"] == 4
+
+
+def test_a_stale_write_is_stale_before_it_is_unacknowledged(loader_client, db_session):
+    """A v2 tap after v3 lands says the plan changed, the more useful answer."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+
+    response = row_write(loader_client, "check", "ORD0092302", plan_version=2)
+
+    assert response.json()["detail"]["code"] == "PLAN_VERSION_STALE"

@@ -99,6 +99,29 @@ class StalePlanVersionError(InvalidStateTransitionError):
         }
 
 
+class PlanNotAcknowledgedError(InvalidStateTransitionError):
+    """A row write on a plan version nobody has acknowledged yet.
+
+    The tablet shows the plan-change takeover until the loader acknowledges;
+    this is the server's side of that, so a tablet that missed the takeover
+    still cannot check against a plan it never read.
+    """
+
+    def __init__(self, run: DeliveryRun):
+        super().__init__(
+            f"Plan v{run.current_plan_version} has not been acknowledged; read the change first.",
+            current_state=f"v{run.current_plan_version} unacknowledged",
+            target_state="acknowledged",
+            entity="DeliveryRun",
+        )
+        self.code = "PLAN_NOT_ACKNOWLEDGED"
+        self.details = {
+            "entity": "DeliveryRun",
+            "entity_id": run.code,
+            "unacknowledged_plan_version": run.current_plan_version,
+        }
+
+
 class ClientActionIdReusedError(InvalidStateTransitionError):
     """A client_action_id already recorded for a different order or action.
 
@@ -371,7 +394,8 @@ class LoaderService:
            tap was applied before, so nothing is applied again. It comes before
            the stale-plan check on purpose: a check accepted under v2 and
            replayed after v3 is published must still answer 200, not 409.
-        2. Stale plan: refuse a tap made against an older plan version.
+        2. Stale plan: refuse a tap made against an older plan version, and
+           any tap while the current version is still unacknowledged.
         3. Transition the row, then roll the change up into stop, run,
            capacity and the activity log - all in one savepoint, so a racing
            replay of the same id loses on the unique constraint instead of
@@ -397,6 +421,10 @@ class LoaderService:
                 target_state=action.value,
                 entity="DeliveryRun",
             )
+
+        current = LoaderService.get_revision(db, run, run.current_plan_version)
+        if current is not None and current.acknowledged_at is None:
+            raise PlanNotAcknowledgedError(run)
 
         row = LoaderService._current_row(db, run, order_number)
         if row.state in ALREADY_DONE[action]:
