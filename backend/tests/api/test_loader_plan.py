@@ -443,3 +443,186 @@ def test_a_stale_write_is_stale_before_it_is_unacknowledged(loader_client, db_se
     response = row_write(loader_client, "check", "ORD0092302", plan_version=2)
 
     assert response.json()["detail"]["code"] == "PLAN_VERSION_STALE"
+
+
+# --- the diff on GET /loader/runs/{code} -------------------------------------
+
+
+def run_body(client):
+    return client.get(f"{BASE}/runs/{RUN}").json()
+
+
+def stop_in(body, outlet_code):
+    return next(s for s in body["stops"] if s["outlet"]["code"] == outlet_code)
+
+
+def order_of(body, number):
+    return next(o for s in body["stops"] for o in s["orders"] if o["order_number"] == number)
+
+
+def test_a_run_with_no_earlier_plan_has_no_diff(loader_client, db_session):
+    """RUN-021 is seeded straight at v2, so there is nothing to compare with."""
+    build_run_021(db_session)
+    db_session.flush()
+
+    body = run_body(loader_client)
+
+    assert body["plan_change"] is None
+    assert body["acknowledged_plan_version"] == 2
+    assert all(s["note"] is None and s["is_new"] is False for s in body["stops"])
+    assert all(o["change_kind"] is None and o["note"] is None for s in body["stops"] for o in s["orders"])
+
+
+def test_the_diff_summarises_the_change(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+
+    change = run_body(loader_client)["plan_change"]
+
+    assert (change["from_version"], change["to_version"]) == (2, 3)
+    assert (change["planned_weight_before_kg"], change["planned_weight_after_kg"]) == (4920.0, 4690.0)
+    assert (change["planned_volume_before_m3"], change["planned_volume_after_m3"]) == (23.9, 22.6)
+    # Six orders were aboard at v2 (the fixture's five plus ORD0092308).
+    assert change["checks_saved"] == 6
+    assert change["was_ready_at"] is None
+    assert change["published_at"].endswith("Z")
+
+
+def test_each_order_is_in_its_diff_group(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+
+    body = run_body(loader_client)
+
+    take_off = order_of(body, "ORD0092308")
+    assert (take_off["change_kind"], take_off["changed_in_version"]) == ("unload_from_truck", 3)
+    assert take_off["note"] == "Take off the truck"
+    dont_load = order_of(body, "ORD0092304")
+    assert (dont_load["change_kind"], dont_load["changed_in_version"]) == ("dont_load", 3)
+    assert dont_load["moved_to"] is None and dont_load["deferred_to"] is None
+    new = order_of(body, "ORD0092319")
+    assert (new["change_kind"], new["changed_in_version"]) == ("load_new", 3)
+    # Left alone by the dispatcher.
+    untouched = order_of(body, "ORD0092302")
+    assert (untouched["change_kind"], untouched["changed_in_version"], untouched["note"]) == (None, None, None)
+
+
+def test_a_re_check_row_says_what_it_was_moved_to_reach(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+
+    body = run_body(loader_client)
+
+    # OUT031 loads 2nd, in front of ORD0092308 at OUT027 (1st, deepest).
+    moved = order_of(body, "ORD0092305")
+    assert moved["state"] == "re_check"
+    assert moved["note"] == "Re-check · moved to reach ORD0092308"
+    assert (moved["change_kind"], moved["changed_in_version"]) == (None, 3)
+    # Same stop as the order coming off: nothing had to move to reach it.
+    assert order_of(body, "ORD0092307")["note"] == "Re-check · plan changed"
+
+
+def test_stops_say_how_they_moved(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+
+    body = run_body(loader_client)
+
+    assert (stop_in(body, "OUT028")["note"], stop_in(body, "OUT028")["is_new"]) == ("new stop", True)
+    assert stop_in(body, "OUT027")["note"] == "was Stop 4"
+    assert stop_in(body, "OUT026")["note"] == "was Stop 1"
+    assert stop_in(body, "OUT027")["is_new"] is False
+
+
+def test_an_unloaded_order_stays_in_the_unload_group(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    session = open_session(db_session, run, make_loader(db_session))
+    figma_v3(db_session, run)
+
+    loader_client.post(
+        f"{BASE}/runs/{RUN}/orders/ORD0092308/unload",
+        json={"client_action_id": str(uuid.uuid4()), "plan_version": 3, "loader_session_id": session.id},
+    )
+    order = order_of(run_body(loader_client), "ORD0092308")
+
+    assert order["state"] == "moved"
+    assert order["change_kind"] == "unload_from_truck"
+    assert order["note"] == "Off truck · back in chiller"
+    assert order["unloaded_at"].endswith("Z")
+    assert order["unloaded_by"] == "Saman J."
+
+
+def test_a_rechecked_order_remembers_the_version(loader_client, db_session):
+    """The frontend shows "Re-checked 02:26" rather than "Loaded" for it."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+
+    loader_client.post(
+        f"{BASE}/runs/{RUN}/orders/ORD0092305/recheck",
+        json={"client_action_id": str(uuid.uuid4()), "plan_version": 3},
+    )
+    order = order_of(run_body(loader_client), "ORD0092305")
+
+    assert order["state"] == "loaded"
+    assert (order["changed_in_version"], order["change_kind"], order["note"]) == (3, None, None)
+
+
+def test_the_diff_stays_after_the_acknowledgement(loader_client, db_session):
+    """The updated checklist (T2b) keeps "was Stop 4" and the take-off note."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+
+    body = run_body(loader_client)
+
+    assert body["unacknowledged_plan_version"] is None
+    assert body["acknowledged_plan_version"] == 3
+    assert (body["plan_change"]["from_version"], body["plan_change"]["to_version"]) == (2, 3)
+    assert stop_in(body, "OUT027")["note"] == "was Stop 4"
+
+
+def test_stacked_changes_read_as_one_diff(loader_client, db_session):
+    """v3 and v4 both unread: one diff from v2, with v3's add-then-drop gone."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run, acknowledged=False)
+    publish(db_session, run, dont_load_order_numbers=["ORD0092319"])
+
+    body = run_body(loader_client)
+
+    assert (body["plan_change"]["from_version"], body["plan_change"]["to_version"]) == (2, 4)
+    assert body["unacknowledged_plan_version"] == 4
+    assert body["acknowledged_plan_version"] == 2
+    # Added in v3 and dropped in v4, never loaded: not part of the diff.
+    assert order_of(body, "ORD0092319")["change_kind"] is None
+    # v3's take-off is still outstanding and still says so.
+    take_off = order_of(body, "ORD0092308")
+    assert (take_off["state"], take_off["change_kind"], take_off["changed_in_version"]) == (
+        "take_off", "unload_from_truck", 3,
+    )
+    # Checks are never lost across the two versions.
+    assert body["plan_change"]["checks_saved"] == 6
+
+
+def test_a_change_after_an_acknowledgement_starts_a_new_diff(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+    publish(db_session, run, dont_load_order_numbers=["ORD0092302"])
+
+    body = run_body(loader_client)
+
+    assert (body["plan_change"]["from_version"], body["plan_change"]["to_version"]) == (3, 4)
+    assert order_of(body, "ORD0092302")["change_kind"] == "dont_load"
+    # v3's changes were read already; OUT028 is no longer new against v3.
+    assert order_of(body, "ORD0092319")["change_kind"] is None
+    assert stop_in(body, "OUT028")["note"] is None
+
+
+def test_a_reopened_run_says_when_it_was_ready(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    run.status = RunStatus.READY_TO_DEPART
+    run.released_at = at("01:48")
+    publish(db_session, run, load_new_order_numbers=["ORD0092319"])
+
+    body = run_body(loader_client)
+
+    assert body["status"] == "loading"
+    assert body["plan_change"]["was_ready_at"] == "2026-05-28T01:48:00Z"

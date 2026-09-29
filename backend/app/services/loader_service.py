@@ -5,7 +5,7 @@ Endpoints stay thin; anything that decides something lives here.
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -177,6 +177,8 @@ class LoaderService:
     @staticmethod
     def build_run_detail(db: Session, run: DeliveryRun) -> schemas.RunDetailRead:
         stops = LoaderService.current_stops(db, run)
+        unloads = LoaderService._unloads(db, run)
+        diff = LoaderService._plan_diff(db, run, stops, unloads)
 
         stop_reads: List[schemas.RunStopRead] = []
         loaded = 0
@@ -191,6 +193,7 @@ class LoaderService:
                         loaded += 1
                     if row.state in RESOLVED_STATES:
                         checked += 1
+                unload = unloads.get(row.order_id) if row.state == RunOrderState.MOVED else None
                 order_reads.append(
                     schemas.RunOrderRead(
                         order_number=row.order.order_number,
@@ -201,6 +204,9 @@ class LoaderService:
                         state=row.state,
                         checked_at=row.checked_at,
                         checked_by=row.checked_by.short_name if row.checked_by else None,
+                        unloaded_at=unload.at if unload else None,
+                        unloaded_by=unload.actor.short_name if unload and unload.actor else None,
+                        **(diff.order_fields(row, stop) if diff else {}),
                     )
                 )
             stop_reads.append(
@@ -212,6 +218,7 @@ class LoaderService:
                     status=stop.status,
                     outlet=schemas.OutletRead.model_validate(stop.outlet),
                     orders=order_reads,
+                    **(diff.stop_fields(stop) if diff else {}),
                 )
             )
 
@@ -253,11 +260,98 @@ class LoaderService:
             ),
             plan=plan_read,
             unacknowledged_plan_version=unacknowledged,
+            acknowledged_plan_version=db.execute(
+                select(func.max(PlanRevision.version)).where(
+                    PlanRevision.run_id == run.id,
+                    PlanRevision.acknowledged_at.is_not(None),
+                )
+            ).scalar(),
+            plan_change=diff.summary(db, run, stops) if diff else None,
             stops=stop_reads,
             orders_loaded=loaded,
             orders_checked=checked,
             orders_total=total,
         )
+
+    @staticmethod
+    def _plan_diff(
+        db: Session, run: DeliveryRun, stops: List[RunStop], unloads: dict
+    ) -> Optional["PlanDiff"]:
+        """The latest change as one diff, or None when there is nothing to compare.
+
+        The window is the versions the latest acknowledgement covers - every
+        version still unread, or, once read, every version acknowledged in that
+        same tap. The base is the version just before it: what the loader had
+        confirmed before this change. So v2 -> v3 -> v4 unread reads as v2 -> v4,
+        and after the acknowledgement the checklist keeps showing that diff.
+
+        None when the base has no stops on record (a run seeded straight at v2).
+        """
+        revisions = {
+            r.version: r
+            for r in db.execute(select(PlanRevision).filter_by(run_id=run.id)).scalars()
+        }
+        current = revisions.get(run.current_plan_version)
+        if current is None:
+            return None
+
+        first = current.version
+        while first - 1 in revisions and (
+            revisions[first - 1].acknowledged_at == current.acknowledged_at
+        ):
+            first -= 1
+        base = first - 1
+
+        base_stops = db.execute(
+            select(RunStop).filter_by(run_id=run.id, plan_version=base)
+        ).scalars().all()
+        if not base_stops:
+            return None
+
+        window = [revisions[v] for v in range(first, current.version + 1) if v in revisions]
+        versions = [r.version for r in window]
+
+        changes = db.execute(
+            select(PlanRevisionChange)
+            .join(PlanRevision, PlanRevisionChange.revision_id == PlanRevision.id)
+            .where(PlanRevision.run_id == run.id, PlanRevision.version.in_(versions))
+            .order_by(PlanRevision.version, PlanRevisionChange.position, PlanRevisionChange.id)
+        ).scalars().all()
+
+        rechecks = db.execute(
+            select(LoadingCheck)
+            .join(RunStopOrder, LoadingCheck.run_stop_order_id == RunStopOrder.id)
+            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+            .where(
+                RunStop.run_id == run.id,
+                LoadingCheck.action == CheckAction.RECHECK,
+                LoadingCheck.plan_version.in_(versions),
+            )
+        ).scalars().all()
+
+        return PlanDiff(
+            base_version=base,
+            window=window,
+            base_stops=base_stops,
+            changes=changes,
+            rechecked={c.run_stop_order.order_id: c.plan_version for c in rechecks},
+            unloaded_in_window={
+                order_id for order_id, check in unloads.items() if check.plan_version in versions
+            },
+            current_stops=stops,
+        )
+
+    @staticmethod
+    def _unloads(db: Session, run: DeliveryRun) -> dict:
+        """The latest UNLOAD check per order on this run, by order id."""
+        checks = db.execute(
+            select(LoadingCheck)
+            .join(RunStopOrder, LoadingCheck.run_stop_order_id == RunStopOrder.id)
+            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+            .where(RunStop.run_id == run.id, LoadingCheck.action == CheckAction.UNLOAD)
+            .order_by(LoadingCheck.at, LoadingCheck.id)
+        ).scalars().all()
+        return {c.run_stop_order.order_id: c for c in checks}
 
     @staticmethod
     def build_issue_detail(db: Session, issue: LoaderIssue) -> schemas.IssueDetailRead:
@@ -1123,6 +1217,133 @@ class LoaderService:
         ).scalars().first()
         if outstanding is None and issue.run.status == RunStatus.ISSUE_FLAGGED:
             issue.run.status = RunStatus.LOADING
+
+
+def _naive_utc(value: datetime) -> datetime:
+    """Compare stored (naive UTC) and fresh (aware UTC) datetimes safely."""
+    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+
+
+class PlanDiff:
+    """The latest plan change read against the plan before it.
+
+    Built by LoaderService._plan_diff; this only turns it into the extra fields
+    on the checklist read. Which group an order is in follows where the order
+    is NOW, not only what each version said, so stacked changes collapse:
+    added in v3 and dropped again in v4 before loading is no change at all.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_version: int,
+        window: List[PlanRevision],
+        base_stops: List[RunStop],
+        changes: List[PlanRevisionChange],
+        rechecked: dict,
+        unloaded_in_window: set,
+        current_stops: List[RunStop],
+    ):
+        self.base_version = base_version
+        self.window = window
+        self.to_version = window[-1].version
+        self.base_sequence = {s.outlet_id: s.stop_sequence for s in base_stops}
+        self.base_rows = {row.order_id: row for s in base_stops for row in s.orders}
+        # Latest change per order across the window: the dispatcher's words.
+        self.changes = {c.order_id: c for c in changes if c.order_id is not None}
+        self.rechecked = rechecked
+        self.unloaded = unloaded_in_window
+        # Orders coming off the truck, with their stop's load position, so a
+        # re-check row can say which order it was moved to reach.
+        self.coming_off = [
+            (stop.load_position, row.order.order_number)
+            for stop in current_stops
+            for row in stop.orders
+            if self._is_unload(row)
+        ]
+
+    def _is_unload(self, row: RunStopOrder) -> bool:
+        return row.state == RunOrderState.TAKE_OFF or (
+            row.state == RunOrderState.MOVED and row.order_id in self.unloaded
+        )
+
+    def _kind(self, row: RunStopOrder) -> Optional[PlanChangeKind]:
+        base = self.base_rows.get(row.order_id)
+        was_on_plan = base is not None and base.state not in OFF_PLAN_STATES
+        if self._is_unload(row):
+            return PlanChangeKind.UNLOAD_FROM_TRUCK
+        if row.state == RunOrderState.MOVED:
+            return PlanChangeKind.DONT_LOAD if was_on_plan else None
+        if not was_on_plan:
+            return PlanChangeKind.LOAD_NEW
+        return None
+
+    def order_fields(self, row: RunStopOrder, stop: RunStop) -> dict:
+        kind = self._kind(row)
+        if kind is not None:
+            change = self.changes.get(row.order_id)
+            note = None
+            if row.state == RunOrderState.TAKE_OFF:
+                note = "Take off the truck"
+            elif kind == PlanChangeKind.UNLOAD_FROM_TRUCK:
+                note = f"Off truck · back in {LoaderService.return_area(row.order)}"
+            return {
+                "change_kind": kind,
+                "changed_in_version": change.revision.version if change else self.to_version,
+                "reason": change.reason if change else None,
+                "note": note,
+            }
+        if row.state == RunOrderState.RE_CHECK:
+            reach = sorted(n for position, n in self.coming_off if position < stop.load_position)
+            return {
+                "changed_in_version": self.to_version,
+                "note": (
+                    f"Re-check · moved to reach {', '.join(reach)}"
+                    if reach else "Re-check · plan changed"
+                ),
+            }
+        if row.state == RunOrderState.LOADED and row.order_id in self.rechecked:
+            return {"changed_in_version": self.rechecked[row.order_id]}
+        return {}
+
+    def stop_fields(self, stop: RunStop) -> dict:
+        before = self.base_sequence.get(stop.outlet_id)
+        if before is None:
+            return {"note": "new stop", "is_new": True}
+        if before != stop.stop_sequence:
+            return {"note": f"was Stop {before}"}
+        return {}
+
+    def summary(self, db: Session, run: DeliveryRun, stops: List[RunStop]) -> schemas.PlanDiffRead:
+        latest = self.window[-1]
+        before = [r for r in self.base_rows.values() if r.state not in OFF_PLAN_STATES]
+
+        # "was Ready 01:48" only when this change is what reopened the run.
+        published = _naive_utc(self.window[0].published_at)
+        reopened = any(
+            _naive_utc(entry.at) >= published
+            for entry in db.execute(
+                select(LoaderActivity).filter_by(run_id=run.id, event_type="load_reopened")
+            ).scalars()
+        )
+        was_ready_at = (
+            run.released_at
+            if reopened and run.released_at and run.status not in CLOSED_RUN_STATES
+            else None
+        )
+
+        return schemas.PlanDiffRead(
+            from_version=self.base_version,
+            to_version=latest.version,
+            published_at=latest.published_at,
+            summary=latest.summary,
+            planned_weight_before_kg=round(sum(r.weight_kg or 0.0 for r in before), 2),
+            planned_weight_after_kg=run.planned_weight_kg,
+            planned_volume_before_m3=round(sum(r.volume_m3 or 0.0 for r in before), 2),
+            planned_volume_after_m3=run.planned_volume_m3,
+            checks_saved=sum(1 for s in stops for r in s.orders if r.checked_at is not None),
+            was_ready_at=was_ready_at,
+        )
 
 
 loader_service = LoaderService()
