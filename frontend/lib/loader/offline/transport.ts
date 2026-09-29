@@ -519,6 +519,13 @@ function withIssueLock(run: Run, issues: LoaderIssue[]): Run {
   return { ...run, status, release_blockers: blockers, release_locked: blockers.length > 0 };
 }
 
+/** Mock transport only, for the dev kit: the newest issue still waiting on the Dispatcher. */
+export function newestWaitingMockIssue(): LoaderIssue | undefined {
+  return loadMockIssues()
+    .filter(WAITING)
+    .sort((a, b) => b.reported_at.localeCompare(a.reported_at))[0];
+}
+
 /**
  * Mock transport only, for the dev kit: what POST /loader/dev/issues/{id}/decide
  * (optionLabel) or …/expire (no label: the default is applied) does on the API.

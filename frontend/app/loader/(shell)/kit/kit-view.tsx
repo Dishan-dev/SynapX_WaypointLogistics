@@ -29,7 +29,7 @@ import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import { TempBadge } from "@/components/loader/temp-badge";
 import { dockPlanSource, loadMapSlots, planSource, runCapacity, stopsInLoadOrder } from "@/lib/loader/format";
-import { simulateMockPlanChange } from "@/lib/loader/offline/transport";
+import { decideMockIssue, newestWaitingMockIssue, simulateMockPlanChange } from "@/lib/loader/offline/transport";
 import { mockQueue, mockRunDetails } from "@/lib/loader/mock-data";
 import type { OrderState, RunOrder } from "@/lib/loader/types";
 
@@ -112,6 +112,31 @@ export function KitView() {
             >
               Simulate plan change
             </LoaderButton>
+          )}
+          {MOCK_TRANSPORT && (
+            <>
+              <LoaderButton
+                variant="secondary"
+                onClick={() => {
+                  const issue = newestWaitingMockIssue();
+                  // The Dispatcher picks the second option when there is one.
+                  if (issue) decideMockIssue(issue.id, (issue.options[1] ?? issue.options[0])?.label);
+                  void flush();
+                }}
+              >
+                Dispatcher answers
+              </LoaderButton>
+              <LoaderButton
+                variant="secondary"
+                onClick={() => {
+                  const issue = newestWaitingMockIssue();
+                  if (issue) decideMockIssue(issue.id);
+                  void flush();
+                }}
+              >
+                Decide-by passes
+              </LoaderButton>
+            </>
           )}
           {run.unacknowledged_plan_version !== null && (
             <LoaderButton onClick={() => void offline.act("acknowledge")}>

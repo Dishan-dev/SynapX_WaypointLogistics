@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { dockLabel, userLabel } from "@/lib/loader/format";
 import type { CachedQueue } from "@/lib/loader/offline/db";
+import { ISSUES_EVENT } from "@/lib/loader/offline/issues-cache";
 import { cachedQueue, QUEUE_EVENT } from "@/lib/loader/offline/queue-cache";
 import {
   endReason,
@@ -70,7 +71,7 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
 
 /**
  * Open issues at the dock for the Issues tab badge: the last summary this
- * tablet loaded, updated whenever the queue loads again.
+ * tablet loaded, updated whenever the queue or the Issues list loads again.
  */
 function useIssueCount(dock: string | undefined): number | undefined {
   const [count, setCount] = React.useState<number>();
@@ -84,10 +85,16 @@ function useIssueCount(dock: string | undefined): number | undefined {
       const loaded = (e as CustomEvent<CachedQueue>).detail;
       if (loaded.dock === dock) setCount(loaded.summary.issues.count);
     };
+    const onIssues = (e: Event) => {
+      const loaded = (e as CustomEvent<{ dock: string; waiting: number }>).detail;
+      if (loaded.dock === dock) setCount(loaded.waiting);
+    };
     window.addEventListener(QUEUE_EVENT, onQueue);
+    window.addEventListener(ISSUES_EVENT, onIssues);
     return () => {
       cancelled = true;
       window.removeEventListener(QUEUE_EVENT, onQueue);
+      window.removeEventListener(ISSUES_EVENT, onIssues);
     };
   }, [dock]);
   return count;

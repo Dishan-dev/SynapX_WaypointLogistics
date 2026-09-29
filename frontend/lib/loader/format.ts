@@ -2,6 +2,8 @@
 // these functions, so a contract rename stays in lib/loader.
 
 import type {
+  IssueType,
+  LoaderIssue,
   LoaderSession,
   LoaderUser,
   MovedTo,
@@ -408,6 +410,39 @@ export function runCardView(run: RunSummary) {
         }
       : undefined,
   };
+}
+
+// ---- Issues ---------------------------------------------------------------------------
+
+export const ISSUE_TYPE_LABELS: Record<IssueType, string> = {
+  missing: "Missing",
+  short: "Short",
+  damaged: "Damaged",
+  wont_fit: "Won’t fit",
+};
+
+/** Sent or seen: the Dispatcher has not answered yet. */
+export function isIssueWaiting(issue: Pick<LoaderIssue, "status">): boolean {
+  return issue.status === "sent" || issue.status === "seen";
+}
+
+/**
+ * Where an issue stands: "Decide by 03:10", "Answered 02:20 · Send 53 of
+ * 56" or "Default applied 03:10 · Send without it".
+ */
+export function issueStatusLine(issue: LoaderIssue): string {
+  const chosen = issue.options.find((o) => o.is_chosen)?.label;
+  const choice = chosen ? ` · ${chosen}` : "";
+  switch (issue.status) {
+    case "sent":
+      return `Decide by ${formatTime(issue.decide_by)}`;
+    case "seen":
+      return `Seen by the Dispatcher · decide by ${formatTime(issue.decide_by)}`;
+    case "decided":
+      return `Answered ${formatTime(issue.decided_at ?? issue.decide_by)}${choice}`;
+    case "default_applied":
+      return `Default applied ${formatTime(issue.decided_at ?? issue.decide_by)}${choice}`;
+  }
 }
 
 // ---- People and place -----------------------------------------------------------------
