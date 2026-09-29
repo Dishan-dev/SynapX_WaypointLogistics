@@ -141,11 +141,15 @@ def test_a_missing_order_has_nothing_aboard(loader_client, db_session):
     assert loaded_units(loader_client)["ORD0092302"] == 0
 
 
-def test_a_flag_without_a_count_takes_nothing_off(loader_client, db_session):
+def test_a_flag_without_a_count_means_the_whole_order_is_affected(loader_client, db_session):
     run, orders = build_run_021(db_session)
-    flag(db_session, run, orders, "ORD0092302", "wont_fit", None)
+    flag(db_session, run, orders, "ORD0092302", "short", None)
+    flag(db_session, run, orders, "ORD0092304", "damaged", None)
+    flag(db_session, run, orders, "ORD0092308", "wont_fit", None)
 
-    assert loaded_units(loader_client)["ORD0092302"] == 46
+    units = loaded_units(loader_client)
+
+    assert (units["ORD0092302"], units["ORD0092304"], units["ORD0092308"]) == (0, 0, 0)
 
 
 def test_re_check_and_an_outstanding_take_off_are_still_aboard(loader_client, db_session):

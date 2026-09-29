@@ -337,16 +337,16 @@ class LoaderService:
 
         - loaded, re_check, take_off (not yet unloaded): every unit is aboard.
         - flagged: missing -> 0; short, damaged or won't fit -> units minus the
-          units flagged (a flag without a count takes nothing off).
+          units flagged; a flag without a count means the whole order is affected (0).
         - to_load, new, moved: nothing aboard.
         """
         units = row.units or 0
         if row.state in (RunOrderState.LOADED, RunOrderState.RE_CHECK, RunOrderState.TAKE_OFF):
             return units
         if row.state == RunOrderState.FLAGGED and issue is not None:
-            if issue.issue_type == IssueType.MISSING:
+            if issue.issue_type == IssueType.MISSING or issue.units_affected is None:
                 return 0
-            return max(units - (issue.units_affected or 0), 0)
+            return max(units - issue.units_affected, 0)
         return 0
 
     @staticmethod

@@ -339,7 +339,7 @@ the truck ("53 of 56 units will be loaded"):
 | Row | `loaded_units` |
 | --- | --- |
 | `loaded`, `re_check`, `take_off` not yet unloaded | `units` — the goods are aboard |
-| `flagged` short · damaged · won't fit | `units − units_affected` of the order's latest issue (a flag without a count takes nothing off) |
+| `flagged` short · damaged · won't fit | `units − units_affected` of the order's latest issue; `0` when `units_affected` is `null` (the whole order is treated as affected) |
 | `flagged` missing | `0` |
 | `to_load`, `new`, `moved` | `0` |
 
