@@ -423,7 +423,7 @@ class LoaderService:
                     row.checked_by_id = None
                 db.flush()
 
-                LoaderService._refresh_stop_status(row.run_stop)
+                LoaderService.refresh_stop_status(row.run_stop)
                 LoaderService.recalculate_capacity(db, run)
                 LoaderService._refresh_run_status(db, run)
 
@@ -526,7 +526,9 @@ class LoaderService:
         return session.loader_user
 
     @staticmethod
-    def _refresh_stop_status(stop: RunStop) -> None:
+    def refresh_stop_status(stop: RunStop) -> None:
+        """complete when every active order is loaded or flagged, loading when
+        any is aboard or resolved, otherwise pending. The seed uses this too."""
         active = [r for r in stop.orders if r.state not in OFF_PLAN_STATES]
         if active and all(r.state in RESOLVED_STATES for r in active):
             stop.status = StopStatus.COMPLETE

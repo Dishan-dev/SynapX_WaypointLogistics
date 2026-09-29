@@ -65,6 +65,7 @@ from app.models.reference import (
     Vehicle,
     VehicleType,
 )
+from app.services.loader_service import LoaderService
 
 # The operating day the whole scenario sits on. Plans are published the evening
 # before (EVE). Both are depot dates; every time below is depot-local too.
@@ -453,6 +454,13 @@ def seed_stops_and_orders(
             if checked:
                 loaded_weight += weight
                 loaded_volume += volume
+
+        # Status follows the rows, by the same rule the check endpoints apply:
+        # all checked -> complete, some -> loading. Hard-coding pending left
+        # OUT031 "pending" with both of its orders already loaded.
+        db.flush()
+        db.refresh(stop, ["orders"])
+        LoaderService.refresh_stop_status(stop)
 
     run.planned_weight_kg = round(planned_weight, 2)
     run.planned_volume_m3 = round(planned_volume, 2)

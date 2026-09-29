@@ -171,3 +171,31 @@ def test_seed_times_are_depot_local_stored_as_utc():
     assert seed.at("21:40", day=seed.EVE) == datetime(2026, 5, 27, 16, 10)
     # Differences are unaffected, so the ETA method checks above still hold.
     assert (seed.at("04:07") - seed.at("03:30")).total_seconds() == 37 * 60
+
+
+def test_seeded_stop_status_follows_its_orders(db_session):
+    """All orders checked -> complete, some -> loading, none -> pending."""
+    from sqlalchemy import select
+
+    from app.models.delivery_run import DeliveryRun, RunStop
+    from app.models.reference import Outlet
+
+    seed.seed_scenario(db_session)
+    db_session.flush()
+
+    run = db_session.execute(select(DeliveryRun).filter_by(code="RUN-021")).scalars().one()
+    status = {
+        outlet_code: stop_status.value
+        for outlet_code, stop_status in db_session.execute(
+            select(Outlet.code, RunStop.status)
+            .join(RunStop, RunStop.outlet_id == Outlet.id)
+            .where(RunStop.run_id == run.id, RunStop.plan_version == run.current_plan_version)
+        )
+    }
+    # t0: OUT031 has both orders in, the other three have one of two.
+    assert status == {
+        "OUT031": "complete",
+        "OUT026": "loading",
+        "OUT030": "loading",
+        "OUT027": "loading",
+    }
