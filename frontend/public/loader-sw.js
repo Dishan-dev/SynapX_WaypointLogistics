@@ -4,19 +4,22 @@
 //
 // Loader-only for now; to be merged into the team PWA-0 worker later.
 
-const VERSION = "loader-v1";
+// v2: adds the sign-in and More pages (sign-in and sign-out work offline).
+const VERSION = "loader-v2";
 const PAGES = `${VERSION}-pages`;
 const STATIC = `${VERSION}-static`;
-const PRECACHE = ["/loader", "/loader.webmanifest", "/loader-icons/icon-192.png", "/loader-icons/icon-512.png"];
+const PRECACHE = ["/loader", "/loader/sign-in", "/loader/more", "/loader.webmanifest", "/loader-icons/icon-192.png", "/loader-icons/icon-512.png"];
 
-// Cache the shell pages plus the build assets the queue page references, so
-// the app opens offline even on the first visit after install.
+// Cache the shell pages plus the build assets the queue, sign-in and More
+// pages reference, so the app opens offline even on the first visit after install.
+const SHELL_PAGES = ["/loader", "/loader/sign-in", "/loader/more"];
+
 async function precache() {
   const pages = await caches.open(PAGES);
   await pages.addAll(PRECACHE);
-  const shell = await pages.match("/loader");
-  if (!shell) return;
-  const html = await shell.text();
+  const html = (
+    await Promise.all(SHELL_PAGES.map(async (url) => (await pages.match(url))?.text() ?? ""))
+  ).join(" ");
   const assets = [...new Set(html.match(/\/_next\/static\/[\w\-.\/~%]+/g) || [])];
   const statics = await caches.open(STATIC);
   await Promise.all(assets.map((url) => statics.add(url).catch(() => undefined)));
@@ -38,7 +41,8 @@ self.addEventListener("activate", (event) => {
 });
 
 // Network first; on failure use the cached copy (for pages, fall back to the
-// cached queue so the shell still opens).
+// cached queue so the shell still opens). Pages match without their query
+// (?next=, ?reason=): the page is the same, and sign-in reads it client-side.
 async function networkFirst(request, fallbackUrl) {
   const cache = await caches.open(PAGES);
   try {
@@ -46,7 +50,7 @@ async function networkFirst(request, fallbackUrl) {
     if (response.ok) cache.put(request, response.clone());
     return response;
   } catch (err) {
-    const cached = await cache.match(request);
+    const cached = await cache.match(request, { ignoreSearch: request.mode === "navigate" });
     if (cached) return cached;
     if (fallbackUrl) {
       const fallback = await cache.match(fallbackUrl);

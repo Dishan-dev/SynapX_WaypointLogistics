@@ -6,6 +6,7 @@ import { applyAction, enqueue, type NewAction } from "@/lib/loader/offline/outbo
 import { rejectedActions, resolveRun, type RunSource } from "@/lib/loader/offline/run-cache";
 import { flushOutbox } from "@/lib/loader/offline/sync";
 import { createTransport, probeConnectivity, type Transport } from "@/lib/loader/offline/transport";
+import { flushSessionEnds } from "@/lib/loader/session";
 import type {
   ActionInput,
   QueuedAction,
@@ -76,6 +77,8 @@ export function LoaderSyncProvider({
     flushing.current = true;
     setSyncing(true);
     try {
+      // Sessions ended while offline go first, before the writes queued after them.
+      await flushSessionEnds(transport);
       const result = await flushOutbox(transport);
       setOnline(!result.offline);
       // A new lastSyncedAt makes every open run refetch; for a PLAN_VERSION_STALE
