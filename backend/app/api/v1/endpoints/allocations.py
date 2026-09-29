@@ -13,7 +13,6 @@ router = APIRouter()
 @router.get("/", response_model=List[AllocationResponse])
 def get_allocations(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100
 ) -> Any:
@@ -35,8 +34,7 @@ def get_allocations(
 @router.post("/", response_model=AllocationResponse, status_code=status.HTTP_201_CREATED)
 def create_allocation(
     allocation_in: AllocationCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ) -> Any:
     """
     Create new allocation.

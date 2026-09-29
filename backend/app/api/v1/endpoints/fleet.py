@@ -12,7 +12,6 @@ router = APIRouter()
 @router.get("/vehicles", response_model=List[VehicleResponse])
 def get_vehicles(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100
 ) -> Any:
@@ -25,8 +24,7 @@ def get_vehicles(
 @router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
 def create_vehicle(
     vehicle_in: VehicleCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ) -> Any:
     """
     Create new vehicle.
@@ -46,7 +44,6 @@ def create_vehicle(
 @router.get("/drivers", response_model=List[DriverProfileResponse])
 def get_drivers(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
     skip: int = 0,
     limit: int = 100
 ) -> Any:

@@ -10,31 +10,33 @@ import {
 import { StatusBadge, StatusVariant } from "./StatusBadge";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
-import { MoreHorizontal } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 interface AllocationTableProps {
-  allocations: any[]; // We will type this properly later when we fetch from API
+  allocations: any[];
+  onViewClick: (allocation: any) => void;
 }
 
-export function AllocationTable({ allocations }: AllocationTableProps) {
-  // Helper to map backend status to frontend badge variants
+export function AllocationTable({ allocations, onViewClick }: AllocationTableProps) {
   const getStatusVariant = (status: string): StatusVariant => {
     switch (status.toLowerCase()) {
       case "allocated":
-      case "ready":
         return "primary";
+      case "ready":
+        return "success";
       case "loading":
         return "warning";
       case "dispatched":
       case "completed":
         return "success";
       case "cancelled":
+      case "unavailable":
         return "destructive";
       default:
         return "neutral";
@@ -42,74 +44,104 @@ export function AllocationTable({ allocations }: AllocationTableProps) {
   };
 
   return (
-    <div className="rounded-md border border-border bg-card overflow-hidden">
-      <Table>
-        <TableHeader className="bg-muted/50">
-          <TableRow>
-            <TableHead>Vehicle</TableHead>
-            <TableHead>Driver</TableHead>
-            <TableHead>Capacity Used</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {allocations.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={5} className="text-center h-24 text-muted-foreground">
-                No vehicle allocations found.
-              </TableCell>
-            </TableRow>
-          ) : (
-            allocations.map((allocation) => (
-              <TableRow key={allocation.id}>
-                <TableCell>
-                  <div className="font-medium text-foreground">
-                    {allocation.vehicle?.code || "Unassigned"}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {allocation.vehicle?.vehicle_type || "N/A"}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="text-sm">
-                    {allocation.driver?.user?.full_name || "Unassigned"}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <Progress value={allocation.load_percentage} className="w-[60px]" />
-                    <span className="text-xs text-muted-foreground w-8">
-                      {allocation.load_percentage}%
-                    </span>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <StatusBadge 
-                    status={allocation.status.toUpperCase()} 
-                    variant={getStatusVariant(allocation.status)} 
-                  />
-                </TableCell>
-                <TableCell className="text-right">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" className="h-8 w-8 p-0">
-                        <span className="sr-only">Open menu</span>
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem>View Details</DropdownMenuItem>
-                      <DropdownMenuItem>Edit Allocation</DropdownMenuItem>
-                      <DropdownMenuItem className="text-destructive">Cancel Run</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
+    <Card className="border-border shadow-none">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg">Vehicle Allocation Board</CardTitle>
+        <CardDescription>
+          One row per vehicle. Manage assigned orders, drivers and load readiness.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/50">
+              <TableRow>
+                <TableHead className="pl-6 w-[120px] whitespace-nowrap">Vehicle</TableHead>
+                <TableHead className="w-[120px] whitespace-nowrap">Type</TableHead>
+                <TableHead className="w-[160px] whitespace-nowrap">Driver</TableHead>
+                <TableHead className="w-[140px] whitespace-nowrap">Load</TableHead>
+                <TableHead className="w-[80px] whitespace-nowrap">Orders</TableHead>
+                <TableHead className="w-[100px] whitespace-nowrap">Run</TableHead>
+                <TableHead className="w-[100px] whitespace-nowrap">Departure</TableHead>
+                <TableHead className="w-[120px] whitespace-nowrap">Status</TableHead>
+                <TableHead className="w-[120px] whitespace-nowrap text-right pr-6">Action</TableHead>
               </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
-    </div>
+            </TableHeader>
+            <TableBody>
+              {allocations.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={9}
+                    className="text-center h-24 text-muted-foreground"
+                  >
+                    No vehicle allocations found.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                allocations.map((allocation) => (
+                  <TableRow key={allocation.id} className="hover:bg-muted/30">
+                    <TableCell className="pl-6">
+                      <div className="font-semibold text-foreground">
+                        {allocation.vehicle?.code || "Unassigned"}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm text-muted-foreground">
+                        {allocation.vehicle?.vehicle_type || "N/A"}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        {allocation.driver?.user?.full_name || (
+                          <span className="text-muted-foreground italic">Unassigned</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col gap-1.5 w-[80px]">
+                        <span className="text-xs font-semibold">
+                          {allocation.load_percentage}%
+                        </span>
+                        <Progress value={allocation.load_percentage} className="h-2" />
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {allocation.orders?.length || 0}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {allocation.run_id || "—"}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {allocation.departure_time || "—"}
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge
+                        status={
+                          allocation.status.charAt(0).toUpperCase() +
+                          allocation.status.slice(1).toLowerCase()
+                        }
+                        variant={getStatusVariant(allocation.status)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right pr-6">
+                      <div className="flex justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="px-4 shadow-none"
+                          onClick={() => onViewClick(allocation)}
+                        >
+                          View
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
