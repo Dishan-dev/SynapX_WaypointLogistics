@@ -13,6 +13,8 @@ class AllocationStatus(str, enum.Enum):
     DISPATCHED = "dispatched"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    UNAVAILABLE = "unavailable"
+    AVAILABLE = "available"
 
 
 class Allocation(Base):
@@ -20,10 +22,11 @@ class Allocation(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicles.id"), nullable=False)
-    driver_id: Mapped[int] = mapped_column(ForeignKey("driver_profiles.id"), nullable=False)
-    run_id: Mapped[str | None] = mapped_column(String(50), index=True, nullable=True) # e.g. RUN-024
+    driver_id: Mapped[int | None] = mapped_column(ForeignKey("driver_profiles.id"), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(50), unique=True, index=True, nullable=True) # e.g. RUN-024 — unique so delivery_runs.allocation_id FK is safe
     
     load_percentage: Mapped[float] = mapped_column(Float, default=0.0)
+    volume_percentage: Mapped[float] = mapped_column(Float, default=0.0)
     departure_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[AllocationStatus] = mapped_column(Enum(AllocationStatus), default=AllocationStatus.DRAFT, nullable=False)
 

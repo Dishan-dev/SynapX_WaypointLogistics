@@ -1,5 +1,6 @@
 import React from "react";
-import { Badge } from "@/components/ui/badge";
+
+
 import { cn } from "cn";
 
 export type StatusVariant = "success" | "warning" | "destructive" | "info" | "neutral" | "primary";
@@ -10,22 +11,26 @@ interface StatusBadgeProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 export function StatusBadge({ status, variant = "neutral", className, ...props }: StatusBadgeProps) {
-  const variantStyles = {
-    success: "bg-success-muted text-success-muted-foreground hover:bg-success-muted/80",
-    warning: "bg-warning-muted text-warning-muted-foreground hover:bg-warning-muted/80",
-    destructive: "bg-destructive-muted text-destructive-muted-foreground hover:bg-destructive-muted/80",
-    info: "bg-info-muted text-info-muted-foreground hover:bg-info-muted/80",
-    neutral: "bg-muted text-muted-foreground hover:bg-muted/80",
-    primary: "bg-primary text-primary-foreground hover:bg-primary/80",
+  // Use inline styles to guarantee colors match Figma and avoid Tailwind JIT purging issues
+  const getStyles = () => {
+    switch (variant) {
+      case "success": return { backgroundColor: "#ecfdf5", color: "#059669" };
+      case "warning": return { backgroundColor: "#fffbeb", color: "#b48141" };
+      case "destructive": return { backgroundColor: "#fef2f2", color: "#dc2626" };
+      case "info": return { backgroundColor: "#eff6ff", color: "#1d4ed8" };
+      case "neutral": return { backgroundColor: "#f1f5f9", color: "#475569" };
+      case "primary": return { backgroundColor: "#f1f5f9", color: "#1c355e" };
+      default: return { backgroundColor: "#f1f5f9", color: "#475569" };
+    }
   };
 
   return (
-    <Badge 
-      variant="outline" 
-      className={cn("border-none font-medium px-2.5 py-0.5", variantStyles[variant], className)}
+    <div 
+      className={cn("inline-flex items-center justify-center font-medium px-3 py-1 rounded-full text-sm", className)}
+      style={getStyles()}
       {...props}
     >
       {status}
-    </Badge>
+    </div>
   );
 }

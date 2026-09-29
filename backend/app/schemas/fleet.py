@@ -10,6 +10,12 @@ class VehicleBase(BaseModel):
     capacity_kg: float
     capacity_vol_m3: float = 0.0
     status: VehicleStatus = VehicleStatus.AVAILABLE
+    temperature_mode: str = "Ambient"
+    depot_name: str = "Central Depot"
+    weekly_fuel_status: str = "Within quota"
+    trips_today: int = 0
+    trips_planned: int = 0
+    maintenance_state: Optional[str] = None
 
 class VehicleCreate(VehicleBase):
     pass

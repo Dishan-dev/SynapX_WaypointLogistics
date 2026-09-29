@@ -8,6 +8,7 @@ import { AllocationFormDrawer } from "@/components/dispatcher/AllocationFormDraw
 import { AllocationDetailDrawer } from "@/components/dispatcher/AllocationDetailDrawer";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
+import { type Allocation } from "@/components/dispatcher/AllocationTable";
 
 const STATUS_OPTIONS = [
   { label: "All Statuses", value: "" },
@@ -18,86 +19,22 @@ const STATUS_OPTIONS = [
   { label: "Unavailable", value: "unavailable" },
 ];
 
-const VEHICLE_TYPE_OPTIONS = [
+const TYPE_OPTIONS = [
   { label: "All Types", value: "" },
-  { label: "Reefer 6T", value: "Reefer 6T" },
-  { label: "Dry Box 6T", value: "Dry Box 6T" },
-  { label: "Dry Box 10T", value: "Dry Box 10T" },
-  { label: "Van 3.5T", value: "Van 3.5T" },
-  { label: "Flatbed 15T", value: "Flatbed 15T" },
+  { label: "Van", value: "van" },
+  { label: "Reefer", value: "reefer" },
+  { label: "Dry Box", value: "dry box" },
 ];
 
-// Figma mock data used as fallback when API is unreachable
-const MOCK_ALLOCATIONS = [
-  {
-    id: 1,
-    vehicle: { code: "VEH014", vehicle_type: "Reefer 6T" },
-    driver: { user: { full_name: "Kasun Perera" } },
-    load_percentage: 82,
-    orders: [1, 2, 3, 4, 5, 6],
-    run_id: "RUN-024",
-    departure_time: "06:00",
-    status: "allocated",
-  },
-  {
-    id: 2,
-    vehicle: { code: "VEH022", vehicle_type: "Dry Box 6T" },
-    driver: { user: { full_name: "Nimal Perera" } },
-    load_percentage: 71,
-    orders: [1, 2, 3, 4, 5],
-    run_id: "RUN-018",
-    departure_time: "08:30",
-    status: "ready",
-  },
-  {
-    id: 3,
-    vehicle: { code: "VEH031", vehicle_type: "Reefer 6T" },
-    driver: { user: { full_name: "Amal Fernando" } },
-    load_percentage: 94,
-    orders: [1, 2, 3, 4],
-    run_id: "RUN-029",
-    departure_time: "09:00",
-    status: "draft",
-  },
-  {
-    id: 4,
-    vehicle: { code: "VEH041", vehicle_type: "Dry Box 6T" },
-    driver: { user: { full_name: "Unassigned" } },
-    load_percentage: 58,
-    orders: [1, 2, 3],
-    run_id: "—",
-    departure_time: "—",
-    status: "allocated",
-  },
-  {
-    id: 5,
-    vehicle: { code: "VEH008", vehicle_type: "Van 3.5T" },
-    driver: { user: { full_name: "—" } },
-    load_percentage: 0,
-    orders: [],
-    run_id: "—",
-    departure_time: "—",
-    status: "available",
-  },
-  {
-    id: 6,
-    vehicle: { code: "VEH019", vehicle_type: "Dry Box 10T" },
-    driver: { user: { full_name: "Maintenance" } },
-    load_percentage: 0,
-    orders: [],
-    run_id: "—",
-    departure_time: "—",
-    status: "unavailable",
-  },
-];
 
 export default function AllocationsPage() {
-  const [allocations, setAllocations] = useState<any[]>([]);
+  const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
 
   // Drawer states
   const [isFormDrawerOpen, setIsFormDrawerOpen] = useState(false);
-  const [selectedAllocation, setSelectedAllocation] = useState<any | null>(null);
+  const [selectedAllocation, setSelectedAllocation] = useState<Allocation | null>(null);
   const [isReassignDrawerOpen, setIsReassignDrawerOpen] = useState(false);
 
   // Filter states
@@ -106,27 +43,31 @@ export default function AllocationsPage() {
   const [typeFilter, setTypeFilter] = useState("");
 
   const fetchAllocations = useCallback(async () => {
+    setFetchError(false);
     try {
-      const response = await fetch("http://localhost:5001/api/v1/allocations/");
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001"}/api/v1/allocations/`);
       if (response.ok) {
         const data = await response.json();
         setAllocations(data);
       } else {
-        console.warn("API unavailable, falling back to mock data.");
+        console.warn("API returned error, falling back to mock data.");
+        setFetchError(true);
       }
     } catch (error) {
       console.warn("Fetch failed, falling back to mock data:", error);
+      setFetchError(true);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchAllocations();
   }, [fetchAllocations]);
 
-  // Use real data if available, fallback to Figma mock data
-  const rawData = allocations.length > 0 ? allocations : MOCK_ALLOCATIONS;
+  // Use real data from API; show empty on API error so backend issues are visible
+  const rawData = useMemo(() => (fetchError ? [] : allocations), [fetchError, allocations]);
 
   // Filter logic (client-side filtering for now)
   const filteredData = useMemo(() => {
@@ -139,7 +80,7 @@ export default function AllocationsPage() {
         alloc.run_id?.toLowerCase().includes(search);
 
       const matchesStatus = !statusFilter || alloc.status.toLowerCase() === statusFilter;
-      const matchesType = !typeFilter || alloc.vehicle?.vehicle_type === typeFilter;
+      const matchesType = !typeFilter || alloc.vehicle?.vehicle_type?.toLowerCase().includes(typeFilter);
 
       return matchesSearch && matchesStatus && matchesType;
     });
@@ -159,7 +100,7 @@ export default function AllocationsPage() {
     return counts;
   }, [rawData]);
 
-  const handleViewClick = (allocation: any) => {
+  const handleViewClick = (allocation: Allocation) => {
     setSelectedAllocation(allocation);
   };
 
@@ -176,11 +117,15 @@ export default function AllocationsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Vehicle Allocations</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Review today's fleet assignments, capacity usage, drivers, and allocation readiness.
+            Review today&apos;s fleet assignments, capacity usage, drivers, and allocation readiness.
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="default" onClick={() => setIsFormDrawerOpen(true)}>
+          <Button 
+            onClick={() => setIsFormDrawerOpen(true)}
+            style={{ backgroundColor: "#1c355e", color: "#ffffff" }}
+            className="hover:opacity-90 transition-opacity border-transparent shadow-none"
+          >
             <Plus className="mr-2 h-4 w-4" /> New Allocation
           </Button>
         </div>
@@ -188,11 +133,11 @@ export default function AllocationsPage() {
 
       {/* Metrics Row — counts computed live from data */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <MetricCard title="Available" value={metrics.available.toString()} />
-        <MetricCard title="Allocated" value={metrics.allocated.toString()} />
-        <MetricCard title="Loading" value={metrics.loading.toString()} />
-        <MetricCard title="Ready" value={metrics.ready.toString()} />
-        <MetricCard title="Unavailable" value={metrics.unavailable.toString()} />
+        <MetricCard title="AVAILABLE" value={metrics.available.toString()} />
+        <MetricCard title="ALLOCATED" value={metrics.allocated.toString()} />
+        <MetricCard title="LOADING" value={metrics.loading.toString()} />
+        <MetricCard title="READY" value={metrics.ready.toString()} />
+        <MetricCard title="UNAVAILABLE" value={metrics.unavailable.toString()} />
       </div>
 
       {/* Main Content Area */}
@@ -202,8 +147,8 @@ export default function AllocationsPage() {
           onSearchChange={setSearchQuery}
           statusOptions={STATUS_OPTIONS}
           onStatusChange={setStatusFilter}
-          depotOptions={VEHICLE_TYPE_OPTIONS}
-          onDepotChange={setTypeFilter}
+          typeOptions={TYPE_OPTIONS}
+          onTypeChange={setTypeFilter}
         />
 
         {isLoading ? (
@@ -235,6 +180,7 @@ export default function AllocationsPage() {
         onOpenChange={(open) => { if (!open) setSelectedAllocation(null); }}
         allocation={selectedAllocation}
         onReassignDriver={handleReassignDriver}
+        onSuccess={fetchAllocations}
       />
     </div>
   );

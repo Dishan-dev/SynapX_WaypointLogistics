@@ -15,9 +15,11 @@ export default function DispatcherLayout({ children }: { children: React.ReactNo
             <SidebarTrigger className="-ml-1" />
             <div className="flex-1" />
             <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" className="text-muted-foreground relative">
-                <Bell className="size-5" />
-                <span className="absolute top-2 right-2.5 size-1.5 rounded-full bg-destructive" />
+              <Button variant="ghost" size="icon" className="text-muted-foreground">
+                <span className="relative">
+                  <Bell className="size-5" />
+                  <span className="absolute -top-1 -right-1 size-2 rounded-full bg-destructive border-2 border-card" />
+                </span>
               </Button>
             </div>
           </header>

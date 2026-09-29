@@ -12,13 +12,17 @@ router = APIRouter()
 @router.get("/vehicles", response_model=List[VehicleResponse])
 def get_vehicles(
     db: Session = Depends(get_db),
+    status: str = None,
     skip: int = 0,
     limit: int = 100
 ) -> Any:
     """
-    Retrieve vehicles.
+    Retrieve vehicles. Optionally filter by status.
     """
-    vehicles = db.query(Vehicle).offset(skip).limit(limit).all()
+    query = db.query(Vehicle)
+    if status:
+        query = query.filter(Vehicle.status == status)
+    vehicles = query.offset(skip).limit(limit).all()
     return vehicles
 
 @router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
