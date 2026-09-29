@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+from app.models.reference import Brand
 
 
 class RunStatus(str, enum.Enum):
@@ -65,7 +66,7 @@ class DeliveryRun(Base):
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False)
     dock_id = Column(Integer, ForeignKey("docks.id"), nullable=False)
     trip_number = Column(Integer, default=1, nullable=False)
-    brand = Column(String(20), nullable=False)
+    brand = Column(Enum(Brand), nullable=False)
     district = Column(String(100), nullable=False)
     wave = Column(String(50), nullable=True)
     departs_at = Column(DateTime, nullable=False)
