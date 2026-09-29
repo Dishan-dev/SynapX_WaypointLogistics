@@ -67,9 +67,9 @@ export function PlanSourceStrip({ plan, sync, className }: PlanSourceStripProps)
     >
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", style.dot)} />
       <p className="min-w-0 flex-1 truncate text-muted-foreground">
-        Plan from Dispatcher
+        Plan from {plan?.source ?? "Dispatcher"}
         {plan?.version !== undefined && ` · v${plan.version}`}
-        {plan && (
+        {plan?.updatedAt && (
           <>
             {" · "}
             <span className="hidden sm:inline">updated </span>

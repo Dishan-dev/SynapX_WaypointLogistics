@@ -1,12 +1,13 @@
 // Offline outbox: every loader write becomes a QueuedAction with a
 // client_action_id, is applied to the cached run straight away, and is sent
-// later by the sync engine. The server treats a replayed client_action_id as
-// the same write, so retries are safe.
+// later by the sync engine. The server answers a replayed client_action_id
+// with the original result and 200, so retries are safe.
 
+import { withRecomputedCounts } from "../format";
 import type {
   FlagActionPayload,
-  LoadState,
   OrderActionPayload,
+  OrderState,
   QueuedAction,
   QueuedActionPayload,
   QueuedActionType,
@@ -21,7 +22,7 @@ export interface NewAction {
   payload: QueuedActionPayload;
 }
 
-/** Save a write to the outbox. Returns the stored action. */
+/** Save a write to the outbox. Call once per tap; retries reuse the id. */
 export async function enqueue(input: NewAction): Promise<QueuedAction> {
   const action: QueuedAction = {
     ...input,
@@ -38,6 +39,7 @@ export async function enqueue(input: NewAction): Promise<QueuedAction> {
 
 export interface ActionRequest {
   method: "POST" | "DELETE";
+  /** Relative to /api/v1. */
   path: string;
   /** Always carries client_action_id. */
   body: Record<string, unknown>;
@@ -45,60 +47,72 @@ export interface ActionRequest {
 
 const enc = encodeURIComponent;
 
-// Paths follow LOADER_FEATURES.md; confirm against API_CONTRACT.md.
-const ENDPOINTS: Record<QueuedActionType, (a: QueuedAction) => Pick<ActionRequest, "method" | "path">> = {
-  check: (a) => ({ method: "POST", path: orderPath(a, "check") }),
-  uncheck: (a) => ({ method: "DELETE", path: orderPath(a, "check") }),
-  unload: (a) => ({ method: "POST", path: orderPath(a, "unload") }),
-  recheck: (a) => ({ method: "POST", path: orderPath(a, "recheck") }),
-  flag: () => ({ method: "POST", path: "/loader/issues" }),
-  acknowledge: (a) => ({ method: "POST", path: `/loader/runs/${enc(a.run_code)}/plan/${a.plan_version}/acknowledge` }),
-  release: (a) => ({ method: "POST", path: `/loader/runs/${enc(a.run_code)}/release` }),
-};
-
 function orderPath(a: QueuedAction, verb: string): string {
   const { order_number } = a.payload as OrderActionPayload;
   return `/loader/runs/${enc(a.run_code)}/orders/${enc(order_number)}/${verb}`;
 }
 
-/** HTTP request for an action; client_action_id goes in every JSON body. */
-export function requestFor(action: QueuedAction): ActionRequest {
-  return {
-    ...ENDPOINTS[action.action_type](action),
-    body: {
-      client_action_id: action.client_action_id,
-      run_code: action.run_code,
-      plan_version: action.plan_version,
-      ...action.payload,
-    },
+const runPath = (a: QueuedAction) => `/loader/runs/${enc(a.run_code)}`;
+
+// Paths from docs/loader/API_CONTRACT.md. The contract names unload and
+// acknowledge without paths; those two follow LOADER_FEATURES.md (L7).
+const ENDPOINTS: Record<QueuedActionType, (a: QueuedAction) => Pick<ActionRequest, "method" | "path">> = {
+  check: (a) => ({ method: "POST", path: orderPath(a, "check") }),
+  uncheck: (a) => ({ method: "DELETE", path: orderPath(a, "check") }),
+  unload: (a) => ({ method: "POST", path: orderPath(a, "unload") }),
+  flag: () => ({ method: "POST", path: "/loader/issues" }),
+  acknowledge: (a) => ({ method: "POST", path: `${runPath(a)}/plan/${a.plan_version}/acknowledge` }),
+  release: (a) => ({ method: "POST", path: `${runPath(a)}/release` }),
+  release_undo: (a) => ({ method: "POST", path: `${runPath(a)}/release/undo` }),
+};
+
+/**
+ * JSON body: client_action_id and loader_session_id on every write. The flag
+ * body is the full POST /loader/issues payload; the rest carry nothing else
+ * (order number and plan version are in the path).
+ */
+function bodyFor(action: QueuedAction): Record<string, unknown> {
+  const base = {
+    client_action_id: action.client_action_id,
+    loader_session_id: action.payload.loader_session_id,
   };
+  return action.action_type === "flag" ? { ...(action.payload as FlagActionPayload), ...base } : base;
+}
+
+export function requestFor(action: QueuedAction): ActionRequest {
+  return { ...ENDPOINTS[action.action_type](action), body: bodyFor(action) };
 }
 
 // ---- Optimistic apply --------------------------------------------------
 
-const ORDER_STATE_AFTER: Partial<Record<QueuedActionType, LoadState>> = {
+// A check on a re_check order clears it; there is no separate recheck write.
+const ORDER_STATE_AFTER: Partial<Record<QueuedActionType, OrderState>> = {
   check: "loaded",
   uncheck: "to_load",
   unload: "moved",
-  recheck: "loaded",
   flag: "flagged",
 };
 
 /**
  * Apply an action to a run locally, so the checklist shows the result before
- * the server confirms it. Returns a new run; the input is not changed.
+ * the server confirms it. Returns a new run with counts and capacity
+ * recomputed; the input is not changed.
  */
-export function applyAction(run: Run, action: QueuedAction, checkedBy?: string): Run {
-  if (action.action_type === "acknowledge") {
-    return {
-      ...run,
-      acknowledged_plan_version: action.plan_version,
-      acknowledged_by: checkedBy,
-      acknowledged_at: action.created_at,
-    };
-  }
-  if (action.action_type === "release") {
-    return { ...run, status: "ready_to_depart", signed_off_by: checkedBy, signed_off_at: action.created_at };
+export function applyAction(run: Run, action: QueuedAction, actorName?: string): Run {
+  const by = actorName ?? null;
+
+  switch (action.action_type) {
+    case "acknowledge":
+      return {
+        ...run,
+        current_plan_version: action.plan_version,
+        unacknowledged_plan_version: null,
+        plan: { ...run.plan, version: action.plan_version, acknowledged_at: action.created_at, acknowledged_by: by },
+      };
+    case "release":
+      return { ...run, status: "ready_to_depart" };
+    case "release_undo":
+      return { ...run, status: "loaded" };
   }
 
   const nextState = ORDER_STATE_AFTER[action.action_type];
@@ -106,9 +120,14 @@ export function applyAction(run: Run, action: QueuedAction, checkedBy?: string):
   if (!nextState || !order_number) return run;
 
   const loaded = nextState === "loaded";
-  return {
+  const next: Run = {
     ...run,
-    status: run.status === "not_started" ? "loading" : run.status,
+    status:
+      action.action_type === "flag"
+        ? "issue_flagged"
+        : run.status === "not_started"
+          ? "loading"
+          : run.status,
     stops: run.stops.map((stop) => ({
       ...stop,
       orders: stop.orders.map((order) =>
@@ -116,11 +135,12 @@ export function applyAction(run: Run, action: QueuedAction, checkedBy?: string):
           ? order
           : {
               ...order,
-              load_state: nextState,
-              checked_at: loaded ? action.created_at : undefined,
-              checked_by: loaded ? checkedBy : undefined,
+              state: nextState,
+              checked_at: loaded ? action.created_at : null,
+              checked_by: loaded ? by : null,
             },
       ),
     })),
   };
+  return withRecomputedCounts(next);
 }

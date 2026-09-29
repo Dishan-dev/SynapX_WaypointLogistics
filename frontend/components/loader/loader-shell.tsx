@@ -1,16 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { UserRound } from "lucide-react";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { LoaderBottomNav, type LoaderTab } from "./loader-bottom-nav";
 import { LoaderSyncProvider } from "./loader-sync-provider";
 
@@ -22,10 +13,11 @@ export interface LoaderShellUser {
 }
 
 interface LoaderShellContextValue {
-  openMenu: () => void;
   user: LoaderShellUser;
   /** "Peliyagoda DC · Dock 3" */
   dockLabel: string;
+  /** Sent as loader_session_id on every write. */
+  sessionId: number;
 }
 
 const LoaderShellContext = React.createContext<LoaderShellContextValue | null>(null);
@@ -41,6 +33,7 @@ function activeTab(pathname: string): LoaderTab | undefined {
   if (pathname.startsWith("/loader/runs/")) return "loading";
   if (pathname.startsWith("/loader/issues")) return "issues";
   if (pathname.startsWith("/loader/log")) return "log";
+  if (pathname.startsWith("/loader/more")) return "more";
   return undefined;
 }
 
@@ -51,17 +44,14 @@ function runCodeFrom(pathname: string): string | undefined {
 interface LoaderShellProps {
   user: LoaderShellUser;
   dockLabel: string;
+  sessionId: number;
   issueCount?: number;
   children: React.ReactNode;
 }
 
-/**
- * Frame for signed-in loader screens: page content plus the bottom nav and
- * the menu sheet (opened from the app bar menu or the More tab).
- */
-export function LoaderShell({ user, dockLabel, issueCount, children }: LoaderShellProps) {
+/** Frame for signed-in loader screens: page content plus the bottom nav. */
+export function LoaderShell({ user, dockLabel, sessionId, issueCount, children }: LoaderShellProps) {
   const pathname = usePathname();
-  const [menuOpen, setMenuOpen] = React.useState(false);
 
   // Loading tab returns to the run opened last in this session.
   const [lastRunCode, setLastRunCode] = React.useState<string>();
@@ -69,13 +59,13 @@ export function LoaderShell({ user, dockLabel, issueCount, children }: LoaderShe
   if (currentRunCode && currentRunCode !== lastRunCode) setLastRunCode(currentRunCode);
 
   const ctx = React.useMemo<LoaderShellContextValue>(
-    () => ({ openMenu: () => setMenuOpen(true), user, dockLabel }),
-    [user, dockLabel],
+    () => ({ user, dockLabel, sessionId }),
+    [user, dockLabel, sessionId],
   );
 
   return (
     <LoaderShellContext.Provider value={ctx}>
-      <LoaderSyncProvider>
+      <LoaderSyncProvider sessionId={sessionId}>
         <div className="flex min-h-dvh flex-col bg-background">
           <div className="flex flex-1 flex-col">{children}</div>
           <LoaderBottomNav
@@ -83,28 +73,8 @@ export function LoaderShell({ user, dockLabel, issueCount, children }: LoaderShe
             active={activeTab(pathname)}
             loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
             issueCount={issueCount}
-            onMore={() => setMenuOpen(true)}
           />
         </div>
-
-        <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-          <SheetContent side="left" className="gap-0">
-            <SheetHeader className="border-b border-border">
-              <SheetTitle>{user.name}</SheetTitle>
-              <SheetDescription>Loader · {dockLabel}</SheetDescription>
-            </SheetHeader>
-            <nav aria-label="Loader menu" className="flex flex-col p-2">
-              <Link
-                href="/loader/sign-in"
-                onClick={() => setMenuOpen(false)}
-                className="flex min-h-12 items-center gap-3 rounded-md px-3 text-base font-medium text-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
-              >
-                <UserRound className="size-5 text-muted-foreground" aria-hidden />
-                Switch user
-              </Link>
-            </nav>
-          </SheetContent>
-        </Sheet>
       </LoaderSyncProvider>
     </LoaderShellContext.Provider>
   );

@@ -6,6 +6,7 @@ import { LoaderAppBar } from "@/components/loader/loader-app-bar";
 import { LoaderBottomNav } from "@/components/loader/loader-bottom-nav";
 import { PlanSourceStrip } from "@/components/loader/plan-source-strip";
 import { LoaderScreen } from "@/components/loader/loader-screen";
+import { RunCard } from "@/components/loader/run-card";
 import { useLoaderShell } from "@/components/loader/loader-shell";
 import { useLoaderSync, useOfflineRun } from "@/components/loader/loader-sync-provider";
 import { LoaderTile } from "@/components/loader/loader-tile";
@@ -26,51 +27,55 @@ import { LoaderPill } from "@/components/loader/loader-pill";
 import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import { TempBadge } from "@/components/loader/temp-badge";
-import { loadMapSlots, planSource, runCapacity, stopsInLoadOrder } from "@/lib/loader/format";
-import { mockRuns } from "@/lib/loader/mock-data";
-import type { LoadState, RunOrder } from "@/lib/loader/types";
+import { dockPlanSource, loadMapSlots, planSource, runCapacity, stopsInLoadOrder } from "@/lib/loader/format";
+import { mockQueue, mockRunDetails } from "@/lib/loader/mock-data";
+import type { OrderState, RunOrder } from "@/lib/loader/types";
 
-const states: LoadState[] = ["to_load", "loaded", "flagged", "re_check", "take_off", "moved", "new"];
+const states: OrderState[] = ["to_load", "loaded", "flagged", "re_check", "take_off", "moved", "new"];
 
-const sample = (load_state: LoadState): RunOrder => ({
+const sample = (state: OrderState): RunOrder => ({
   order_number: "ORD0092300",
-  outlet_code: "OUT027",
   temperature_class: "chilled",
   units: 26,
   weight_kg: 380,
   volume_m3: 1.9,
-  load_state,
+  state,
+  checked_at: null,
+  checked_by: null,
   note: "Note",
-  changed_in_version: load_state === "moved" ? 3 : undefined,
+  changed_in_version: state === "moved" ? 3 : undefined,
 });
 
 /** Every loader component with mock data, for checking against Figma. Dev only. */
 export function KitView() {
-  const run = mockRuns[0];
-  const cap = runCapacity(run);
+  const initialRun = mockRunDetails[0];
   const [query, setQuery] = useState("");
   const [pin, setPin] = useState("");
   const [picked, setPicked] = useState(false);
   const { user } = useLoaderShell();
   const { sync } = useLoaderSync();
-  const offline = useOfflineRun(run, user.shortName);
+  const offline = useOfflineRun(initialRun, user.shortName);
+  // Capacity and counts follow local actions (recomputed after each tap).
+  const run = offline.run;
+  const cap = runCapacity(run);
   return (
     <LoaderScreen title="Component kit" plan={planSource(run)}>
     <div className="mx-auto max-w-3xl space-y-8">
       <section aria-labelledby="offline-test" className="space-y-3 rounded-xl border border-dashed border-border p-4">
         <h2 id="offline-test" className="text-base font-semibold text-primary">
-          Offline test · {offline.run.run_code}
+          Offline test · {run.code}
         </h2>
         <p className="text-xs text-muted-foreground" data-testid="sync-summary">
-          online={String(sync.online)} · pending={sync.pending} · failed={sync.failed} · syncing={String(sync.syncing)}
+          online={String(sync.online)} · pending={sync.pending} · failed={sync.failed} · syncing={String(sync.syncing)} ·
+          checked={run.orders_checked}/{run.orders_total} · source={offline.source}
         </p>
-        {stopsInLoadOrder(offline.run.stops).map((stop) =>
+        {stopsInLoadOrder(run.stops).map((stop) =>
           stop.orders.map((o) => (
             <OrderRow
               key={o.order_number}
               order={o}
               onToggle={(order) =>
-                void offline.act(order.load_state === "loaded" ? "uncheck" : "check", {
+                void offline.act(order.state === "loaded" ? "uncheck" : "check", {
                   order_number: order.order_number,
                 })
               }
@@ -84,9 +89,9 @@ export function KitView() {
         <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, failed: 0 }} />
         <PlanSourceStrip plan={planSource(run)} sync={{ online: false, pending: 3, syncing: false, failed: 0 }} />
         <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 3, syncing: true, failed: 0 }} />
-        <PlanSourceStrip plan={{ updatedAt: run.plan_updated_at }} sync={{ online: true, pending: 0, syncing: false, failed: 1 }} />
+        <PlanSourceStrip plan={dockPlanSource([run])} sync={{ online: true, pending: 0, syncing: false, failed: 1 }} />
         <div className="h-4" />
-        <LoaderBottomNav active="loading" loadingHref="/loader/runs/RUN-021" issueCount={1} onMore={() => {}} />
+        <LoaderBottomNav active="loading" loadingHref="/loader/runs/RUN-021" issueCount={1} />
       </section>
       <section className="grid gap-4 md:grid-cols-2">
         <div className="space-y-3">
@@ -112,6 +117,11 @@ export function KitView() {
             )}
           </div>
         </div>
+      </section>
+      <section aria-label="Run cards" className="grid gap-3 md:grid-cols-2">
+        {mockQueue.groups.flatMap((g) => g.runs).map((r) => (
+          <RunCard key={r.code} run={r} />
+        ))}
       </section>
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <MetricTile label="Runs" value={6} caption="At Dock 3 today" />

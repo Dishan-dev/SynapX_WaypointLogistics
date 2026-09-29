@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { cn } from "cn";
 import type { PlanSource } from "@/lib/loader/format";
 import { LoaderAppBar } from "./loader-app-bar";
@@ -30,7 +31,8 @@ export function LoaderScreen({
   className,
   children,
 }: LoaderScreenProps) {
-  const { openMenu, dockLabel } = useLoaderShell();
+  const router = useRouter();
+  const { dockLabel } = useLoaderShell();
   const { sync } = useLoaderSync();
 
   return (
@@ -40,7 +42,7 @@ export function LoaderScreen({
           title={title}
           subtitle={subtitle ?? `Loader · ${dockLabel}`}
           hasUnread={hasUnread}
-          onMenu={openMenu}
+          onMenu={() => router.push("/loader/more")}
         />
         <PlanSourceStrip plan={plan} sync={sync} />
       </div>
