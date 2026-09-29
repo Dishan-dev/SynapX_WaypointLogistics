@@ -24,6 +24,7 @@ from app.models.delivery_run import (
     RunStopOrder,
     StopStatus,
 )
+from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
 
 __all__ = [
     "User",
@@ -56,4 +57,8 @@ __all__ = [
     "RunStop",
     "RunStopOrder",
     "StopStatus",
+    # Plan revisions
+    "PlanChangeKind",
+    "PlanRevision",
+    "PlanRevisionChange",
 ]
