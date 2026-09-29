@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { type Order } from "@/types/order";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 interface RepeatDeferralModalProps {
   isOpen: boolean;

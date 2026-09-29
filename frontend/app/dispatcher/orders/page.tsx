@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { type Order, type OrderMetrics } from "@/types/order";
 import { OrdersTable } from "@/components/dispatcher/orders/OrdersTable";
 import { OrdersFilterBar } from "@/components/dispatcher/orders/OrdersFilterBar";
@@ -10,7 +10,6 @@ import { CapacityShortfallModal } from "@/components/dispatcher/orders/CapacityS
 import { AllocationSuccessBanner } from "@/components/dispatcher/orders/AllocationSuccessBanner";
 import { MetricCard } from "@/components/dispatcher/MetricCard";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Clock, RefreshCw } from "lucide-react";
 import { fetchWithFallback } from "@/lib/api";
 
 export default function DispatcherOrdersPage() {
@@ -25,6 +24,7 @@ export default function DispatcherOrdersPage() {
     late: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [refreshCount, setRefreshCount] = useState(0);
 
   // Drawers and Modals
   const [isAllocationOpen, setIsAllocationOpen] = useState(false);
@@ -47,59 +47,69 @@ export default function DispatcherOrdersPage() {
   const [districtFilter, setDistrictFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("27 Jun 2026");
 
-  // Fetch orders and metrics
-  const fetchOrdersAndMetrics = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      // 1. Fetch metrics
-      const metricsRes = await fetchWithFallback("/api/v1/orders/metrics");
-      if (metricsRes.ok) {
-        const mData = await metricsRes.json();
-        setMetrics(mData);
-      }
-
-      // 2. Fetch orders
-      const queryParams = new URLSearchParams();
-      if (statusFilter && statusFilter !== "all") queryParams.append("status", statusFilter);
-      if (brandFilter && brandFilter !== "all") queryParams.append("brand", brandFilter);
-      if (districtFilter && districtFilter !== "all") queryParams.append("district", districtFilter);
-      if (searchQuery.trim()) queryParams.append("search", searchQuery.trim());
-      // Show non-late orders in main queue table by default
-      queryParams.append("is_late", "false");
-
-      const ordersRes = await fetchWithFallback(`/api/v1/orders/?${queryParams.toString()}`);
-      if (ordersRes.ok) {
-        const oData: Order[] = await ordersRes.json();
-        setOrders(oData);
-      }
-    } catch (err) {
-      console.error("Failed to load orders:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [statusFilter, brandFilter, districtFilter, searchQuery]);
-
+  // Fetch orders and metrics on filter change or refresh
   useEffect(() => {
-    fetchOrdersAndMetrics();
-  }, [fetchOrdersAndMetrics]);
+    let ignore = false;
+
+    async function loadOrdersAndMetrics() {
+      try {
+        const metricsRes = await fetchWithFallback("/api/v1/orders/metrics");
+        if (metricsRes.ok && !ignore) {
+          const mData = await metricsRes.json();
+          setMetrics(mData);
+        }
+
+        const queryParams = new URLSearchParams();
+        if (statusFilter && statusFilter !== "all") queryParams.append("status", statusFilter);
+        if (brandFilter && brandFilter !== "all") queryParams.append("brand", brandFilter);
+        if (districtFilter && districtFilter !== "all") queryParams.append("district", districtFilter);
+        if (searchQuery.trim()) queryParams.append("search", searchQuery.trim());
+        queryParams.append("is_late", "false");
+
+        const ordersRes = await fetchWithFallback(`/api/v1/orders/?${queryParams.toString()}`);
+        if (ordersRes.ok && !ignore) {
+          const oData: Order[] = await ordersRes.json();
+          setOrders(oData);
+        }
+      } catch (err) {
+        console.error("Failed to load orders:", err);
+      } finally {
+        if (!ignore) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadOrdersAndMetrics();
+
+    return () => {
+      ignore = true;
+    };
+  }, [statusFilter, brandFilter, districtFilter, searchQuery, refreshCount]);
 
   // Late orders (fetched separately for late drawer)
   const [lateOrders, setLateOrders] = useState<Order[]>([]);
-  const fetchLateOrders = useCallback(async () => {
-    try {
-      const res = await fetchWithFallback("/api/v1/orders/?is_late=true");
-      if (res.ok) {
-        const data = await res.json();
-        setLateOrders(data);
-      }
-    } catch (err) {
-      console.error("Failed to load late orders:", err);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchLateOrders();
-  }, [fetchLateOrders]);
+    let ignore = false;
+
+    async function loadLateOrders() {
+      try {
+        const res = await fetchWithFallback("/api/v1/orders/?is_late=true");
+        if (res.ok && !ignore) {
+          const data = await res.json();
+          setLateOrders(data);
+        }
+      } catch (err) {
+        console.error("Failed to load late orders:", err);
+      }
+    }
+
+    loadLateOrders();
+
+    return () => {
+      ignore = true;
+    };
+  }, [refreshCount]);
 
   // Selected orders array
   const selectedOrders = useMemo(() => {
@@ -131,7 +141,7 @@ export default function DispatcherOrdersPage() {
       });
       if (res.ok) {
         setSelectedOrderIds((prev) => prev.filter((id) => id !== order.id));
-        fetchOrdersAndMetrics();
+        setRefreshCount((c) => c + 1);
       }
     } catch (err) {
       console.error("Failed to defer order:", err);
@@ -141,7 +151,7 @@ export default function DispatcherOrdersPage() {
   const handleAllocationSuccess = (vehicleCode: string, count: number) => {
     setSelectedOrderIds([]);
     setSuccessBanner({ vehicleCode, count });
-    fetchOrdersAndMetrics();
+    setRefreshCount((c) => c + 1);
   };
 
   return (
@@ -266,10 +276,7 @@ export default function DispatcherOrdersPage() {
         isOpen={isLateOrdersOpen}
         onClose={() => setIsLateOrdersOpen(false)}
         lateOrders={lateOrders}
-        onOrderPromoted={() => {
-          fetchLateOrders();
-          fetchOrdersAndMetrics();
-        }}
+        onOrderPromoted={() => setRefreshCount((c) => c + 1)}
       />
 
       {/* Capacity Shortfall Warning Modal (Figma Frame 229:2309) */}

@@ -76,7 +76,7 @@ export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: Allocati
       setRunId("");
       setDepartureTime("");
     }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

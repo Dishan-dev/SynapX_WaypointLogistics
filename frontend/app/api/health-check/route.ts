@@ -105,7 +105,7 @@ export async function GET() {
 
   if (!backendConnected) {
     result.backend.status = "offline";
-    result.backend.error = `Connection refused at ${apiUrl} and fallback ports`;
+    result.backend.error = lastBackendError || `Connection refused at ${apiUrl} and fallback ports`;
     result.database.status = "unknown";
     result.database.details = "Cannot inspect DB while backend is down";
     result.bridge.status = "disconnected";

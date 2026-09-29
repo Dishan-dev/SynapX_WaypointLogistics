@@ -6,12 +6,11 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetHeader,
   SheetTitle,
   SheetFooter,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Clock, AlertCircle, Snowflake, Package, FastForward, Check } from "lucide-react";
+import { Clock, AlertCircle, Snowflake, Package, FastForward } from "lucide-react";
 import { fetchWithFallback } from "@/lib/api";
 
 interface LateOrdersDrawerProps {

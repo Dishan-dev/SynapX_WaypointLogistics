@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { type Order } from "@/types/order";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Snowflake, Package, AlertTriangle, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ShieldCheck } from "lucide-react";
 import { fetchWithFallback } from "@/lib/api";
 import { ConstraintReviewModal } from "./ConstraintReviewModal";
 

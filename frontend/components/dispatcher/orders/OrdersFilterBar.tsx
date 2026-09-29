@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Calendar, Filter } from "lucide-react";
+import { Search, Calendar } from "lucide-react";
 
 interface OrdersFilterBarProps {
   searchQuery: string;
@@ -21,7 +21,7 @@ interface OrdersFilterBarProps {
   districtFilter: string;
   onDistrictChange: (val: string) => void;
   dateFilter: string;
-  onDateChange: (val: string) => void;
+  onDateChange?: (val: string) => void;
 }
 
 export function OrdersFilterBar({
@@ -34,7 +34,6 @@ export function OrdersFilterBar({
   districtFilter,
   onDistrictChange,
   dateFilter,
-  onDateChange,
 }: OrdersFilterBarProps) {
   return (
     <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3 w-full">
