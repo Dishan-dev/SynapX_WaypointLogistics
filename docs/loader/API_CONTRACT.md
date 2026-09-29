@@ -5,13 +5,23 @@ responses. Base path: `/api/v1/loader`.
 
 Two halves:
 
-- **Built (L0)** — implemented and tested on `loader-sachintha`. Live now.
+- **Built (L0, L4)** — implemented and tested on `loader-sachintha`. Live now.
 - **Proposed** — Sanduni's features (L2, L3, L5, L6). **Written here for review,
   not implemented.** Nothing on `loader-sachintha` creates these routes, schemas
   or handlers. Change anything you disagree with before building.
 
-All enum values are the wire values, lowercase with underscores. All times are
-ISO 8601.
+All enum values are the wire values, lowercase with underscores.
+
+**Times.** Every datetime is stored in UTC and sent as ISO 8601 **with a `Z`**:
+`"2026-05-27T22:00:00Z"`. That applies to requests the server stamps and to
+everything it returns. **The frontend formats them in depot time,
+`Asia/Colombo` (UTC+05:30, no DST)** — so that example shows as 03:30 on 28 May,
+the "departs 03:30" in the design. The examples below are UTC; the screens,
+and prose times like "02:14 published", are depot time.
+
+The one exception is an outlet's delivery window (`window_start`,
+`window_end`): a time of day with no date, already in depot time, sent as
+`"05:00:00"` and shown as-is.
 
 ---
 
@@ -51,19 +61,48 @@ both branches.
 - Generated **once, when the loader taps**, and reused on every retry of that
   same tap. A new tap means a new UUID.
 
-**A duplicate returns the original result with `200`.** It is not applied twice,
-and it is not an error — no 409, no 201, no second row. The response body is the
-same as the first call's.
+**A duplicate returns `200` with the resource's current state.** It is not
+applied twice, and it is not an error — no 409, no 201, no second row. The
+response is the same resource as the first call returned, **read now**: it is
+not a stored copy of the first response, so it includes anything that has
+happened since (another loader's check, a new plan version). Nothing stores
+response bodies, so no migration is needed for this.
 
 ```jsonc
 // first call
 POST /loader/runs/RUN-021/orders/ORD0092301/check
-{ "client_action_id": "9f1c…", "loader_session_id": 12 }
+{ "client_action_id": "9f1c…", "plan_version": 2, "loader_session_id": 12 }
 → 200  { …RunDetailRead… }
 
 // exact same id again (offline replay, flaky connection, double tap)
-→ 200  { …the same RunDetailRead… }      // nothing applied a second time
+→ 200  { …RunDetailRead, as the run is now… }   // nothing applied a second time
 ```
+
+**The same id for a different action is `409 CLIENT_ACTION_ID_REUSED`.** A real
+replay always repeats the same request — same path, same verb — so a mismatch is
+a client bug, and answering with the other action's result would hide it.
+
+### Stale plan — `409 PLAN_VERSION_STALE`
+
+**Every write body also carries `plan_version`**: the plan version the loader
+was looking at when they tapped. If the dispatcher has published a different
+one since, the write is refused rather than applied to a plan the loader never
+saw:
+
+```jsonc
+→ 409 { "detail": { "code": "PLAN_VERSION_STALE",
+                    "message": "Plan changed to v3; this action was made on v2.",
+                    "entity": "DeliveryRun", "entity_id": "RUN-021",
+                    "current_plan_version": 3, "sent_plan_version": 2 } }
+```
+
+**The replay check runs first.** A tap that was accepted on v2 and is replayed
+after v3 was published answers `200`, not 409 — it already happened. Only a tap
+the server has never seen is checked against the current plan. Any mismatch is
+refused, newer as well as older.
+
+The tablet should treat this 409 as final for that action (the outbox marks it
+`conflict` and does not retry) and show the plan-change takeover.
 
 **Why:** the dock tablet queues actions in IndexedDB while offline and replays
 them on reconnect, so the same action genuinely arrives more than once. Without
@@ -103,9 +142,11 @@ lets NULLs repeat under a unique index, so those rows never collide.
 row to each.
 
 **Implementing a write:** look the id up in the relevant table first. Found →
-return the original result with `200` and change nothing. Not found → apply the
-action and store the id in the same transaction, so a replay arriving mid-flight
-hits the unique constraint rather than doubling the write.
+return the resource's current state with `200` and change nothing. Not found →
+check `plan_version`, then apply the action and store the id in the same
+transaction, so a replay arriving mid-flight hits the unique constraint rather
+than doubling the write. `LoaderService.apply_order_action` (L4) is the
+reference implementation, including recovering from that constraint.
 
 ---
 
@@ -170,7 +211,7 @@ the truck from the cab outwards, which is the reverse of the driver's route:
   "brand": "fresh",
   "district": "Gampaha",
   "wave": "night",
-  "departs_at": "2026-05-28T03:30:00",
+  "departs_at": "2026-05-27T22:00:00Z",    // 03:30 depot time
   "status": "loading",
   "current_plan_version": 2,
   "dock": "Dock 3",
@@ -191,10 +232,10 @@ the truck from the cab outwards, which is the reverse of the driver's route:
   },
   "plan": {
     "version": 2,
-    "published_at": "2026-05-27T21:40:00",
+    "published_at": "2026-05-27T16:10:00Z",
     "source": "Dispatcher",
     "summary": null,
-    "acknowledged_at": "2026-05-27T21:45:00",
+    "acknowledged_at": "2026-05-27T16:15:00Z",
     "acknowledged_by": "Saman J."
   },
   "unacknowledged_plan_version": null,   // set when a new plan is waiting — L6 must lock release
@@ -202,7 +243,7 @@ the truck from the cab outwards, which is the reverse of the driver's route:
     {
       "stop_sequence": 4,
       "load_position": 1,                // LOAD 1ST · DEEPEST
-      "eta": "2026-05-28T05:19:00",
+      "eta": "2026-05-27T23:49:00Z",         // 05:19 depot time
       "handling_minutes": 16,
       "status": "pending",
       "outlet": {
@@ -223,27 +264,105 @@ the truck from the cab outwards, which is the reverse of the driver's route:
           "weight_kg": 650.0,
           "volume_m3": 3.2,
           "state": "loaded",
-          "checked_at": "2026-05-28T01:41:00",
+          "checked_at": "2026-05-27T20:11:00Z", // 01:41 depot time
           "checked_by": "Saman J."
         }
       ]
     }
   ],
-  "orders_checked": 5,
+  "orders_loaded": 5,    // "5 of 8 loaded"          — on the truck
+  "orders_checked": 5,   // "Review & confirm · 5 of 8" — loaded or flagged
   "orders_total": 8
 }
 ```
 
-**Counting rules** (L6's "Review & confirm · 5 of 7" reads these directly):
+**Counting rules.** Two counts over the same total — keep them apart:
 
+| Field | Counts | Read by |
+| --- | --- | --- |
+| `orders_loaded` | `loaded` only | the queue card's "3 of 5 loaded", the checklist's "x of y orders in" |
+| `orders_checked` | `loaded` **or** `flagged` | the review lock — L6's "Review & confirm · 4 of 5" |
+| `orders_total` | every order except `take_off` and `moved` | both of the above |
+
+RUN-027 at t0 shows the difference: 3 loaded, ORD0092314 flagged Missing, one
+still to load — `orders_loaded` 3, `orders_checked` 4, `orders_total` 5.
+
+- `orders_loaded` counts only `loaded`. A flagged order is not on the truck.
+- `orders_checked` counts `loaded` and `flagged`. A flagged order is in the
+  dispatcher's hands, so it no longer blocks review.
 - `orders_total` **excludes** `take_off` and `moved` — they are no longer orders
   to load, though they are still returned so the checklist can render them greyed
   or as a pinned unload task.
-- `orders_checked` counts only `loaded` and `flagged`. **`re_check` does not
-  count.** A plan change invalidates the earlier check and the loader must
-  confirm it again.
+- **`re_check` counts toward neither.** A plan change invalidates the earlier
+  check and the loader must confirm it again.
 - `re_check` *does* count toward `capacity.loaded_*` — the goods are physically
   aboard, they just need re-confirming.
+
+### Check · uncheck · recheck — L4 writes
+
+| Action | Method and path | Row transition |
+| --- | --- | --- |
+| check | `POST /loader/runs/{code}/orders/{order_number}/check` | `to_load`, `new` **or `re_check`** → `loaded` |
+| uncheck | `DELETE /loader/runs/{code}/orders/{order_number}/check` | `loaded` → `to_load`, or → `new` if the current plan version added the order |
+| recheck | `POST /loader/runs/{code}/orders/{order_number}/recheck` | `re_check` → `loaded` |
+
+Uncheck is `DELETE` **with a JSON body**, because that is what the tablet's
+offline outbox sends. `fetch` and FastAPI both handle it.
+
+**check also confirms a `re_check` row**, exactly as recheck does: the tablet
+taps the same tile whatever the row says, so the outbox can send `check` for
+all three. `/recheck` stays for clients that want to be explicit. Either way
+the activity log records `order_rechecked`; `loading_checks` keeps the verb
+that was sent, which is what a replay is matched against.
+
+```jsonc
+// request body — the same for all three
+{
+  "client_action_id": "0b6f3c1e-8a4d-4f7e-9c2a-5d1e7b9a3f10",  // required, UUID
+  "plan_version": 2,                                          // required
+  "loader_session_id": 12                                     // optional until L2: omit or null; stamps checked_by
+}
+// run_code / order_number may also be sent (the outbox does); ignored — the path wins.
+
+// 200 — the updated checklist, the same shape as GET /loader/runs/{code}
+{ "code": "RUN-021", "status": "loading", "current_plan_version": 2,
+  "capacity": { "loaded_weight_kg": 4100.0, ... },
+  "stops": [ { ..., "orders": [ { "order_number": "ORD0092302", "state": "loaded",
+      "checked_at": "2026-05-27T20:45:03Z", "checked_by": "Saman J." } ] } ],
+  "orders_loaded": 6, "orders_checked": 6, "orders_total": 8 }
+```
+
+What one write changes, together:
+
+- **the row** — `state`, and `checked_at` / `checked_by` (set on check and
+  recheck, cleared on uncheck);
+- **the stop** — `pending` → `loading` → `complete` once every active order at it
+  is `loaded` or `flagged`;
+- **`capacity.loaded_*`**;
+- **the run** — `not_started` → `loading` on the first write; `loaded` once
+  `orders_checked == orders_total`; back to `loading` on an uncheck. A run never
+  returns to `not_started`. `issue_flagged` is left alone — it clears when the
+  issue is decided (L8), not when rows change;
+- **the activity log** — `order_checked` "ORD0092302 loaded",
+  `order_unchecked` "ORD0092302 unchecked", `order_rechecked` "ORD0092301
+  re-checked" (from recheck, or from a check on a `re_check` row).
+
+A row **already where the action would put it** (check or recheck on `loaded`,
+uncheck on `to_load` or `new`) is a `200` no-op: two loaders can tick the same
+order, and the second tap should not bounce. Nothing is recorded.
+
+| Status | `detail.code` | When |
+| --- | --- | --- |
+| 409 | `PLAN_VERSION_STALE` | `plan_version` ≠ the run's `current_plan_version` (see the write contract) |
+| 409 | `CLIENT_ACTION_ID_REUSED` | the id was already used for another order or action |
+| 409 | `INVALID_STATE_TRANSITION` | the row is `flagged`, `take_off` or `moved`; `recheck` on `to_load` or `new`; `uncheck` on `re_check`; the run is `ready_to_depart` or `gated_out` |
+| 404 | `NOT_FOUND` | unknown run; order not on the current plan version; a `loader_session_id` that does not exist |
+| 422 | — | `client_action_id` or `plan_version` missing, or the id is not a UUID |
+
+**`loader_session_id` is optional until L2 sign-in**: omitted or `null`, the
+write is applied and `checked_by` stays empty. When it is sent it must exist. An
+**ended** session is accepted: an offline tap is often replayed after the idle
+timeout has already signed that loader out.
 
 ### `GET /loader/runs/{code}/activity` — L9, one run's timeline
 
@@ -253,7 +372,7 @@ shift progresses (02:14 published → 02:16 acknowledged → 02:20 …).
 ```jsonc
 [
   {
-    "at": "2026-05-28T02:14:00",
+    "at": "2026-05-27T20:44:00Z",
     "run_code": "RUN-021",
     "actor_kind": "dispatcher",
     "actor": "Dispatcher",
@@ -300,10 +419,10 @@ without changing the ordering.
   "note": "Chilled order not at the dock.",
   "photo_path": null,
   "reported_by": "Tharindu J.",
-  "reported_at": "2026-05-28T02:03:00",
+  "reported_at": "2026-05-27T20:33:00Z",
   "status": "sent",
   "seen_at": null,
-  "decide_by": "2026-05-28T04:10:00",   // departure − 20 min
+  "decide_by": "2026-05-27T22:40:00Z",   // departure − 20 min (04:10 depot time)
   "decided_at": null,
   "decided_by": null,
   "options": [
@@ -338,7 +457,9 @@ Existing domain handlers, so the envelope matches the rest of the API:
 | Status | `detail.code` | When |
 | --- | --- | --- |
 | 404 | `NOT_FOUND` | unknown run code, issue id or order number |
-| 409 | `INVALID_STATE_TRANSITION` | resolving a settled issue; plan change after gate-out |
+| 409 | `INVALID_STATE_TRANSITION` | resolving a settled issue; plan change after gate-out; an L4 write the row or run state does not allow |
+| 409 | `PLAN_VERSION_STALE` | a write made against a plan version that is no longer current |
+| 409 | `CLIENT_ACTION_ID_REUSED` | a `client_action_id` sent again for a different action |
 
 ```jsonc
 { "detail": { "code": "NOT_FOUND", "message": "Run 'RUN-999' not found.",
@@ -372,7 +493,7 @@ per row at 320px.
 
 // 200
 { "session_id": 12, "loader": { "id": 1, "short_name": "Saman J." },
-  "dock": "Dock 3", "depot": "peliyagoda", "started_at": "2026-05-28T01:30:00" }
+  "dock": "Dock 3", "depot": "peliyagoda", "started_at": "2026-05-27T20:00:00Z" }
 
 // 401 — wrong PIN
 { "detail": { "code": "AUTHORIZATION_FAILED", "message": "Incorrect PIN." } }
@@ -417,9 +538,10 @@ it with `end_reason` of `idle_timeout`, `switch_user` or `sign_out`.
           "trip_number": 1,
           "brand": "fresh",
           "district": "Gampaha",
-          "departs_at": "2026-05-28T03:30:00",
+          "departs_at": "2026-05-27T22:00:00Z",
           "status": "loading",
           "stop_count": 4,
+          "orders_loaded": 5,     // the card's "5 of 8 loaded" — see Counting rules
           "orders_checked": 5,
           "orders_total": 8,
           "loader": "Saman J.",
@@ -440,12 +562,6 @@ it with `end_reason` of `idle_timeout`, `switch_user` or `sign_out`.
 `alert` is nullable and drives the coloured row on the card. Suggested tones:
 `warning` for a plan change, `error` for a waiting issue, `success` for signed
 off, `neutral` for a pre-stage note.
-
-### `POST` / `DELETE /loader/runs/{code}/orders/{order_number}/check` — L4 ↔ L5
-
-L4's own write path. Body carries `client_action_id` per the write contract
-above; a duplicate returns the original result with 200. Returns the updated
-`RunDetailRead`.
 
 ### `POST /loader/issues` — L5 flag
 
