@@ -19,7 +19,7 @@ from app.models.delivery_run import (
     StopStatus,
 )
 from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck
-from app.models.loader_issue import IssueStatus, LoaderIssue, LoaderIssueOption
+from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderSession, LoaderUser
 from app.models.order import Order
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
@@ -177,6 +177,7 @@ class LoaderService:
     @staticmethod
     def build_run_detail(db: Session, run: DeliveryRun) -> schemas.RunDetailRead:
         stops = LoaderService.current_stops(db, run)
+        issues = LoaderService._latest_issues(db, run)
         unloads = LoaderService._unloads(db, run)
         diff = LoaderService._plan_diff(db, run, stops, unloads)
         blockers = LoaderService.release_blockers(db, run)
@@ -205,6 +206,7 @@ class LoaderService:
                         state=row.state,
                         checked_at=row.checked_at,
                         checked_by=row.checked_by.short_name if row.checked_by else None,
+                        loaded_units=LoaderService.loaded_units(row, issues.get(row.order_id)),
                         unloaded_at=unload.at if unload else None,
                         unloaded_by=unload.actor.short_name if unload and unload.actor else None,
                         **(diff.order_fields(row, stop) if diff else {}),
@@ -276,6 +278,34 @@ class LoaderService:
             release_locked=bool(blockers),
             release_blockers=blockers,
         )
+
+    @staticmethod
+    def loaded_units(row: RunStopOrder, issue: Optional[LoaderIssue]) -> int:
+        """Units of this order actually on the truck.
+
+        - loaded, re_check, take_off (not yet unloaded): every unit is aboard.
+        - flagged: missing -> 0; short, damaged or won't fit -> units minus the
+          units flagged (a flag without a count takes nothing off).
+        - to_load, new, moved: nothing aboard.
+        """
+        units = row.units or 0
+        if row.state in (RunOrderState.LOADED, RunOrderState.RE_CHECK, RunOrderState.TAKE_OFF):
+            return units
+        if row.state == RunOrderState.FLAGGED and issue is not None:
+            if issue.issue_type == IssueType.MISSING:
+                return 0
+            return max(units - (issue.units_affected or 0), 0)
+        return 0
+
+    @staticmethod
+    def _latest_issues(db: Session, run: DeliveryRun) -> dict:
+        """The most recent issue per order on this run, by order id."""
+        issues = db.execute(
+            select(LoaderIssue)
+            .filter_by(run_id=run.id)
+            .order_by(LoaderIssue.reported_at, LoaderIssue.id)
+        ).scalars().all()
+        return {issue.order_id: issue for issue in issues}
 
     @staticmethod
     def release_fields(run: DeliveryRun) -> dict:
