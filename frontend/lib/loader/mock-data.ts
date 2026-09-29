@@ -17,7 +17,8 @@ import type {
 } from "./types";
 
 const DAY = "2026-05-28";
-const at = (time: string) => `${DAY}T${time}:00`;
+/** Depot time on DAY, sent as the API sends it: UTC with a Z. at("03:30") → "2026-05-27T22:00:00Z". */
+const at = (time: string) => new Date(`${DAY}T${time}:00+05:30`).toISOString().replace(".000Z", "Z");
 
 /** Fixed "now" for the mock scenario, so server and client render the same. */
 export const mockNow = at("02:20");
@@ -89,6 +90,7 @@ const RUN_021: Run = {
     acknowledged_by: "Saman J.",
   },
   unacknowledged_plan_version: null,
+  orders_loaded: 5,
   orders_checked: 5,
   orders_total: 7,
   // Ordered by load_position, as the API returns them.
@@ -290,6 +292,7 @@ export const mockQueue: RunQueue = {
           departs_at: at("03:30"),
           status: "loading",
           stop_count: 4,
+          orders_loaded: 5,
           orders_checked: 5,
           orders_total: 8,
           loader: "Saman J.",
@@ -312,6 +315,7 @@ export const mockQueue: RunQueue = {
           departs_at: at("03:40"),
           status: "ready_to_depart",
           stop_count: 2,
+          orders_loaded: 4,
           orders_checked: 4,
           orders_total: 4,
           loader: "Nimal S.",
@@ -334,7 +338,8 @@ export const mockQueue: RunQueue = {
           departs_at: at("04:30"),
           status: "issue_flagged",
           stop_count: 3,
-          orders_checked: 3,
+          orders_loaded: 3,
+          orders_checked: 4,
           orders_total: 5,
           loader: "Tharindu J.",
           chips: ["Van", "Reefer", "van_only"],
@@ -356,6 +361,7 @@ export const mockQueue: RunQueue = {
           departs_at: at("05:20"),
           status: "not_started",
           stop_count: 2,
+          orders_loaded: 0,
           orders_checked: 0,
           orders_total: 3,
           loader: null,
@@ -385,6 +391,7 @@ export const mockQueue: RunQueue = {
           departs_at: at("06:00"),
           status: "not_started",
           stop_count: 3,
+          orders_loaded: 0,
           orders_checked: 0,
           orders_total: 3,
           loader: null,
@@ -409,6 +416,7 @@ export const mockQueue: RunQueue = {
           departs_at: at("06:30"),
           status: "not_started",
           stop_count: 2,
+          orders_loaded: 0,
           orders_checked: 0,
           orders_total: 2,
           loader: null,

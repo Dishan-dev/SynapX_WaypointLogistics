@@ -28,8 +28,13 @@ import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import { TempBadge } from "@/components/loader/temp-badge";
 import { dockPlanSource, loadMapSlots, planSource, runCapacity, stopsInLoadOrder } from "@/lib/loader/format";
+import { simulateMockPlanChange } from "@/lib/loader/offline/transport";
 import { mockQueue, mockRunDetails } from "@/lib/loader/mock-data";
 import type { OrderState, RunOrder } from "@/lib/loader/types";
+
+// The plan-change button drives the mock server only; on the API use
+// POST /loader/dev/runs/{code}/plan-change instead.
+const MOCK_TRANSPORT = process.env.NEXT_PUBLIC_LOADER_TRANSPORT !== "api";
 
 const states: OrderState[] = ["to_load", "loaded", "flagged", "re_check", "take_off", "moved", "new"];
 
@@ -52,8 +57,10 @@ export function KitView() {
   const [query, setQuery] = useState("");
   const [pin, setPin] = useState("");
   const [picked, setPicked] = useState(false);
+  // re_check rows: the checklist sends check; recheck is the explicit write.
+  const [recheckVerb, setRecheckVerb] = useState<"check" | "recheck">("check");
   const { user } = useLoaderShell();
-  const { sync } = useLoaderSync();
+  const { sync, flush } = useLoaderSync();
   const offline = useOfflineRun(initialRun, user.shortName);
   // Capacity and counts follow local actions (recomputed after each tap).
   const run = offline.run;
@@ -66,8 +73,8 @@ export function KitView() {
           Offline test · {run.code}
         </h2>
         <p className="text-xs text-muted-foreground" data-testid="sync-summary">
-          online={String(sync.online)} · pending={sync.pending} · failed={sync.failed} · syncing={String(sync.syncing)} ·
-          checked={run.orders_checked}/{run.orders_total} · source={offline.source}
+          online={String(sync.online)} · pending={sync.pending} · stale={sync.stale} · failed={sync.failed} · syncing={String(sync.syncing)} ·
+          loaded={run.orders_loaded} · checked={run.orders_checked}/{run.orders_total} · source={offline.source}
         </p>
         {stopsInLoadOrder(run.stops).map((stop) =>
           stop.orders.map((o) => (
@@ -75,21 +82,66 @@ export function KitView() {
               key={o.order_number}
               order={o}
               onToggle={(order) =>
-                void offline.act(order.state === "loaded" ? "uncheck" : "check", {
-                  order_number: order.order_number,
-                })
+                void offline.act(
+                  order.state === "loaded" ? "uncheck" : order.state === "re_check" ? recheckVerb : "check",
+                  { order_number: order.order_number },
+                )
               }
               onFlag={() => {}}
             />
           )),
         )}
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex min-h-12 items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              className="size-5 accent-primary"
+              checked={recheckVerb === "recheck"}
+              onChange={(e) => setRecheckVerb(e.target.checked ? "recheck" : "check")}
+            />
+            Send recheck for re_check rows
+          </label>
+          {MOCK_TRANSPORT && (
+            <LoaderButton
+              variant="secondary"
+              onClick={() => {
+                simulateMockPlanChange(run.code);
+                void flush();
+              }}
+            >
+              Simulate plan change
+            </LoaderButton>
+          )}
+          {run.unacknowledged_plan_version !== null && (
+            <LoaderButton onClick={() => void offline.act("acknowledge")}>
+              Acknowledge v{run.unacknowledged_plan_version}
+            </LoaderButton>
+          )}
+        </div>
+        {offline.rejected.length > 0 && (
+          <div className="space-y-2">
+            <ul className="space-y-1 text-xs text-muted-foreground" data-testid="rejected-actions">
+              {offline.rejected.map((a) => (
+                <li key={a.client_action_id}>
+                  {a.action_type} {"order_number" in a.payload ? a.payload.order_number : ""} · v{a.plan_version} ·{" "}
+                  {a.conflict_code ?? a.status}
+                  {a.current_plan_version !== undefined && ` (now v${a.current_plan_version})`}
+                </li>
+              ))}
+            </ul>
+            <LoaderButton variant="ghost" onClick={() => void offline.dismissRejected()}>
+              Dismiss
+            </LoaderButton>
+          </div>
+        )}
       </section>
       <section className="overflow-hidden rounded-lg border border-border">
         <LoaderAppBar title="Loading checklist" subtitle="RUN-021 · Dock tablet 3 · Saman J." hasUnread />
-        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, failed: 0 }} />
-        <PlanSourceStrip plan={planSource(run)} sync={{ online: false, pending: 3, syncing: false, failed: 0 }} />
-        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 3, syncing: true, failed: 0 }} />
-        <PlanSourceStrip plan={dockPlanSource([run])} sync={{ online: true, pending: 0, syncing: false, failed: 1 }} />
+        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, stale: 0, failed: 0 }} />
+        <PlanSourceStrip plan={planSource(run)} sync={{ online: false, pending: 3, syncing: false, stale: 0, failed: 0 }} />
+        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 3, syncing: true, stale: 0, failed: 0 }} />
+        <PlanSourceStrip plan={dockPlanSource([run])} sync={{ online: true, pending: 0, syncing: false, stale: 0, failed: 1 }} />
+        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, stale: 2, failed: 0 }} />
         <div className="h-4" />
         <LoaderBottomNav active="loading" loadingHref="/loader/runs/RUN-021" issueCount={1} />
       </section>

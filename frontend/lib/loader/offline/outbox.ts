@@ -1,7 +1,7 @@
 // Offline outbox: every loader write becomes a QueuedAction with a
 // client_action_id, is applied to the cached run straight away, and is sent
 // later by the sync engine. The server answers a replayed client_action_id
-// with the original result and 200, so retries are safe.
+// with 200 and the resource as it is now, so retries are safe.
 
 import { withRecomputedCounts } from "../format";
 import type {
@@ -12,6 +12,7 @@ import type {
   QueuedActionPayload,
   QueuedActionType,
   Run,
+  RunStatus,
 } from "../types";
 import { putOutboxAction } from "./db";
 
@@ -56,9 +57,11 @@ const runPath = (a: QueuedAction) => `/loader/runs/${enc(a.run_code)}`;
 
 // Paths from docs/loader/API_CONTRACT.md. The contract names unload and
 // acknowledge without paths; those two follow LOADER_FEATURES.md (L7).
+// Uncheck is a DELETE with a JSON body, like every other write.
 const ENDPOINTS: Record<QueuedActionType, (a: QueuedAction) => Pick<ActionRequest, "method" | "path">> = {
   check: (a) => ({ method: "POST", path: orderPath(a, "check") }),
   uncheck: (a) => ({ method: "DELETE", path: orderPath(a, "check") }),
+  recheck: (a) => ({ method: "POST", path: orderPath(a, "recheck") }),
   unload: (a) => ({ method: "POST", path: orderPath(a, "unload") }),
   flag: () => ({ method: "POST", path: "/loader/issues" }),
   acknowledge: (a) => ({ method: "POST", path: `${runPath(a)}/plan/${a.plan_version}/acknowledge` }),
@@ -67,13 +70,14 @@ const ENDPOINTS: Record<QueuedActionType, (a: QueuedAction) => Pick<ActionReques
 };
 
 /**
- * JSON body: client_action_id and loader_session_id on every write. The flag
- * body is the full POST /loader/issues payload; the rest carry nothing else
- * (order number and plan version are in the path).
+ * JSON body: client_action_id, plan_version and loader_session_id on every
+ * write. The flag body is the full POST /loader/issues payload; the rest carry
+ * nothing else (run code and order number are in the path).
  */
 function bodyFor(action: QueuedAction): Record<string, unknown> {
   const base = {
     client_action_id: action.client_action_id,
+    plan_version: action.plan_version,
     loader_session_id: action.payload.loader_session_id,
   };
   return action.action_type === "flag" ? { ...(action.payload as FlagActionPayload), ...base } : base;
@@ -85,9 +89,12 @@ export function requestFor(action: QueuedAction): ActionRequest {
 
 // ---- Optimistic apply --------------------------------------------------
 
-// A check on a re_check order clears it; there is no separate recheck write.
+// check confirms a re_check row too (the checklist sends check for every
+// tap); recheck is the explicit form. uncheck goes back to to_load here; the server sends a new order back to
+// new, and its copy replaces this one after the sync.
 const ORDER_STATE_AFTER: Partial<Record<QueuedActionType, OrderState>> = {
   check: "loaded",
+  recheck: "loaded",
   uncheck: "to_load",
   unload: "moved",
   flag: "flagged",
@@ -122,12 +129,6 @@ export function applyAction(run: Run, action: QueuedAction, actorName?: string):
   const loaded = nextState === "loaded";
   const next: Run = {
     ...run,
-    status:
-      action.action_type === "flag"
-        ? "issue_flagged"
-        : run.status === "not_started"
-          ? "loading"
-          : run.status,
     stops: run.stops.map((stop) => ({
       ...stop,
       orders: stop.orders.map((order) =>
@@ -142,5 +143,20 @@ export function applyAction(run: Run, action: QueuedAction, actorName?: string):
       ),
     })),
   };
-  return withRecomputedCounts(next);
+  const counted = withRecomputedCounts(next);
+  return { ...counted, status: statusAfter(counted, action.action_type) };
+}
+
+/**
+ * Run status after an order write, as the server sets it: loading from the
+ * first write, loaded once every order is checked or flagged, back to loading
+ * on an uncheck. A flag moves the run to issue_flagged, which only the
+ * Dispatcher's decision clears; signed-off runs are left alone.
+ */
+function statusAfter(run: Run, type: QueuedActionType): RunStatus {
+  if (type === "flag") return "issue_flagged";
+  if (run.status === "issue_flagged" || run.status === "ready_to_depart" || run.status === "gated_out") {
+    return run.status;
+  }
+  return run.orders_total > 0 && run.orders_checked === run.orders_total ? "loaded" : "loading";
 }

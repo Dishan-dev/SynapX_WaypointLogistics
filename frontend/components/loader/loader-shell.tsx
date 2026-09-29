@@ -16,8 +16,8 @@ interface LoaderShellContextValue {
   user: LoaderShellUser;
   /** "Peliyagoda DC · Dock 3" */
   dockLabel: string;
-  /** Sent as loader_session_id on every write. */
-  sessionId: number;
+  /** Sent as loader_session_id on every write; null until L2 sign-in. */
+  sessionId: number | null;
 }
 
 const LoaderShellContext = React.createContext<LoaderShellContextValue | null>(null);
@@ -44,7 +44,7 @@ function runCodeFrom(pathname: string): string | undefined {
 interface LoaderShellProps {
   user: LoaderShellUser;
   dockLabel: string;
-  sessionId: number;
+  sessionId: number | null;
   issueCount?: number;
   children: React.ReactNode;
 }

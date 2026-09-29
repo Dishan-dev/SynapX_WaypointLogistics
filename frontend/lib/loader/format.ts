@@ -33,18 +33,16 @@ interface LocalDateTime {
 }
 
 /**
- * Wall-clock parts of an API timestamp. The API sends depot local time without
- * an offset ("2026-05-28T03:30:00"), which is read as-is so the tablet's own
- * timezone never shifts it. Timestamps with an offset are converted to depot time.
+ * Depot wall-clock parts of an API timestamp. The API sends UTC with a Z
+ * ("2026-05-27T22:00:00Z" is 03:30 on 28 May in the depot). A timestamp without
+ * an offset is UTC by the same convention, so it is never read in the tablet's
+ * own timezone. Delivery windows ("05:00:00") are not timestamps; they go
+ * through formatClock.
  */
 export function parseLocalDateTime(iso: string): LocalDateTime {
-  const naive = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
-  if (naive && !/(Z|[+-]\d{2}:?\d{2})$/.test(iso)) {
-    const [, y, mo, d, h, mi] = naive.map(Number);
-    return { year: y, month: mo, day: d, hour: h, minute: mi };
-  }
+  const utc = /(Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`;
   const parts = Object.fromEntries(
-    zonedParts.formatToParts(new Date(iso)).map((p) => [p.type, p.value]),
+    zonedParts.formatToParts(new Date(utc)).map((p) => [p.type, p.value]),
   );
   return {
     year: Number(parts.year),
@@ -77,12 +75,12 @@ export function formatDay(iso: string): string {
     .replace(",", "");
 }
 
-/** Delivery window time "05:00:00" → "05:00". */
+/** Delivery window time "05:00:00" → "05:00". Already depot time; shown as-is. */
 export function formatClock(hms: string): string {
   return hms.slice(0, 5);
 }
 
-/** "Good night" / "Good morning" / … for a depot-time timestamp. */
+/** "Good night" / "Good morning" / … by the depot hour of a timestamp. */
 export function greeting(iso: string): string {
   const { hour } = parseLocalDateTime(iso);
   if (hour < 5 || hour >= 22) return "Good night";
@@ -141,12 +139,12 @@ export function stopTitle(stop: RunStop): string {
   return `Stop ${stop.stop_sequence} · ${stop.outlet.code}${stop.is_new ? " · NEW STOP" : ""}`;
 }
 
-/** "rear_dock · 03:00–08:00 · ETA 05:20 · 1 dry + 1 chilled" */
+/** "rear_dock · 03:00–08:00 · ETA 05:20 · 1 dry + 1 chilled" ("ETA pending" without one) */
 export function formatStopDetails(stop: RunStop): string {
   const parts = [
     stop.outlet.dock_type,
     `${formatClock(stop.outlet.window_start)}–${formatClock(stop.outlet.window_end)}`,
-    `ETA ${formatTime(stop.eta)}`,
+    stop.eta ? `ETA ${formatTime(stop.eta)}` : "ETA pending",
   ];
   if (stop.note) parts.push(stop.note);
   return parts.join(" · ");
@@ -180,11 +178,13 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
  * only for runs changed locally by offline actions.
  *
  * - orders_total excludes take_off and moved
+ * - orders_loaded counts loaded only (not flagged, not re_check)
  * - orders_checked counts loaded and flagged (not re_check)
  * - loaded capacity counts loaded and re_check (goods are aboard)
  */
 export function withRecomputedCounts(run: Run): Run {
   let total = 0;
+  let loaded = 0;
   let checked = 0;
   let loadedKg = 0;
   let loadedM3 = 0;
@@ -196,6 +196,7 @@ export function withRecomputedCounts(run: Run): Run {
       total += 1;
       plannedKg += order.weight_kg;
       plannedM3 += order.volume_m3;
+      if (order.state === "loaded") loaded += 1;
       if (order.state === "loaded" || order.state === "flagged") checked += 1;
       if (order.state === "loaded" || order.state === "re_check") {
         loadedKg += order.weight_kg;
@@ -206,6 +207,7 @@ export function withRecomputedCounts(run: Run): Run {
   return {
     ...run,
     orders_total: total,
+    orders_loaded: loaded,
     orders_checked: checked,
     capacity: {
       ...run.capacity,
@@ -306,8 +308,9 @@ export function runChipKind(label: string): RunChipKind {
 
 /** Display fields for a queue run card. */
 export function runCardView(run: RunSummary) {
-  const progress = run.orders_total ? Math.round((run.orders_checked / run.orders_total) * 100) : 0;
-  const note = `${run.orders_checked} of ${run.orders_total} loaded`;
+  // Loaded only: a flagged order is not on the truck (contract counting rules).
+  const progress = run.orders_total ? Math.round((run.orders_loaded / run.orders_total) * 100) : 0;
+  const note = `${run.orders_loaded} of ${run.orders_total} loaded`;
   return {
     code: run.code,
     status: run.status,
