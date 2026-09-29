@@ -16,8 +16,8 @@ interface FilterBarProps {
   onSearchChange?: (value: string) => void;
   statusOptions?: { label: string; value: string }[];
   onStatusChange?: (value: string) => void;
-  depotOptions?: { label: string; value: string }[];
-  onDepotChange?: (value: string) => void;
+  typeOptions?: { label: string; value: string }[];
+  onTypeChange?: (value: string) => void;
   actionButton?: React.ReactNode;
 }
 
@@ -26,12 +26,12 @@ export function FilterBar({
   onSearchChange,
   statusOptions,
   onStatusChange,
-  depotOptions,
-  onDepotChange,
+  typeOptions,
+  onTypeChange,
   actionButton,
 }: FilterBarProps) {
   return (
-    <div className="flex flex-col sm:flex-row items-center gap-3 w-full bg-card p-3 rounded-lg border border-border">
+    <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
       <div className="relative flex-1 w-full">
         <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
@@ -56,13 +56,13 @@ export function FilterBar({
         </Select>
       )}
 
-      {depotOptions && depotOptions.length > 0 && (
-        <Select onValueChange={onDepotChange}>
+      {typeOptions && typeOptions.length > 0 && (
+        <Select onValueChange={onTypeChange}>
           <SelectTrigger className="w-full sm:w-[160px] bg-background border-border shadow-none">
-            <SelectValue placeholder="Depot" />
+            <SelectValue placeholder="Vehicle Type" />
           </SelectTrigger>
           <SelectContent>
-            {depotOptions.map((opt) => (
+            {typeOptions.map((opt) => (
               <SelectItem key={opt.value} value={opt.value}>
                 {opt.label}
               </SelectItem>

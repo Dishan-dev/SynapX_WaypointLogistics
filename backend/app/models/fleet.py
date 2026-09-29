@@ -17,11 +17,18 @@ class Vehicle(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     code: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False) # e.g. VEH014
-    vehicle_type: Mapped[str] = mapped_column(String(50), nullable=False) # e.g. Reefer 6T
+    vehicle_type: Mapped[str] = mapped_column(String(50), nullable=False) # "truck" or "van"
     capacity_kg: Mapped[float] = mapped_column(Float, nullable=False)
-    capacity_vol_m3: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    capacity_vol_m3: Mapped[float] = mapped_column(Float, nullable=False)  # required — no default; loader reads this for capacity bars
     status: Mapped[VehicleStatus] = mapped_column(Enum(VehicleStatus), default=VehicleStatus.AVAILABLE, nullable=False)
-    
+
+    temperature_mode: Mapped[str] = mapped_column(String(50), nullable=False, default="ambient")   # "reefer" or "ambient"
+    depot_name: Mapped[str] = mapped_column(String(100), nullable=False, default="peliyagoda")      # "peliyagoda" or "kandy"
+    weekly_fuel_status: Mapped[str] = mapped_column(String(50), nullable=False, default="Within quota")
+    trips_today: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    trips_planned: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    maintenance_state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

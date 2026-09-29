@@ -26,11 +26,13 @@ class Settings(BaseSettings):
     @classmethod
     def assemble_db_connection(cls, v: Optional[str]) -> Optional[str]:
         if isinstance(v, str) and v.strip():
-            # SQLAlchemy 2.0 with psycopg2 requires postgresql+psycopg2://
+            # Use psycopg (v3) driver — required for Neon SSL compatibility
+            if v.startswith("postgresql+psycopg2://"):
+                return v.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
             if v.startswith("postgresql://"):
-                return v.replace("postgresql://", "postgresql+psycopg2://", 1)
+                return v.replace("postgresql://", "postgresql+psycopg://", 1)
             if v.startswith("postgres://"):
-                return v.replace("postgres://", "postgresql+psycopg2://", 1)
+                return v.replace("postgres://", "postgresql+psycopg://", 1)
         return v
 
     # Keycloak Configuration
