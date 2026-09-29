@@ -715,3 +715,32 @@ def test_a_waiting_issue_locks_release(loader_client, db_session):
     body = run_body(loader_client)
 
     assert blockers(body) == {"issue_waiting": 1}
+
+
+def test_a_check_on_a_re_check_row_also_remembers_the_version(loader_client, db_session):
+    """The tablet sends check, not recheck; the row still reads "Re-checked"."""
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+
+    loader_client.post(
+        f"{BASE}/runs/{RUN}/orders/ORD0092305/check",
+        json={"client_action_id": str(uuid.uuid4()), "plan_version": 3},
+    )
+    body = run_body(loader_client)
+
+    assert order_of(body, "ORD0092305")["state"] == "loaded"
+    assert order_of(body, "ORD0092305")["changed_in_version"] == 3
+
+
+def test_checking_a_new_order_is_not_a_re_check(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+
+    loader_client.post(
+        f"{BASE}/runs/{RUN}/orders/ORD0092319/check",
+        json={"client_action_id": str(uuid.uuid4()), "plan_version": 3},
+    )
+    new = order_of(run_body(loader_client), "ORD0092319")
+
+    # Still shown as added by v3, not as re-checked.
+    assert (new["state"], new["change_kind"], new["changed_in_version"]) == ("loaded", "load_new", 3)

@@ -358,15 +358,19 @@ class LoaderService:
             .order_by(PlanRevision.version, PlanRevisionChange.position, PlanRevisionChange.id)
         ).scalars().all()
 
+        # A check confirms a re_check row just as recheck does (the tablet only
+        # sends check), so both count; PlanDiff keeps the ones on orders that
+        # were aboard before the change.
         rechecks = db.execute(
             select(LoadingCheck)
             .join(RunStopOrder, LoadingCheck.run_stop_order_id == RunStopOrder.id)
             .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
             .where(
                 RunStop.run_id == run.id,
-                LoadingCheck.action == CheckAction.RECHECK,
+                LoadingCheck.action.in_([CheckAction.CHECK, CheckAction.RECHECK]),
                 LoadingCheck.plan_version.in_(versions),
             )
+            .order_by(LoadingCheck.at, LoadingCheck.id)
         ).scalars().all()
 
         return PlanDiff(
@@ -1297,7 +1301,12 @@ class PlanDiff:
         self.base_rows = {row.order_id: row for s in base_stops for row in s.orders}
         # Latest change per order across the window: the dispatcher's words.
         self.changes = {c.order_id: c for c in changes if c.order_id is not None}
-        self.rechecked = rechecked
+        # Re-confirmed in this change: checked again while it was already aboard.
+        self.rechecked = {
+            order_id: version
+            for order_id, version in rechecked.items()
+            if order_id in self.base_rows and self.base_rows[order_id].state in ON_TRUCK_STATES
+        }
         self.unloaded = unloaded_in_window
         # Orders coming off the truck, with their stop's load position, so a
         # re-check row can say which order it was moved to reach.
