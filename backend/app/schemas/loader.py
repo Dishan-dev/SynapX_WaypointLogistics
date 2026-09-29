@@ -127,6 +127,13 @@ class RunDetailRead(BaseModel):
     plan: Optional[PlanRevisionRead] = None
     unacknowledged_plan_version: Optional[int] = None
     stops: List[RunStopRead]
+    # Two different counts over the same orders_total (take_off / moved excluded):
+    # - orders_loaded: state loaded only - what is on the truck and confirmed.
+    #   The queue's "3 of 5 loaded" and the "x of y orders in" line.
+    # - orders_checked: loaded OR flagged - no longer blocking review. The
+    #   review lock, "Review & confirm · 4 of 5".
+    # re_check counts toward neither until it is confirmed again.
+    orders_loaded: int
     orders_checked: int
     orders_total: int
 

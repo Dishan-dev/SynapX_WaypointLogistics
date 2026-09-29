@@ -550,3 +550,29 @@ def test_client_action_id_and_plan_version_are_required(loader_client, db_sessio
     ):
         response = loader_client.post(order_url("ORD0092302"), json=bad)
         assert response.status_code == 422, bad
+
+
+# --- the two counts ----------------------------------------------------------
+
+
+def test_loaded_and_checked_counts_differ_by_the_flagged_orders(loader_client, db_session):
+    """orders_loaded is loaded only; orders_checked is loaded or flagged."""
+    run, _ = build_run_021(db_session)
+    row_for(db_session, run, "ORD0092302").state = RunOrderState.FLAGGED
+    db_session.flush()
+
+    before = loader_client.get(f"{BASE}/runs/{RUN}").json()
+    after = check(loader_client, "ORD0092304").json()
+
+    assert (before["orders_loaded"], before["orders_checked"], before["orders_total"]) == (5, 6, 8)
+    assert (after["orders_loaded"], after["orders_checked"], after["orders_total"]) == (6, 7, 8)
+
+
+def test_re_check_counts_as_neither_loaded_nor_checked(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    publish_v3(db_session, run, unload_order_numbers=["ORD0092308"])
+
+    body = loader_client.get(f"{BASE}/runs/{RUN}").json()
+
+    # Every order checked at v2 is re_check at v3 until confirmed again.
+    assert (body["orders_loaded"], body["orders_checked"]) == (0, 0)

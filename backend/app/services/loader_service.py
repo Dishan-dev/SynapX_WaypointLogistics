@@ -149,6 +149,7 @@ class LoaderService:
         stops = LoaderService.current_stops(db, run)
 
         stop_reads: List[schemas.RunStopRead] = []
+        loaded = 0
         checked = 0
         total = 0
         for stop in stops:
@@ -156,6 +157,8 @@ class LoaderService:
             for row in sorted(stop.orders, key=lambda r: r.order.order_number):
                 if row.state not in OFF_PLAN_STATES:
                     total += 1
+                    if row.state == RunOrderState.LOADED:
+                        loaded += 1
                     if row.state in RESOLVED_STATES:
                         checked += 1
                 order_reads.append(
@@ -221,6 +224,7 @@ class LoaderService:
             plan=plan_read,
             unacknowledged_plan_version=unacknowledged,
             stops=stop_reads,
+            orders_loaded=loaded,
             orders_checked=checked,
             orders_total=total,
         )
