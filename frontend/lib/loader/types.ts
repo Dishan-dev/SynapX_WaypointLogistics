@@ -150,11 +150,33 @@ export interface QueuedAction {
   client_action_id: string;
   action_type: QueuedActionType;
   run_code: string;
-  payload: unknown;
+  payload: QueuedActionPayload;
   plan_version: number;
   created_at: string;
   attempts: number;
+  /** Client-only: pending until sent; conflict (409) and failed are not retried. */
+  status: QueuedActionStatus;
+  last_error?: string;
 }
+
+export type QueuedActionStatus = "pending" | "conflict" | "failed";
+
+/** Order-level writes: check, uncheck, unload, recheck. */
+export interface OrderActionPayload {
+  order_number: string;
+}
+
+export interface FlagActionPayload {
+  order_number: string;
+  issue_type: IssueType;
+  units_affected?: number;
+  note?: string;
+}
+
+export type QueuedActionPayload =
+  | OrderActionPayload
+  | FlagActionPayload
+  | Record<string, never>;
 
 /** Client-only connectivity and outbox state (not an API shape). */
 export interface SyncState {
