@@ -14,6 +14,7 @@ from app.models.loader_activity import ActorKind, LoaderActivity
 from app.models.loader_issue import IssueStatus, LoaderIssue, LoaderIssueOption
 from app.models.order import Order
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
+from app.models.reference import Dock
 from app.schemas import loader as schemas
 
 # States that mean the order is physically aboard, for the capacity rollup.
@@ -180,21 +181,89 @@ class LoaderService:
         )
 
     @staticmethod
+    def _to_activity_read(row: LoaderActivity) -> schemas.ActivityRead:
+        return schemas.ActivityRead(
+            at=row.at,
+            run_code=row.run.code,
+            actor_kind=row.actor_kind,
+            actor=row.actor_label or (row.actor.short_name if row.actor else None),
+            event_type=row.event_type,
+            order_number=row.order.order_number if row.order else None,
+            message=row.message,
+        )
+
+    @staticmethod
     def list_activity(db: Session, run: DeliveryRun) -> List[schemas.ActivityRead]:
+        """One run's timeline, OLDEST first.
+
+        The Change log panel reads top to bottom as the shift progresses
+        (02:14 published -> 02:16 acknowledged -> 02:20 ...), so chronological
+        order is what the design wants here.
+        """
         rows = db.execute(
-            select(LoaderActivity).filter_by(run_id=run.id).order_by(LoaderActivity.at)
+            select(LoaderActivity)
+            .filter_by(run_id=run.id)
+            .order_by(LoaderActivity.at, LoaderActivity.id)
         ).scalars()
-        return [
-            schemas.ActivityRead(
-                at=row.at,
-                actor_kind=row.actor_kind,
-                actor=row.actor_label or (row.actor.short_name if row.actor else None),
-                event_type=row.event_type,
-                order_number=row.order.order_number if row.order else None,
-                message=row.message,
-            )
-            for row in rows
-        ]
+        return [LoaderService._to_activity_read(row) for row in rows]
+
+    @staticmethod
+    def resolve_dock(db: Session, dock: str) -> Dock:
+        """Find a dock by number ("3"), code ("DOCK3") or name ("Dock 3")."""
+        needle = (dock or "").strip()
+        if not needle:
+            raise NotFoundError("No dock given.", entity="Dock", entity_id=dock)
+
+        candidates = [needle, needle.upper().replace(" ", "")]
+        if needle.isdigit():
+            candidates += [f"DOCK{needle}", f"Dock {needle}"]
+
+        for candidate in candidates:
+            found = db.execute(
+                select(Dock).where(
+                    (Dock.code == candidate) | (Dock.name == candidate)
+                )
+            ).scalars().first()
+            if found is not None:
+                return found
+
+        raise NotFoundError(f"Dock '{dock}' not found.", entity="Dock", entity_id=dock)
+
+    @staticmethod
+    def list_dock_activity(
+        db: Session,
+        dock: Dock,
+        run_code: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[schemas.ActivityRead]:
+        """Everything that happened at one dock, NEWEST first.
+
+        This is a feed rather than a timeline - the loader coming back to the Log
+        tab wants the most recent thing at the top, across every run on the dock.
+        That is the opposite of the per-run timeline above, deliberately.
+
+        `run_code` narrows the feed to one run without changing the ordering.
+        """
+        query = (
+            select(LoaderActivity)
+            .join(DeliveryRun, LoaderActivity.run_id == DeliveryRun.id)
+            .where(DeliveryRun.dock_id == dock.id)
+        )
+
+        if run_code is not None:
+            run = LoaderService.get_run(db, run_code)
+            if run.dock_id != dock.id:
+                raise NotFoundError(
+                    f"Run '{run_code}' is not at {dock.name}.",
+                    entity="DeliveryRun",
+                    entity_id=run_code,
+                )
+            query = query.where(LoaderActivity.run_id == run.id)
+
+        rows = db.execute(
+            query.order_by(LoaderActivity.at.desc(), LoaderActivity.id.desc()).limit(limit)
+        ).scalars()
+        return [LoaderService._to_activity_read(row) for row in rows]
 
     # --- helpers ----------------------------------------------------------
 

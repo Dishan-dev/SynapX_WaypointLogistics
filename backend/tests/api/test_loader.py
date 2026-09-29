@@ -2,11 +2,16 @@
 import importlib
 
 from app.models.delivery_run import RunStatus
+from app.models.loader_activity import ActorKind
+from app.services.loader_service import LoaderService
 from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
+    at,
     build_run_021,
     loader_client,
+    make_dock,
     make_issue,
     make_loader,
+    make_run,
 )
 
 BASE = "/api/v1/loader"
@@ -193,6 +198,131 @@ def test_resolving_a_settled_issue_returns_409(loader_client, db_session):
     assert response.json()["detail"]["code"] == "INVALID_STATE_TRANSITION"
 
 
+def test_dock_activity_spans_runs_and_is_newest_first(loader_client, db_session):
+    run_a, orders = build_run_021(db_session)
+    dock = run_a.dock
+    run_b = make_run(db_session, run_a.vehicle, dock, code="RUN-027")
+    LoaderService.log(
+        db_session, run_a, at=at("02:14"), actor_kind=ActorKind.DISPATCHER,
+        event_type="plan_published", message="Dispatcher published plan v3",
+    )
+    LoaderService.log(
+        db_session, run_b, at=at("02:20"), actor_kind=ActorKind.LOADER,
+        event_type="order_checked", message="ORD0092315 loaded",
+    )
+    LoaderService.log(
+        db_session, run_a, at=at("02:16"), actor_kind=ActorKind.LOADER,
+        event_type="plan_acknowledged", message="Acknowledged - Saman J.",
+    )
+    db_session.flush()
+
+    body = loader_client.get(f"{BASE}/activity?dock=3").json()
+
+    assert [entry["message"] for entry in body] == [
+        "ORD0092315 loaded",              # 02:20
+        "Acknowledged - Saman J.",        # 02:16
+        "Dispatcher published plan v3",   # 02:14
+    ]
+    # The feed spans every run on the dock, so each entry names its run.
+    assert [entry["run_code"] for entry in body] == ["RUN-027", "RUN-021", "RUN-021"]
+
+
+def test_dock_activity_can_be_narrowed_to_one_run(loader_client, db_session):
+    run_a, _ = build_run_021(db_session)
+    run_b = make_run(db_session, run_a.vehicle, run_a.dock, code="RUN-027")
+    LoaderService.log(
+        db_session, run_a, at=at("02:14"), actor_kind=ActorKind.DISPATCHER,
+        event_type="plan_published", message="on RUN-021",
+    )
+    LoaderService.log(
+        db_session, run_b, at=at("02:20"), actor_kind=ActorKind.LOADER,
+        event_type="order_checked", message="on RUN-027",
+    )
+    db_session.flush()
+
+    body = loader_client.get(f"{BASE}/activity?dock=3&run_code=RUN-021").json()
+
+    assert [entry["message"] for entry in body] == ["on RUN-021"]
+
+
+def test_dock_activity_accepts_number_code_or_name(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    LoaderService.log(
+        db_session, run, at=at("02:14"), actor_kind=ActorKind.LOADER,
+        event_type="order_checked", message="something happened",
+    )
+    db_session.flush()
+
+    for dock in ("3", "DOCK3", "Dock 3"):
+        response = loader_client.get(f"{BASE}/activity", params={"dock": dock})
+        assert response.status_code == 200, f"{dock}: {response.text}"
+        assert len(response.json()) == 1, dock
+
+
+def test_dock_activity_respects_limit(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    for minute in range(5):
+        LoaderService.log(
+            db_session, run, at=at(f"02:{10 + minute:02d}"),
+            actor_kind=ActorKind.LOADER, event_type="order_checked",
+            message=f"entry {minute}",
+        )
+    db_session.flush()
+
+    body = loader_client.get(f"{BASE}/activity?dock=3&limit=2").json()
+
+    # Newest two.
+    assert [entry["message"] for entry in body] == ["entry 4", "entry 3"]
+
+
+def test_dock_activity_404s_for_an_unknown_dock(loader_client, db_session):
+    build_run_021(db_session)
+    db_session.flush()
+
+    response = loader_client.get(f"{BASE}/activity?dock=9")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["entity"] == "Dock"
+
+
+def test_dock_activity_404s_when_the_run_is_at_another_dock(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    other_dock = make_dock(db_session, code="DOCK4", name="Dock 4")
+    make_run(db_session, run.vehicle, other_dock, code="RUN-099")
+    db_session.flush()
+
+    response = loader_client.get(f"{BASE}/activity?dock=3&run_code=RUN-099")
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["entity"] == "DeliveryRun"
+
+
+def test_dock_activity_requires_a_dock(loader_client, db_session):
+    response = loader_client.get(f"{BASE}/activity")
+
+    assert response.status_code == 422
+
+
+def test_run_activity_stays_oldest_first(loader_client, db_session):
+    """The two activity endpoints order deliberately opposite ways."""
+    run, _ = build_run_021(db_session)
+    LoaderService.log(
+        db_session, run, at=at("02:20"), actor_kind=ActorKind.LOADER,
+        event_type="order_checked", message="later",
+    )
+    LoaderService.log(
+        db_session, run, at=at("02:14"), actor_kind=ActorKind.DISPATCHER,
+        event_type="plan_published", message="earlier",
+    )
+    db_session.flush()
+
+    timeline = loader_client.get(f"{BASE}/runs/RUN-021/activity").json()
+    feed = loader_client.get(f"{BASE}/activity?dock=3&run_code=RUN-021").json()
+
+    assert [e["message"] for e in timeline] == ["earlier", "later"]
+    assert [e["message"] for e in feed] == ["later", "earlier"]
+
+
 def test_dev_endpoints_are_not_mounted_in_production(monkeypatch):
     """The sub-router is not registered at all, so the paths never exist."""
     from app.core import config
@@ -206,12 +336,17 @@ def test_dev_endpoints_are_not_mounted_in_production(monkeypatch):
         dev_paths = [
             route.path for route in reloaded.router.routes if "/dev/" in route.path
         ]
-        read_paths = [
+        read_paths = {
             route.path for route in reloaded.router.routes if "/dev/" not in route.path
-        ]
+        }
         assert dev_paths == []
         # The ordinary reads are untouched.
-        assert len(read_paths) == 3
+        assert read_paths == {
+            "/runs/{code}",
+            "/runs/{code}/activity",
+            "/activity",
+            "/issues/{issue_id}",
+        }
     finally:
         # Restore the module for the rest of the session.
         monkeypatch.undo()

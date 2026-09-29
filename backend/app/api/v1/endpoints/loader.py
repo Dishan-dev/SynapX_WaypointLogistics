@@ -1,7 +1,7 @@
 """Loader endpoints.
 
 Scope: only the reads belonging to L4 (checklist), L8 (decision) and L9
-(activity), plus the dev-only simulation endpoints from L0.
+(activity, per-run and dock-wide), plus the dev-only simulation endpoints from L0.
 
 The queue, sign-in and issue-list endpoints (L2/L3/L5) are Sanduni's features.
 Their proposed response shapes are written up in docs/loader/API_CONTRACT.md
@@ -9,7 +9,7 @@ rather than implemented here.
 """
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api import deps
@@ -29,9 +29,30 @@ def get_run(code: str, db: Session = Depends(deps.get_db)):
 
 @router.get("/runs/{code}/activity", response_model=List[schemas.ActivityRead])
 def get_run_activity(code: str, db: Session = Depends(deps.get_db)):
-    """The run's timeline, oldest first - the Log tab and the Change log panel."""
+    """One run's timeline, OLDEST first - the checklist's Change log panel.
+
+    Chronological because the panel reads top to bottom as the shift progresses.
+    For the dock-wide feed, see GET /loader/activity.
+    """
     run = loader_service.get_run(db, code)
     return loader_service.list_activity(db, run)
+
+
+@router.get("/activity", response_model=List[schemas.ActivityRead])
+def get_dock_activity(
+    dock: str = Query(..., description="Dock number, code or name: 3, DOCK3 or 'Dock 3'"),
+    run_code: str | None = Query(None, description="Narrow the feed to one run"),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(deps.get_db),
+):
+    """Everything that happened at one dock, NEWEST first - the Log tab.
+
+    Deliberately the opposite order to the per-run timeline: this is a feed, and
+    a loader returning to the Log tab wants the most recent entry at the top,
+    across every run on the dock.
+    """
+    resolved = loader_service.resolve_dock(db, dock)
+    return loader_service.list_dock_activity(db, resolved, run_code=run_code, limit=limit)
 
 
 @router.get("/issues/{issue_id}", response_model=schemas.IssueDetailRead)

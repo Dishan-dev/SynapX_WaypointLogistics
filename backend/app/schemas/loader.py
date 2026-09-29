@@ -143,9 +143,15 @@ class IssueDetailRead(BaseModel):
 
 
 class ActivityRead(BaseModel):
-    """GET /loader/runs/{code}/activity - the L9 log timeline."""
+    """One entry in the L9 log.
+
+    Used by both activity endpoints. `run_code` is redundant on the per-run
+    timeline but carried anyway, so the dock-wide feed and the per-run timeline
+    render from one shape.
+    """
 
     at: datetime
+    run_code: str
     actor_kind: ActorKind
     actor: Optional[str] = None
     event_type: str
