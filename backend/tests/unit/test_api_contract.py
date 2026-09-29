@@ -82,8 +82,10 @@ def test_client_action_id_contract_is_stated(contract_text):
     # In the JSON body, not a header or query param.
     assert "json request body" in lowered
     assert "not a header" in lowered
-    # A duplicate is a 200 with the original result, not an error.
-    assert "returns the original result with `200`" in section
+    # A duplicate is a 200 with the resource as it is now, not an error, and not
+    # a stored copy of the first response.
+    assert "returns `200` with the resource's current state" in section
+    assert "not a stored copy of the first response" in section
     assert "not applied twice" in lowered
 
 
