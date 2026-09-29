@@ -84,7 +84,17 @@ export function subscribeSession(onChange: () => void): () => void {
   };
 }
 
+// Why this tab's session last ended, so sign-in can say so. In memory only:
+// another tab that sees the session go just asks the next loader to sign in.
+let lastEndReason: SessionEndReason | undefined;
+
+/** How this tab's last session ended, until someone signs in again. */
+export function endReason(): SessionEndReason | undefined {
+  return lastEndReason;
+}
+
 export function saveSession(stored: StoredSession) {
+  lastEndReason = undefined;
   write(SESSION_KEY, JSON.stringify(stored));
   write(PLACE_KEY, JSON.stringify({ dock: stored.session.dock, depot: stored.session.depot }));
   window.dispatchEvent(new Event(CHANGE_EVENT));
@@ -139,6 +149,7 @@ const pendingEnds = () => parse<PendingEnd[]>(read(ENDS_KEY)) ?? [];
  */
 export async function endSession(transport: Transport, reason: SessionEndReason): Promise<void> {
   const stored = readSession();
+  lastEndReason = reason;
   clearSession();
   if (!stored) return;
   const end = { session_id: stored.session.session_id, reason };
