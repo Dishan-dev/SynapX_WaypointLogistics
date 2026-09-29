@@ -15,6 +15,7 @@ from app.models.reference import (
     Vehicle,
     VehicleType,
 )
+from app.models.loader_user import LoaderSession, LoaderUser, SessionEndReason
 
 __all__ = [
     "User",
@@ -36,4 +37,8 @@ __all__ = [
     "TemperatureClass",
     "Vehicle",
     "VehicleType",
+    # Loader users
+    "LoaderSession",
+    "LoaderUser",
+    "SessionEndReason",
 ]
