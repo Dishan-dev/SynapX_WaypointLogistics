@@ -4,17 +4,35 @@ Scope note: only the endpoints in this module's own features are modelled here.
 The queue, sign-in and issue-list shapes (L2/L3/L5) are Sanduni's and are
 proposed in docs/loader/API_CONTRACT.md for her to review rather than coded here.
 """
-from datetime import datetime, time
-from typing import List, Optional
+from datetime import datetime, time, timezone
+from typing import Annotated, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict
 
 from app.models.delivery_run import RunOrderState, RunStatus, StopStatus
 from app.models.loader_activity import ActorKind
 from app.models.loader_issue import IssueStatus, IssueType
 from app.models.plan_revision import PlanChangeKind
 from app.models.reference import Brand, DockType, TempCapability, TemperatureClass, VehicleType
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Label a stored datetime as UTC so it serializes with a Z.
+
+    Every datetime is stored in UTC in naive columns, so what comes back from
+    the database has no tzinfo. Without this the API would send
+    "2026-05-27T22:00:00", which a browser reads as its own local time.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+# Every loader datetime on the wire: ISO 8601 in UTC, e.g. "2026-05-27T22:00:00Z".
+# The frontend formats them in depot time (Asia/Colombo). Outlet delivery
+# windows are plain `time` values in depot time and are not converted.
+UtcDateTime = Annotated[datetime, AfterValidator(_as_utc)]
 
 
 class VehicleRead(BaseModel):
@@ -58,14 +76,14 @@ class RunOrderRead(BaseModel):
     weight_kg: Optional[float] = None
     volume_m3: Optional[float] = None
     state: RunOrderState
-    checked_at: Optional[datetime] = None
+    checked_at: Optional[UtcDateTime] = None
     checked_by: Optional[str] = None
 
 
 class RunStopRead(BaseModel):
     stop_sequence: int
     load_position: int
-    eta: Optional[datetime] = None
+    eta: Optional[UtcDateTime] = None
     handling_minutes: Optional[int] = None
     status: StopStatus
     outlet: OutletRead
@@ -74,10 +92,10 @@ class RunStopRead(BaseModel):
 
 class PlanRevisionRead(BaseModel):
     version: int
-    published_at: datetime
+    published_at: UtcDateTime
     source: str
     summary: Optional[str] = None
-    acknowledged_at: Optional[datetime] = None
+    acknowledged_at: Optional[UtcDateTime] = None
     acknowledged_by: Optional[str] = None
 
 
@@ -100,7 +118,7 @@ class RunDetailRead(BaseModel):
     brand: Brand
     district: str
     wave: Optional[str] = None
-    departs_at: datetime
+    departs_at: UtcDateTime
     status: RunStatus
     current_plan_version: int
     dock: str
@@ -134,11 +152,11 @@ class IssueDetailRead(BaseModel):
     note: Optional[str] = None
     photo_path: Optional[str] = None
     reported_by: str
-    reported_at: datetime
+    reported_at: UtcDateTime
     status: IssueStatus
-    seen_at: Optional[datetime] = None
-    decide_by: Optional[datetime] = None
-    decided_at: Optional[datetime] = None
+    seen_at: Optional[UtcDateTime] = None
+    decide_by: Optional[UtcDateTime] = None
+    decided_at: Optional[UtcDateTime] = None
     decided_by: Optional[str] = None
     options: List[IssueOptionRead]
 
@@ -151,7 +169,7 @@ class ActivityRead(BaseModel):
     render from one shape.
     """
 
-    at: datetime
+    at: UtcDateTime
     run_code: str
     actor_kind: ActorKind
     actor: Optional[str] = None
