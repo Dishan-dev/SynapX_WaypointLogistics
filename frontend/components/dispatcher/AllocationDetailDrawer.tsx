@@ -13,8 +13,7 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge, StatusVariant } from "./StatusBadge";
 import { toast } from "sonner";
 import { type Allocation } from "./AllocationTable";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { fetchWithFallback } from "@/lib/api";
 
 interface AllocationDetailDrawerProps {
   open: boolean;
@@ -57,7 +56,7 @@ export function AllocationDetailDrawer({
 
   const updateStatus = async (newStatus: string, successMessage: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/allocations/${allocation.id}`, {
+      const res = await fetchWithFallback(`/api/v1/allocations/${allocation.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus })

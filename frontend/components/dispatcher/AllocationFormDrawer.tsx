@@ -35,7 +35,7 @@ interface DriverOption {
   user: { full_name: string } | null;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { fetchWithFallback } from "@/lib/api";
 
 export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: AllocationFormDrawerProps) {
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
@@ -54,8 +54,8 @@ export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: Allocati
     setIsLoadingData(true);
     try {
       const [vehRes, drvRes] = await Promise.all([
-        fetch(`${API_BASE}/api/v1/fleet/vehicles?status=available`),
-        fetch(`${API_BASE}/api/v1/fleet/drivers`),
+        fetchWithFallback("/api/v1/fleet/vehicles?status=available"),
+        fetchWithFallback("/api/v1/fleet/drivers"),
       ]);
       if (vehRes.ok) setVehicles(await vehRes.json());
       if (drvRes.ok) setDrivers(await drvRes.json());
@@ -94,7 +94,7 @@ export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: Allocati
         status: "draft",
       };
 
-      const res = await fetch(`${API_BASE}/api/v1/allocations/`, {
+      const res = await fetchWithFallback("/api/v1/allocations/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

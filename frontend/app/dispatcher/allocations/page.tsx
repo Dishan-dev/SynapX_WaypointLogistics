@@ -9,6 +9,7 @@ import { AllocationDetailDrawer } from "@/components/dispatcher/AllocationDetail
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { type Allocation } from "@/components/dispatcher/AllocationTable";
+import { fetchWithFallback } from "@/lib/api";
 
 const STATUS_OPTIONS = [
   { label: "All Statuses", value: "" },
@@ -45,7 +46,7 @@ export default function AllocationsPage() {
   const fetchAllocations = useCallback(async () => {
     setFetchError(false);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000"}/api/v1/allocations/`);
+      const response = await fetchWithFallback("/api/v1/allocations/");
       if (response.ok) {
         const data = await response.json();
         setAllocations(data);

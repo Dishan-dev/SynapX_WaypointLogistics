@@ -57,37 +57,55 @@ export async function GET() {
     result.keycloak.error = err instanceof Error ? err.message : "Connection failed";
   }
 
-  // 2. Probe FastAPI Backend and Neon DB
-  const beStart = Date.now();
-  try {
-    const beRes = await fetch(`${apiUrl}/api/v1/health`, {
-      signal: AbortSignal.timeout(3000),
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    result.backend.latency = Date.now() - beStart;
-    if (beRes.ok) {
-      const beData = await beRes.json();
-      result.backend.status = "online";
-      result.backend.version = beData.version || "1.0.0";
-      result.bridge.status = "connected";
+  // 2. Probe FastAPI Backend and Neon DB across candidate ports (8000 and 5000)
+  const candidateUrls = Array.from(
+    new Set([
+      apiUrl,
+      "http://localhost:8000",
+      "http://localhost:5000",
+    ].filter(Boolean))
+  );
 
-      if (beData.database === "connected") {
-        result.database.status = "online";
-        result.database.details = "Active pooled connection verified (SELECT 1)";
+  let backendConnected = false;
+  let lastBackendError = "Server offline";
+
+  for (const targetUrl of candidateUrls) {
+    const beStart = Date.now();
+    try {
+      const beRes = await fetch(`${targetUrl}/api/v1/health`, {
+        signal: AbortSignal.timeout(2500),
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+
+      if (beRes.ok) {
+        const beData = await beRes.json();
+        result.backend.latency = Date.now() - beStart;
+        result.backend.status = "online";
+        result.backend.url = `${targetUrl}/api/v1`;
+        result.backend.version = beData.version || "1.0.0";
+        result.bridge.status = "connected";
+
+        if (beData.database === "connected") {
+          result.database.status = "online";
+          result.database.details = "Active pooled connection verified (SELECT 1)";
+        } else {
+          result.database.status = "offline";
+          result.database.details = beData.database || "Database query failed";
+        }
+        backendConnected = true;
+        break;
       } else {
-        result.database.status = "offline";
-        result.database.details = beData.database || "Database query failed";
+        lastBackendError = `HTTP ${beRes.status} from backend`;
       }
-    } else {
-      result.backend.status = "offline";
-      result.backend.error = `HTTP ${beRes.status} from backend`;
-      result.database.status = "unknown";
-      result.database.details = "Cannot inspect DB while backend is down";
+    } catch (err: unknown) {
+      lastBackendError = err instanceof Error ? err.message : `Connection refused at ${targetUrl}`;
     }
-  } catch {
+  }
+
+  if (!backendConnected) {
     result.backend.status = "offline";
-    result.backend.error = `Connection refused at ${apiUrl} (Server offline)`;
+    result.backend.error = `Connection refused at ${apiUrl} and fallback ports`;
     result.database.status = "unknown";
     result.database.details = "Cannot inspect DB while backend is down";
     result.bridge.status = "disconnected";
