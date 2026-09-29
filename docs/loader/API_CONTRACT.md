@@ -302,19 +302,25 @@ still to load — `orders_loaded` 3, `orders_checked` 4, `orders_total` 5.
 
 | Action | Method and path | Row transition |
 | --- | --- | --- |
-| check | `POST /loader/runs/{code}/orders/{order_number}/check` | `to_load` or `new` → `loaded` |
+| check | `POST /loader/runs/{code}/orders/{order_number}/check` | `to_load`, `new` **or `re_check`** → `loaded` |
 | uncheck | `DELETE /loader/runs/{code}/orders/{order_number}/check` | `loaded` → `to_load`, or → `new` if the current plan version added the order |
 | recheck | `POST /loader/runs/{code}/orders/{order_number}/recheck` | `re_check` → `loaded` |
 
 Uncheck is `DELETE` **with a JSON body**, because that is what the tablet's
 offline outbox sends. `fetch` and FastAPI both handle it.
 
+**check also confirms a `re_check` row**, exactly as recheck does: the tablet
+taps the same tile whatever the row says, so the outbox can send `check` for
+all three. `/recheck` stays for clients that want to be explicit. Either way
+the activity log records `order_rechecked`; `loading_checks` keeps the verb
+that was sent, which is what a replay is matched against.
+
 ```jsonc
 // request body — the same for all three
 {
   "client_action_id": "0b6f3c1e-8a4d-4f7e-9c2a-5d1e7b9a3f10",  // required, UUID
   "plan_version": 2,                                          // required
-  "loader_session_id": 12                                     // optional until L2; stamps checked_by
+  "loader_session_id": 12                                     // optional until L2: omit or null; stamps checked_by
 }
 // run_code / order_number may also be sent (the outbox does); ignored — the path wins.
 
@@ -339,22 +345,24 @@ What one write changes, together:
   issue is decided (L8), not when rows change;
 - **the activity log** — `order_checked` "ORD0092302 loaded",
   `order_unchecked` "ORD0092302 unchecked", `order_rechecked` "ORD0092301
-  re-checked".
+  re-checked" (from recheck, or from a check on a `re_check` row).
 
-A row **already where the action would put it** (check on `loaded`, uncheck on
-`to_load`) is a `200` no-op: two loaders can tick the same order, and the second
-tap should not bounce. Nothing is recorded.
+A row **already where the action would put it** (check or recheck on `loaded`,
+uncheck on `to_load` or `new`) is a `200` no-op: two loaders can tick the same
+order, and the second tap should not bounce. Nothing is recorded.
 
 | Status | `detail.code` | When |
 | --- | --- | --- |
 | 409 | `PLAN_VERSION_STALE` | `plan_version` ≠ the run's `current_plan_version` (see the write contract) |
 | 409 | `CLIENT_ACTION_ID_REUSED` | the id was already used for another order or action |
-| 409 | `INVALID_STATE_TRANSITION` | the row is `flagged`, `take_off` or `moved`; `check` on a `re_check` row (use `recheck`); `recheck` on anything but `re_check`; the run is `ready_to_depart` or `gated_out` |
-| 404 | `NOT_FOUND` | unknown run; order not on the current plan version; unknown `loader_session_id` |
+| 409 | `INVALID_STATE_TRANSITION` | the row is `flagged`, `take_off` or `moved`; `recheck` on `to_load` or `new`; `uncheck` on `re_check`; the run is `ready_to_depart` or `gated_out` |
+| 404 | `NOT_FOUND` | unknown run; order not on the current plan version; a `loader_session_id` that does not exist |
 | 422 | — | `client_action_id` or `plan_version` missing, or the id is not a UUID |
 
-An **ended** `loader_session_id` is accepted: an offline tap is often replayed
-after the idle timeout has already signed that loader out.
+**`loader_session_id` is optional until L2 sign-in**: omitted or `null`, the
+write is applied and `checked_by` stays empty. When it is sent it must exist. An
+**ended** session is accepted: an offline tap is often replayed after the idle
+timeout has already signed that loader out.
 
 ### `GET /loader/runs/{code}/activity` — L9, one run's timeline
 
