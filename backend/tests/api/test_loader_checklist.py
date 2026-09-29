@@ -261,14 +261,51 @@ def test_check_refuses_a_flagged_order(loader_client, db_session):
     assert response.json()["detail"]["code"] == "INVALID_STATE_TRANSITION"
 
 
-def test_check_refuses_a_re_check_order_which_needs_recheck(loader_client, db_session):
+def test_check_clears_a_re_check_order_like_recheck(loader_client, db_session):
+    """The tablet taps the same tile: check on re_check confirms it (-> loaded)."""
+    run, _ = build_run_021(db_session)
+    publish_v3(db_session, run, unload_order_numbers=["ORD0092308"])
+    action_id = str(uuid.uuid4())
+    before = loader_client.get(f"{BASE}/runs/{RUN}").json()
+
+    response = check(loader_client, "ORD0092301", action_id=action_id, plan_version=3)
+
+    assert response.status_code == 200, response.text
+    assert order_state(response, "ORD0092301")["state"] == "loaded"
+    assert order_state(response, "ORD0092301")["checked_at"] is not None
+    assert response.json()["orders_checked"] == before["orders_checked"] + 1
+    assert response.json()["orders_loaded"] == before["orders_loaded"] + 1
+    # Recorded as the verb sent (replays match on it); logged as a re-check.
+    [recorded] = checks_for(db_session, action_id)
+    assert recorded.action == CheckAction.CHECK
+    [logged] = activity(db_session, run, "order_rechecked")
+    assert logged.message == "ORD0092301 re-checked"
+    assert activity(db_session, run, "order_checked") == []
+
+
+def test_a_check_that_cleared_re_check_replays_as_200(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    publish_v3(db_session, run, unload_order_numbers=["ORD0092308"])
+    action_id = str(uuid.uuid4())
+
+    check(loader_client, "ORD0092301", action_id=action_id, plan_version=3)
+    replay = check(loader_client, "ORD0092301", action_id=action_id, plan_version=3)
+
+    assert replay.status_code == 200
+    assert len(checks_for(db_session, action_id)) == 1
+    assert len(activity(db_session, run, "order_rechecked")) == 1
+
+
+def test_recheck_endpoint_still_works_alongside_check(loader_client, db_session):
     run, _ = build_run_021(db_session)
     publish_v3(db_session, run, unload_order_numbers=["ORD0092308"])
 
-    response = check(loader_client, "ORD0092301", plan_version=3)
+    via_recheck = recheck(loader_client, "ORD0092301", plan_version=3)
+    via_check = check(loader_client, "ORD0092305", plan_version=3)
 
-    assert response.status_code == 409
-    assert response.json()["detail"]["current_state"] == "re_check"
+    assert order_state(via_recheck, "ORD0092301")["state"] == "loaded"
+    assert order_state(via_check, "ORD0092305")["state"] == "loaded"
+    assert len(activity(db_session, run, "order_rechecked")) == 2
 
 
 def test_writes_are_refused_once_the_run_is_signed_off(loader_client, db_session):

@@ -89,7 +89,7 @@ def check_order(
     payload: schemas.OrderActionRequest,
     db: Session = Depends(deps.get_db),
 ):
-    """Tick an order as loaded (to_load or new -> loaded)."""
+    """Tick an order as loaded (to_load, new or re_check -> loaded)."""
     return _order_action(db, code, order_number, CheckAction.CHECK, payload)
 
 

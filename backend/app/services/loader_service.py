@@ -45,9 +45,11 @@ OFF_PLAN_STATES = {RunOrderState.TAKE_OFF, RunOrderState.MOVED}
 # Reopening after Ready is L7's plan-change path, not a plain check.
 CLOSED_RUN_STATES = {RunStatus.READY_TO_DEPART, RunStatus.GATED_OUT}
 
-# Which row states each tablet action may start from.
+# Which row states each tablet action may start from. check also clears
+# re_check: the tablet taps the same tile whatever the row says, so a check on a
+# re_check row confirms it exactly as recheck does.
 ORDER_ACTIONS = {
-    CheckAction.CHECK: {RunOrderState.TO_LOAD, RunOrderState.NEW},
+    CheckAction.CHECK: {RunOrderState.TO_LOAD, RunOrderState.NEW, RunOrderState.RE_CHECK},
     CheckAction.RECHECK: {RunOrderState.RE_CHECK},
     CheckAction.UNCHECK: {RunOrderState.LOADED},
 }
@@ -418,6 +420,7 @@ class LoaderService:
                         plan_version=run.current_plan_version,
                     )
                 )
+                was_re_check = row.state == RunOrderState.RE_CHECK
                 row.state = target
                 if target == RunOrderState.LOADED:
                     row.checked_at = now
@@ -431,7 +434,11 @@ class LoaderService:
                 LoaderService.recalculate_capacity(db, run)
                 LoaderService._refresh_run_status(db, run)
 
-                event_type, verb = ACTION_EVENTS[action]
+                # The log says what happened to the row: a check that clears
+                # re_check is a re-check. loading_checks keeps the verb sent,
+                # which is what a replay is matched against.
+                logged_as = CheckAction.RECHECK if was_re_check else action
+                event_type, verb = ACTION_EVENTS[logged_as]
                 LoaderService.log(
                     db, run, at=now, actor_kind=ActorKind.LOADER,
                     event_type=event_type, actor_id=actor.id if actor else None,
