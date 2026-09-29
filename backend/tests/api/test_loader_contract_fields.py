@@ -1,9 +1,12 @@
 """Fields Sanduni's screens need on the run read, and the helpers her L3/L6
 endpoints call (API_CONTRACT.md)."""
+from datetime import timedelta, timezone
+
+from app.core.exceptions import InvalidStateTransitionError
 from app.models.delivery_run import RunOrderState, RunStatus
 from app.models.loader_issue import IssueType
 from app.schemas.loader import SimulatedPlanChangeRequest
-from app.services.loader_service import LoaderService
+from app.services.loader_service import LoaderService, ReleaseLockedError, UndoWindowExpiredError
 from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     at,
     build_run_021,
@@ -160,3 +163,109 @@ def test_re_check_and_an_outstanding_take_off_are_still_aboard(loader_client, db
     assert units["ORD0092305"] == 48  # re_check
     assert units["ORD0092308"] == 26  # take_off, not yet unloaded
     assert units["ORD0092304"] == 0  # moved
+
+
+# --- release lock and undo window (helpers for L6) ------------------------------
+
+
+def error_client(exc):
+    """A throwaway app with the real exception handlers, raising exc."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.core.exceptions import register_exception_handlers
+
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.post("/raise")
+    def _raise():
+        raise exc
+
+    return TestClient(app)
+
+
+def test_release_locked_sends_the_blockers_in_the_detail(db_session):
+    run, _ = build_run_021(db_session)
+
+    try:
+        LoaderService.check_release_allowed(db_session, run)
+    except ReleaseLockedError as exc:
+        response = error_client(exc).post("/raise")
+    else:
+        raise AssertionError("an open run was allowed to release")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "RELEASE_LOCKED"
+    assert detail["entity_id"] == "RUN-021"
+    assert detail["release_blockers"] == [{"code": "orders_open", "count": 3}]
+
+
+def test_nothing_blocking_means_release_is_allowed(db_session):
+    run, _ = build_run_021(db_session)
+    for stop in LoaderService.current_stops(db_session, run):
+        for row in stop.orders:
+            row.state = RunOrderState.LOADED
+    db_session.flush()
+
+    LoaderService.check_release_allowed(db_session, run)  # does not raise
+
+
+def ready_run(db):
+    run, _ = build_run_021(db)
+    run.status = RunStatus.READY_TO_DEPART
+    run.released_at = at("03:06")
+    db.flush()
+    return run
+
+
+def after(seconds):
+    return at("03:06") + timedelta(seconds=seconds)
+
+
+def test_undo_is_allowed_inside_the_window_and_the_grace(db_session):
+    run = ready_run(db_session)
+
+    LoaderService.check_undo_allowed(run, now=after(0))
+    LoaderService.check_undo_allowed(run, now=after(10))
+    LoaderService.check_undo_allowed(run, now=after(12))  # 10 s + 2 s grace
+
+
+def test_undo_after_the_grace_is_undo_window_expired(db_session):
+    run = ready_run(db_session)
+
+    try:
+        LoaderService.check_undo_allowed(run, now=after(12.1))
+    except UndoWindowExpiredError as exc:
+        response = error_client(exc).post("/raise")
+    else:
+        raise AssertionError("undo was allowed after the window")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "UNDO_WINDOW_EXPIRED"
+    assert detail["released_at"] == "2026-05-28T03:06:00Z"
+    assert detail["window_seconds"] == 10
+
+
+def test_undo_takes_an_aware_now_as_well(db_session):
+    """A stored (naive UTC) release time against a fresh aware clock."""
+    run = ready_run(db_session)
+
+    LoaderService.check_undo_allowed(run, now=after(5).replace(tzinfo=timezone.utc))
+
+
+def test_undo_of_a_run_that_is_not_ready_is_an_invalid_transition(db_session):
+    run = ready_run(db_session)
+    for status in (RunStatus.LOADING, RunStatus.GATED_OUT, RunStatus.LOADED):
+        run.status = status
+
+        try:
+            LoaderService.check_undo_allowed(run, now=after(1))
+        except UndoWindowExpiredError:
+            raise AssertionError(f"{status.value}: reported as a closed window")
+        except InvalidStateTransitionError as exc:
+            assert exc.code == "INVALID_STATE_TRANSITION", status
+        else:
+            raise AssertionError(f"{status.value}: undo was allowed")

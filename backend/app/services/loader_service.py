@@ -122,6 +122,58 @@ class PlanNotAcknowledgedError(InvalidStateTransitionError):
         }
 
 
+# Undo of a release (L6): the tablet shows a 10 s undo; the server allows 2 s
+# more so a tap on the last second, sent over a slow link, still lands.
+UNDO_WINDOW_SECONDS = 10
+UNDO_GRACE_SECONDS = 2
+
+
+def _utc_z(value: datetime) -> str:
+    """A datetime as the API writes it, for error details (which are plain JSON)."""
+    return _naive_utc(value).isoformat() + "Z"
+
+
+class ReleaseLockedError(InvalidStateTransitionError):
+    """POST /release while something still blocks it (L6).
+
+    detail.release_blockers is the same [{code, count}] list the run read and
+    release-summary send, so the tablet can say why without another request.
+    """
+
+    def __init__(self, run: DeliveryRun, blockers: List[schemas.ReleaseBlockerRead]):
+        super().__init__(
+            f"{run.code} cannot be released yet.",
+            current_state="locked",
+            target_state="ready_to_depart",
+            entity="DeliveryRun",
+        )
+        self.code = "RELEASE_LOCKED"
+        self.details = {
+            "entity": "DeliveryRun",
+            "entity_id": run.code,
+            "release_blockers": [b.model_dump() for b in blockers],
+        }
+
+
+class UndoWindowExpiredError(InvalidStateTransitionError):
+    """POST /release/undo after the undo window has closed (L6)."""
+
+    def __init__(self, run: DeliveryRun):
+        super().__init__(
+            f"The undo window for {run.code} has closed.",
+            current_state=run.status.value,
+            target_state="undo",
+            entity="DeliveryRun",
+        )
+        self.code = "UNDO_WINDOW_EXPIRED"
+        self.details = {
+            "entity": "DeliveryRun",
+            "entity_id": run.code,
+            "released_at": _utc_z(run.released_at),
+            "window_seconds": UNDO_WINDOW_SECONDS,
+        }
+
+
 class ClientActionIdReusedError(InvalidStateTransitionError):
     """A client_action_id already recorded for a different order or action.
 
@@ -325,6 +377,35 @@ class LoaderService:
                 schemas.LoaderRefRead(id=who.id, name=who.short_name) if who else None
             ),
         }
+
+    @staticmethod
+    def check_release_allowed(db: Session, run: DeliveryRun) -> None:
+        """For POST /release (L6): raise 409 RELEASE_LOCKED, with the blockers
+        in the detail, unless nothing blocks the release."""
+        blockers = LoaderService.release_blockers(db, run)
+        if blockers:
+            raise ReleaseLockedError(run, blockers)
+
+    @staticmethod
+    def check_undo_allowed(run: DeliveryRun, now: Optional[datetime] = None) -> None:
+        """For POST /release/undo (L6).
+
+        Only a run that is still ready_to_depart can be undone - a plan change
+        inside the window has already reopened it, and after gate-out it is the
+        Driver's. Then only within UNDO_WINDOW_SECONDS of released_at, plus
+        UNDO_GRACE_SECONDS; after that, 409 UNDO_WINDOW_EXPIRED.
+        """
+        if run.status != RunStatus.READY_TO_DEPART or run.released_at is None:
+            raise InvalidStateTransitionError(
+                f"{run.code} is {run.status.value}; only a ready_to_depart run can be undone.",
+                current_state=run.status.value,
+                target_state="undo",
+                entity="DeliveryRun",
+            )
+        now = now or datetime.now(timezone.utc)
+        elapsed = (_naive_utc(now) - _naive_utc(run.released_at)).total_seconds()
+        if elapsed > UNDO_WINDOW_SECONDS + UNDO_GRACE_SECONDS:
+            raise UndoWindowExpiredError(run)
 
     @staticmethod
     def release_blockers(db: Session, run: DeliveryRun) -> List[schemas.ReleaseBlockerRead]:
