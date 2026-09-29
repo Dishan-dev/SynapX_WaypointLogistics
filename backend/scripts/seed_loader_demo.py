@@ -150,16 +150,31 @@ RUN_027_ORDERS = [
     ("ORD0092315", "OUT002", "ambient", 16, 167.0, 1.2),
 ]
 
-# RUN-021 plan v2: four stops in delivery order, with the ETAs from the checklist.
+# ETAs use the booklet's method, as the design states it:
+#   Gampaha 37 min out of the depot, then 9 min between stops
+#   Colombo 24 min out, then 8 min between stops
+#   Fresh handling rear_dock 15 min, street 16 min
+# Each stop's ETA is the previous ETA plus that stop's handling plus travel, and
+# an arrival before the outlet's window opens is held until it opens.
+
+# RUN-021 plan v2: four stops in delivery order.
 # load_position is the reverse - the last stop goes in deepest, at the cab.
+#
+# These are the v2 times: 03:30 + 37 = 04:07 at OUT026, then +15+9 per rear_dock
+# stop. The design's checklist screens show 04:32 / 04:56 / 05:20 / 05:44, which
+# are the v3 times - in v3 OUT028 is inserted ahead of OUT026 and pushes
+# everything back by 25 minutes. Seeding v2 with v3's times would mean the
+# scenario started in a state the plan never had.
 RUN_021_V2_STOPS = [
     # delivery seq, outlet, ETA, handling minutes
-    (1, "OUT026", "04:32", 15),
-    (2, "OUT030", "04:56", 15),
-    (3, "OUT031", "05:20", 15),
-    (4, "OUT027", "05:44", 16),
+    (1, "OUT026", "04:07", 15),
+    (2, "OUT030", "04:31", 15),
+    (3, "OUT031", "04:55", 15),
+    (4, "OUT027", "05:19", 16),
 ]
 
+# Colombo: 04:30 + 24 = 04:54, but OUT001 does not open until 05:00, so the first
+# stop waits for the window. After that, +16 handling +8 travel per stop.
 RUN_027_STOPS = [
     (1, "OUT001", "05:00", 16),
     (2, "OUT003", "05:24", 16),
