@@ -28,8 +28,13 @@ import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import { TempBadge } from "@/components/loader/temp-badge";
 import { dockPlanSource, loadMapSlots, planSource, runCapacity, stopsInLoadOrder } from "@/lib/loader/format";
+import { simulateMockPlanChange } from "@/lib/loader/offline/transport";
 import { mockQueue, mockRunDetails } from "@/lib/loader/mock-data";
 import type { OrderState, RunOrder } from "@/lib/loader/types";
+
+// The plan-change button drives the mock server only; on the API use
+// POST /loader/dev/runs/{code}/plan-change instead.
+const MOCK_TRANSPORT = process.env.NEXT_PUBLIC_LOADER_TRANSPORT !== "api";
 
 const states: OrderState[] = ["to_load", "loaded", "flagged", "re_check", "take_off", "moved", "new"];
 
@@ -53,7 +58,7 @@ export function KitView() {
   const [pin, setPin] = useState("");
   const [picked, setPicked] = useState(false);
   const { user } = useLoaderShell();
-  const { sync } = useLoaderSync();
+  const { sync, flush } = useLoaderSync();
   const offline = useOfflineRun(initialRun, user.shortName);
   // Capacity and counts follow local actions (recomputed after each tap).
   const run = offline.run;
@@ -83,6 +88,40 @@ export function KitView() {
               onFlag={() => {}}
             />
           )),
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          {MOCK_TRANSPORT && (
+            <LoaderButton
+              variant="secondary"
+              onClick={() => {
+                simulateMockPlanChange(run.code);
+                void flush();
+              }}
+            >
+              Simulate plan change
+            </LoaderButton>
+          )}
+          {run.unacknowledged_plan_version !== null && (
+            <LoaderButton onClick={() => void offline.act("acknowledge")}>
+              Acknowledge v{run.unacknowledged_plan_version}
+            </LoaderButton>
+          )}
+        </div>
+        {offline.rejected.length > 0 && (
+          <div className="space-y-2">
+            <ul className="space-y-1 text-xs text-muted-foreground" data-testid="rejected-actions">
+              {offline.rejected.map((a) => (
+                <li key={a.client_action_id}>
+                  {a.action_type} {"order_number" in a.payload ? a.payload.order_number : ""} · v{a.plan_version} ·{" "}
+                  {a.conflict_code ?? a.status}
+                  {a.current_plan_version !== undefined && ` (now v${a.current_plan_version})`}
+                </li>
+              ))}
+            </ul>
+            <LoaderButton variant="ghost" onClick={() => void offline.dismissRejected()}>
+              Dismiss
+            </LoaderButton>
+          </div>
         )}
       </section>
       <section className="overflow-hidden rounded-lg border border-border">
