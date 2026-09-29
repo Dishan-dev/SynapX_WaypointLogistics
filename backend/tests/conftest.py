@@ -8,7 +8,8 @@ from sqlalchemy.pool import StaticPool
 # Force sqlite in tests before app imports
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
-from app.core.database import Base, get_db
+from app.api.deps import get_db
+from app.core.database import Base
 from app.main import app
 
 # Create in-memory SQLite test engine

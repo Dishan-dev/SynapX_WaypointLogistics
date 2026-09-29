@@ -32,8 +32,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-def create_tables():
-    """Utility to create tables without failing on import if DB is initializing."""
-    Base.metadata.create_all(bind=engine)
