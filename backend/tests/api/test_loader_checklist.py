@@ -152,6 +152,29 @@ def test_check_without_a_session_leaves_checked_by_empty(loader_client, db_sessi
     assert order_state(response, "ORD0092302")["checked_by"] is None
 
 
+def test_session_is_optional_until_sign_in_missing_or_null(loader_client, db_session):
+    """loader_session_id is optional until L2: absent or null both write, unstamped."""
+    run, _ = build_run_021(db_session)
+    publish_v3(db_session, run, unload_order_numbers=["ORD0092308"])
+
+    missing = loader_client.post(order_url("ORD0092302"), json=body(plan_version=3))
+    null_check = loader_client.post(
+        order_url("ORD0092304"), json=body(plan_version=3, loader_session_id=None)
+    )
+    null_uncheck = loader_client.request(
+        "DELETE", order_url("ORD0092304"), json=body(plan_version=3, loader_session_id=None)
+    )
+    null_recheck = loader_client.post(
+        order_url("ORD0092301", "recheck"), json=body(plan_version=3, loader_session_id=None)
+    )
+
+    for response in (missing, null_check, null_uncheck, null_recheck):
+        assert response.status_code == 200, response.text
+    assert order_state(missing, "ORD0092302")["checked_by"] is None
+    assert order_state(null_uncheck, "ORD0092304")["state"] == "to_load"
+    assert order_state(null_recheck, "ORD0092301")["checked_by"] is None
+
+
 def test_first_check_moves_a_run_from_not_started_to_loading(loader_client, db_session):
     run, _ = build_run_021(db_session)
     run.status = RunStatus.NOT_STARTED
