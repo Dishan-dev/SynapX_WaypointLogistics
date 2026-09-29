@@ -3,13 +3,10 @@
 import * as React from "react";
 import { cn } from "cn";
 import type { PlanSource } from "@/lib/loader/format";
-import type { SyncState } from "@/lib/loader/types";
 import { LoaderAppBar } from "./loader-app-bar";
 import { useLoaderShell } from "./loader-shell";
+import { useLoaderSync } from "./loader-sync-provider";
 import { PlanSourceStrip } from "./plan-source-strip";
-
-// Replaced by the sync provider's live state once offline sync lands.
-const LIVE: SyncState = { online: true, pending: 0, syncing: false, failed: 0 };
 
 interface LoaderScreenProps {
   title: string;
@@ -34,6 +31,7 @@ export function LoaderScreen({
   children,
 }: LoaderScreenProps) {
   const { openMenu, dockLabel } = useLoaderShell();
+  const { sync } = useLoaderSync();
 
   return (
     <>
@@ -44,7 +42,7 @@ export function LoaderScreen({
           hasUnread={hasUnread}
           onMenu={openMenu}
         />
-        <PlanSourceStrip plan={plan} sync={LIVE} />
+        <PlanSourceStrip plan={plan} sync={sync} />
       </div>
       <main className={cn("flex-1 px-4 py-5 md:px-6 md:py-6", className)}>{children}</main>
       {footer && (

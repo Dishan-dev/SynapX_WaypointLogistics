@@ -12,9 +12,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { LoaderBottomNav, type LoaderTab } from "./loader-bottom-nav";
+import { LoaderSyncProvider } from "./loader-sync-provider";
 
 export interface LoaderShellUser {
   name: string;
+  /** "Saman J.", used for checked_by on local actions. */
+  shortName: string;
   initials: string;
 }
 
@@ -72,35 +75,37 @@ export function LoaderShell({ user, dockLabel, issueCount, children }: LoaderShe
 
   return (
     <LoaderShellContext.Provider value={ctx}>
-      <div className="flex min-h-dvh flex-col bg-background">
-        <div className="flex flex-1 flex-col">{children}</div>
-        <LoaderBottomNav
-          className="sticky bottom-0 z-30"
-          active={activeTab(pathname)}
-          loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
-          issueCount={issueCount}
-          onMore={() => setMenuOpen(true)}
-        />
-      </div>
+      <LoaderSyncProvider>
+        <div className="flex min-h-dvh flex-col bg-background">
+          <div className="flex flex-1 flex-col">{children}</div>
+          <LoaderBottomNav
+            className="sticky bottom-0 z-30"
+            active={activeTab(pathname)}
+            loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
+            issueCount={issueCount}
+            onMore={() => setMenuOpen(true)}
+          />
+        </div>
 
-      <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
-        <SheetContent side="left" className="gap-0">
-          <SheetHeader className="border-b border-border">
-            <SheetTitle>{user.name}</SheetTitle>
-            <SheetDescription>Loader · {dockLabel}</SheetDescription>
-          </SheetHeader>
-          <nav aria-label="Loader menu" className="flex flex-col p-2">
-            <Link
-              href="/loader/sign-in"
-              onClick={() => setMenuOpen(false)}
-              className="flex min-h-12 items-center gap-3 rounded-md px-3 text-base font-medium text-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              <UserRound className="size-5 text-muted-foreground" aria-hidden />
-              Switch user
-            </Link>
-          </nav>
-        </SheetContent>
-      </Sheet>
+        <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
+          <SheetContent side="left" className="gap-0">
+            <SheetHeader className="border-b border-border">
+              <SheetTitle>{user.name}</SheetTitle>
+              <SheetDescription>Loader · {dockLabel}</SheetDescription>
+            </SheetHeader>
+            <nav aria-label="Loader menu" className="flex flex-col p-2">
+              <Link
+                href="/loader/sign-in"
+                onClick={() => setMenuOpen(false)}
+                className="flex min-h-12 items-center gap-3 rounded-md px-3 text-base font-medium text-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <UserRound className="size-5 text-muted-foreground" aria-hidden />
+                Switch user
+              </Link>
+            </nav>
+          </SheetContent>
+        </Sheet>
+      </LoaderSyncProvider>
     </LoaderShellContext.Provider>
   );
 }

@@ -6,6 +6,8 @@ import { LoaderAppBar } from "@/components/loader/loader-app-bar";
 import { LoaderBottomNav } from "@/components/loader/loader-bottom-nav";
 import { PlanSourceStrip } from "@/components/loader/plan-source-strip";
 import { LoaderScreen } from "@/components/loader/loader-screen";
+import { useLoaderShell } from "@/components/loader/loader-shell";
+import { useLoaderSync, useOfflineRun } from "@/components/loader/loader-sync-provider";
 import { LoaderTile } from "@/components/loader/loader-tile";
 import { PinKey } from "@/components/loader/pin-key";
 import { SearchInput } from "@/components/loader/search-input";
@@ -49,9 +51,34 @@ export function KitView() {
   const [query, setQuery] = useState("");
   const [pin, setPin] = useState("");
   const [picked, setPicked] = useState(false);
+  const { user } = useLoaderShell();
+  const { sync } = useLoaderSync();
+  const offline = useOfflineRun(run, user.shortName);
   return (
     <LoaderScreen title="Component kit" plan={planSource(run)}>
     <div className="mx-auto max-w-3xl space-y-8">
+      <section aria-labelledby="offline-test" className="space-y-3 rounded-xl border border-dashed border-border p-4">
+        <h2 id="offline-test" className="text-base font-semibold text-primary">
+          Offline test · {offline.run.run_code}
+        </h2>
+        <p className="text-xs text-muted-foreground" data-testid="sync-summary">
+          online={String(sync.online)} · pending={sync.pending} · failed={sync.failed} · syncing={String(sync.syncing)}
+        </p>
+        {stopsInLoadOrder(offline.run.stops).map((stop) =>
+          stop.orders.map((o) => (
+            <OrderRow
+              key={o.order_number}
+              order={o}
+              onToggle={(order) =>
+                void offline.act(order.load_state === "loaded" ? "uncheck" : "check", {
+                  order_number: order.order_number,
+                })
+              }
+              onFlag={() => {}}
+            />
+          )),
+        )}
+      </section>
       <section className="overflow-hidden rounded-lg border border-border">
         <LoaderAppBar title="Loading checklist" subtitle="RUN-021 · Dock tablet 3 · Saman J." hasUnread />
         <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, failed: 0 }} />

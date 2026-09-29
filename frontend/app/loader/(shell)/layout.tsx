@@ -8,7 +8,7 @@ export default function LoaderShellLayout({ children }: LayoutProps<"/loader">) 
   const user = userLabel(mockCurrentUser);
   return (
     <LoaderShell
-      user={{ name: user.name, initials: user.initials }}
+      user={{ name: user.name, shortName: user.shortName, initials: user.initials }}
       dockLabel={`${mockDock.depot} · ${mockDock.name}`}
       issueCount={queueMetrics(mockRuns, mockIssues).issues}
     >
