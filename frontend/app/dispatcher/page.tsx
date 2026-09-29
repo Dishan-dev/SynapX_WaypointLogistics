@@ -9,9 +9,8 @@ import { Badge } from "@/components/ui/badge";
 
 export default function DispatcherDashboard() {
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans p-6 sm:p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
+    <div className="max-w-7xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
           <Button asChild variant="outline" size="sm" className="gap-2">
             <Link href="/">
               <ArrowLeft className="size-4" />
@@ -100,8 +99,7 @@ export default function DispatcherDashboard() {
               <Badge variant="outline" className="border-accent text-accent">Completed</Badge>
             </div>
           </CardContent>
-        </Card>
-      </div>
+      </Card>
     </div>
   );
 }
