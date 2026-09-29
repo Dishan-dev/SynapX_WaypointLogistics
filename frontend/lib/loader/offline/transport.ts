@@ -88,7 +88,8 @@ function safeJson(text: string): unknown {
 
 // ---- Mock server -------------------------------------------------------
 
-const MOCK_STATE_KEY = "waypoint-loader-mock-server";
+// Versioned so a copy saved under an older data shape is not read back.
+const MOCK_STATE_KEY = "waypoint-loader-mock-server-v2";
 
 /** The mock "server" copy of each run, kept across reloads in this browser. */
 function loadMockState(): Record<string, Run> {

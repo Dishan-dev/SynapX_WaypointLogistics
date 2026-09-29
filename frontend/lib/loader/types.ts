@@ -7,8 +7,9 @@
 //   so a rename stays local.
 // - Fields marked "not in contract, pending Sachintha" are UI needs the
 //   contract does not cover yet. They stay optional.
-// - Times are ISO datetimes without offset (depot local time); delivery
-//   windows are "HH:MM:SS".
+// - Times are ISO datetimes in UTC with a Z, shown in depot time
+//   (Asia/Colombo) by lib/loader/format.ts. Delivery windows are
+//   "HH:MM:SS" in depot time and shown as-is.
 // - Client-only UI state (SyncState) stays camelCase.
 
 // ---- Shared enums (contract "Shared enums") ------------------------------

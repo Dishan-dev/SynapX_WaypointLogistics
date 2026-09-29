@@ -17,7 +17,8 @@ import type {
 } from "./types";
 
 const DAY = "2026-05-28";
-const at = (time: string) => `${DAY}T${time}:00`;
+/** Depot time on DAY, sent as the API sends it: UTC with a Z. at("03:30") → "2026-05-27T22:00:00Z". */
+const at = (time: string) => new Date(`${DAY}T${time}:00+05:30`).toISOString().replace(".000Z", "Z");
 
 /** Fixed "now" for the mock scenario, so server and client render the same. */
 export const mockNow = at("02:20");

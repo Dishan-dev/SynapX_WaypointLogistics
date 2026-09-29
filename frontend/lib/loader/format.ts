@@ -33,18 +33,16 @@ interface LocalDateTime {
 }
 
 /**
- * Wall-clock parts of an API timestamp. The API sends depot local time without
- * an offset ("2026-05-28T03:30:00"), which is read as-is so the tablet's own
- * timezone never shifts it. Timestamps with an offset are converted to depot time.
+ * Depot wall-clock parts of an API timestamp. The API sends UTC with a Z
+ * ("2026-05-27T22:00:00Z" is 03:30 on 28 May in the depot). A timestamp without
+ * an offset is UTC by the same convention, so it is never read in the tablet's
+ * own timezone. Delivery windows ("05:00:00") are not timestamps; they go
+ * through formatClock.
  */
 export function parseLocalDateTime(iso: string): LocalDateTime {
-  const naive = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
-  if (naive && !/(Z|[+-]\d{2}:?\d{2})$/.test(iso)) {
-    const [, y, mo, d, h, mi] = naive.map(Number);
-    return { year: y, month: mo, day: d, hour: h, minute: mi };
-  }
+  const utc = /(Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`;
   const parts = Object.fromEntries(
-    zonedParts.formatToParts(new Date(iso)).map((p) => [p.type, p.value]),
+    zonedParts.formatToParts(new Date(utc)).map((p) => [p.type, p.value]),
   );
   return {
     year: Number(parts.year),
@@ -77,12 +75,12 @@ export function formatDay(iso: string): string {
     .replace(",", "");
 }
 
-/** Delivery window time "05:00:00" → "05:00". */
+/** Delivery window time "05:00:00" → "05:00". Already depot time; shown as-is. */
 export function formatClock(hms: string): string {
   return hms.slice(0, 5);
 }
 
-/** "Good night" / "Good morning" / … for a depot-time timestamp. */
+/** "Good night" / "Good morning" / … by the depot hour of a timestamp. */
 export function greeting(iso: string): string {
   const { hour } = parseLocalDateTime(iso);
   if (hour < 5 || hour >= 22) return "Good night";
