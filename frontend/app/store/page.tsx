@@ -1,23 +1,50 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { StoreMetricCard } from "@/components/store/store-cards";
+import { formatTime, greeting } from "@/components/store/format";
+import { currentManager, MOCK_NOW, mockIssues, mockOrders } from "@/components/store/mock-data";
+import { getDashboardData } from "@/components/store/dashboard/dashboard-data";
+import { UpcomingDeliveries } from "@/components/store/dashboard/upcoming-deliveries";
+import { RecentRequests } from "@/components/store/dashboard/recent-requests";
+import { NeedsAttention } from "@/components/store/dashboard/needs-attention";
 
-// Dashboard header only. The metric cards, deliveries table and attention list come in the next step.
+// Figma: Desktop / 01 Dashboard and Mobile / 01 Dashboard.
 export default function StoreDashboardPage() {
+  const now = MOCK_NOW;
+  const data = getDashboardData(mockOrders, mockIssues);
+  const next = data.nextDelivery;
+  const nextEta = next?.eta ? formatTime(next.eta) : null;
+  const issueCount = data.openIssues.length;
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h1 className="text-2xl font-bold text-primary md:text-3xl">Dashboard</h1>
+    // DOM order follows the mobile layout. From xl (tables) Needs Attention moves to the end; from 1400px
+    // it sits beside Recent Goods Requests as in the 1440 Figma frame (narrower screens can't fit both tables' columns).
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:gap-6 min-[1400px]:grid-cols-[minmax(0,1fr)_350px] min-[1400px]:gap-x-[30px]">
+      <div className="flex flex-col gap-4 min-[1400px]:col-span-2 xl:flex-row xl:items-end xl:justify-between">
+        <div className="flex min-w-0 flex-col gap-2">
+          <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
+            <span className="md:hidden">
+              {greeting(now)}, {currentManager.firstName}
+            </span>
+            <span className="hidden md:inline">Dashboard</span>
+          </h1>
           <p className="text-sm text-muted-foreground">
-            Overview of your requests, upcoming deliveries, and items that need your attention.
+            <span className="md:hidden">Here&apos;s what needs your attention today.</span>
+            <span className="hidden md:inline">
+              Overview of your requests, upcoming deliveries, and items that need your attention.
+            </span>
           </p>
         </div>
-        <div className="flex shrink-0 flex-col gap-3 md:flex-row">
-          <Button asChild variant="outline" className="hidden h-10 px-4 md:inline-flex">
+        <div className="flex shrink-0 flex-col gap-3 pt-2 md:flex-row md:gap-4 md:pt-0">
+          <Button
+            asChild
+            variant="outline"
+            className="hidden h-10 border-2 border-primary px-4 text-base font-bold md:inline-flex"
+          >
             <Link href="/store/deliveries">View All Deliveries</Link>
           </Button>
-          <Button asChild className="h-11 px-4 md:h-10">
+          <Button asChild className="h-11 px-4 text-base font-bold md:h-10">
             <Link href="/store/requests/new">
               <Plus aria-hidden="true" />
               New Goods Request
@@ -25,6 +52,44 @@ export default function StoreDashboardPage() {
           </Button>
         </div>
       </div>
+
+      <section aria-label="Summary" className="grid grid-cols-2 gap-4 xl:grid-cols-4 xl:gap-[30px] min-[1400px]:col-span-2">
+        <StoreMetricCard
+          label="Active Requests"
+          value={data.active.length}
+          caption="Being processed by the depot"
+          mobileCaption="In progress"
+        />
+        <StoreMetricCard
+          label="Upcoming Deliveries"
+          value={data.inTransit.length}
+          caption={next && nextEta ? `Next: ${next.orderNumber} · ETA ${nextEta}` : "None scheduled"}
+          mobileCaption={nextEta ? `ETA ${nextEta}` : "None scheduled"}
+        />
+        <StoreMetricCard
+          label="Awaiting Confirmation"
+          value={data.awaitingConfirmation.length}
+          caption="Delivery has arrived"
+          mobileCaption="Has arrived"
+        />
+        <StoreMetricCard
+          label="Needs Attention"
+          value={issueCount}
+          caption={`${issueCount} delivery ${issueCount === 1 ? "issue" : "issues"} reported`}
+          mobileCaption={`${issueCount} ${issueCount === 1 ? "issue" : "issues"}`}
+        />
+      </section>
+
+      <NeedsAttention
+        items={data.attentionItems}
+        className="xl:order-last min-[1400px]:order-none min-[1400px]:col-start-2 min-[1400px]:row-start-4"
+      />
+
+      <div className="min-[1400px]:col-span-2 min-[1400px]:row-start-3">
+        <UpcomingDeliveries orders={data.upcomingDeliveries} now={now} />
+      </div>
+
+      <RecentRequests orders={data.recentRequests} className="min-[1400px]:col-start-1 min-[1400px]:row-start-4" />
     </div>
   );
 }

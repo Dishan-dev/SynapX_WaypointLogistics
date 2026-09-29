@@ -14,6 +14,7 @@ export interface StoreOutlet {
 
 export interface StoreManager {
   fullName: string;
+  firstName: string;
   initials: string;
 }
 
@@ -28,8 +29,158 @@ export const currentOutlet: StoreOutlet = {
 
 export const currentManager: StoreManager = {
   fullName: "Sarah Jenkins",
+  firstName: "Sarah",
   initials: "SJ",
 };
+
+// The mock data is written around this moment (the day shown in the Figma screens).
+// Replace with the real current time once orders come from the API.
+export const MOCK_NOW = new Date("2026-09-26T06:00:00");
+
+// ── Orders (docs/store-manager-contract.md §1–2) ──────────────────────────────
+
+export type OrderStatus =
+  | "draft"
+  | "submitted"
+  | "confirmed"
+  | "processing"
+  | "ready_for_dispatch"
+  | "dispatched"
+  | "delivered"
+  | "completed"
+  | "deferred"
+  | "cancelled";
+
+export type TemperatureClass = "chilled" | "ambient";
+
+// Delivery problems reported by the Dispatcher team that override the normal status pill.
+export type DeliveryAlert = "vehicle_unavailable";
+
+export interface StoreOrderItem {
+  sku: string;
+  itemName: string;
+  category: string;
+  temperatureClass: TemperatureClass;
+  quantity: number;
+  unitLabel: string;
+}
+
+export interface StoreOrder {
+  id: number;
+  orderNumber: string;
+  status: OrderStatus;
+  isHighPriority: boolean;
+  temperatureClass: TemperatureClass;
+  /** Requested delivery date (YYYY-MM-DD). */
+  orderDate: string;
+  submittedAt: string;
+  items: StoreOrderItem[];
+  eta?: string;
+  arrivedAt?: string;
+  vehicleCode?: string;
+  deliveryAlert?: DeliveryAlert;
+}
+
+const item = (
+  sku: string,
+  itemName: string,
+  category: string,
+  temperatureClass: TemperatureClass,
+  quantity: number,
+): StoreOrderItem => ({ sku, itemName, category, temperatureClass, quantity, unitLabel: "Cases" });
+
+export const mockOrders: StoreOrder[] = [
+  {
+    id: 1,
+    orderNumber: "ORD0000001",
+    status: "dispatched",
+    isHighPriority: true,
+    temperatureClass: "chilled",
+    orderDate: "2026-09-26",
+    submittedAt: "2026-09-24T09:15:00",
+    eta: "2026-09-26T06:10:00",
+    vehicleCode: "VEH001",
+    items: [
+      item("SKU-014", "Soft Drinks 1L (12pk)", "Beverages · Carbonated", "chilled", 10),
+      item("SKU-063", "Greek Yogurt 500g", "Dairy", "chilled", 15),
+      item("SKU-022", "Oat Milk 1L (6pk)", "Beverages · Dairy-free", "chilled", 10),
+    ],
+  },
+  {
+    id: 2,
+    orderNumber: "ORD0000002",
+    status: "ready_for_dispatch",
+    isHighPriority: false,
+    temperatureClass: "ambient",
+    orderDate: "2026-09-28",
+    submittedAt: "2026-09-25T11:30:00",
+    deliveryAlert: "vehicle_unavailable",
+    items: [
+      item("SKU-001", "Bottled Water 500ml", "Beverages · Packaged liquids", "ambient", 6),
+      item("SKU-048", "Espresso Roast Beans 1kg", "Beverages · Coffee", "ambient", 4),
+      item("SKU-032", "Paper Cups 8oz (500ct)", "Consumables · Disposables", "ambient", 5),
+      item("SKU-035", "Paper Napkins (1000ct)", "Consumables · Disposables", "ambient", 3),
+    ],
+  },
+  {
+    id: 3,
+    orderNumber: "ORD0000003",
+    status: "processing",
+    isHighPriority: false,
+    temperatureClass: "ambient",
+    orderDate: "2026-09-29",
+    submittedAt: "2026-09-25T14:20:00",
+    items: Array.from({ length: 12 }, (_, i) =>
+      item(`SKU-1${String(i).padStart(2, "0")}`, `Dry goods line ${i + 1}`, "Grocery", "ambient", 5),
+    ),
+  },
+  {
+    id: 4,
+    orderNumber: "ORD0000004",
+    status: "delivered",
+    isHighPriority: true,
+    temperatureClass: "chilled",
+    orderDate: "2026-09-26",
+    submittedAt: "2026-09-25T10:45:00",
+    arrivedAt: "2026-09-26T04:35:00",
+    vehicleCode: "VEH035",
+    items: [
+      item("SKU-063", "Greek Yogurt 500g", "Dairy", "chilled", 5),
+      item("SKU-070", "Cheddar Block 250g", "Dairy", "chilled", 5),
+      item("SKU-014", "Soft Drinks 1L (12pk)", "Beverages · Carbonated", "chilled", 5),
+    ],
+  },
+  {
+    id: 5,
+    orderNumber: "ORD0000005",
+    status: "completed",
+    isHighPriority: false,
+    temperatureClass: "ambient",
+    orderDate: "2026-09-23",
+    submittedAt: "2026-09-21T14:00:00",
+    items: Array.from({ length: 6 }, (_, i) =>
+      item(`SKU-2${String(i).padStart(2, "0")}`, `Ambient line ${i + 1}`, "Grocery", "ambient", 4),
+    ),
+  },
+];
+
+// ── Delivery issues (owned by Dev B; read-only here for the dashboard) ────────
+
+export interface StoreIssue {
+  code: string;
+  orderNumber: string;
+  summary: string;
+  isOpen: boolean;
+}
+
+export const mockIssues: StoreIssue[] = [
+  {
+    code: "ISS0000001",
+    orderNumber: "ORD0000001",
+    summary: "Damaged goods reported (2 boxes of paper cups). Depot review in progress.",
+    isOpen: true,
+  },
+];
 
 export const unreadNotificationCount = 4;
 
