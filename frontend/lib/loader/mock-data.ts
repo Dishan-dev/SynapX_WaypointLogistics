@@ -27,7 +27,21 @@ export const mockUsers: LoaderUser[] = [
   { id: 1, full_name: "Saman Jayawardena", short_name: "Saman J." },
   { id: 2, full_name: "Tharindu Jayasuriya", short_name: "Tharindu J." },
   { id: 3, full_name: "Nimal Silva", short_name: "Nimal S." },
+  { id: 4, full_name: "Sandun Perera", short_name: "Sandun P." },
+  { id: 5, full_name: "Sanjeewa Kumara", short_name: "Sanjeewa K." },
 ];
+
+/**
+ * Test PINs, read only by the mock server in lib/loader/offline/transport.ts.
+ * The real API never sends a PIN to the tablet.
+ */
+export const mockUserPins: Record<number, string> = {
+  1: "4417",
+  2: "2580",
+  3: "1357",
+  4: "8642",
+  5: "9753",
+};
 
 export const mockSession: LoaderSession = {
   session_id: 12,

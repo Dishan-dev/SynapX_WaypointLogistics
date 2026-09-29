@@ -1,10 +1,20 @@
-// How the tablet talks to the server: queued writes and run refetches. The
-// mock transport stands in until the /loader endpoints are wired up; set
-// NEXT_PUBLIC_LOADER_TRANSPORT=api to use the real API at NEXT_PUBLIC_API_URL.
+// How the tablet talks to the server: queued writes, run refetches and
+// sign-in. The mock transport stands in until the /loader endpoints are wired
+// up; set NEXT_PUBLIC_LOADER_TRANSPORT=api to use the real API at
+// NEXT_PUBLIC_API_URL.
 
 import { withRecomputedCounts } from "../format";
-import { findMockRun, mockSession } from "../mock-data";
-import type { OrderState, QueuedAction, QueuedActionType, Run } from "../types";
+import { findMockRun, mockSession, mockUserPins, mockUsers } from "../mock-data";
+import type {
+  LoaderSession,
+  LoaderUser,
+  OrderState,
+  QueuedAction,
+  QueuedActionType,
+  Run,
+  SessionEndReason,
+  SessionRequest,
+} from "../types";
 import { applyAction, type ActionRequest } from "./outbox";
 
 export interface TransportResponse {
@@ -20,6 +30,12 @@ export interface Transport {
    * NetworkError when the server cannot be reached.
    */
   fetchRun(code: string): Promise<Run | undefined>;
+  /** GET /loader/users: the loaders registered at this tablet's depot. */
+  fetchUsers(): Promise<LoaderUser[]>;
+  /** POST /loader/session. Undefined for a wrong PIN (401); throws NetworkError when unreachable. */
+  startSession(body: SessionRequest): Promise<LoaderSession | undefined>;
+  /** DELETE /loader/session/{id}. Throws NetworkError when it has to be sent again later. */
+  endSession(sessionId: number, reason: SessionEndReason): Promise<void>;
 }
 
 export class NetworkError extends Error {
@@ -76,7 +92,40 @@ export function apiTransport(baseUrl: string): Transport {
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as Run;
     },
+    async fetchUsers() {
+      const res = await request(`${api}/loader/users`, { cache: "no-store" });
+      if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
+      return (await res.json()) as LoaderUser[];
+    },
+    async startSession(body) {
+      const res = await request(`${api}/loader/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401) return undefined;
+      if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
+      return (await res.json()) as LoaderSession;
+    },
+    async endSession(sessionId, reason) {
+      const res = await request(`${api}/loader/session/${sessionId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ end_reason: reason }),
+      });
+      // 404: already ended or unknown, nothing left to do. Other 4xx will not
+      // succeed on a retry either.
+      if (res.status >= 500) throw new NetworkError(`HTTP ${res.status}`);
+    },
   };
+}
+
+async function request(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch {
+    throw new NetworkError();
+  }
 }
 
 function safeJson(text: string): unknown {
@@ -116,6 +165,24 @@ const saveMockState = (state: Record<string, Run>) => writeJson(MOCK_STATE_KEY, 
 /** Each client_action_id the mock server applied, with the write it was used for. */
 const loadMockIds = () => readJson<Record<string, string>>(MOCK_IDS_KEY) ?? {};
 const saveMockIds = (ids: Record<string, string>) => writeJson(MOCK_IDS_KEY, ids);
+
+const MOCK_SESSIONS_KEY = "waypoint-loader-mock-server-v2-sessions";
+
+interface MockSessionRow {
+  loader_user_id: number;
+  ended_reason?: SessionEndReason;
+}
+
+/** Sessions the mock server started. mockSession (12) is seeded, like a session row in the API seed. */
+const loadMockSessions = () => readJson<Record<string, MockSessionRow>>(MOCK_SESSIONS_KEY) ?? {};
+const saveMockSessions = (rows: Record<string, MockSessionRow>) => writeJson(MOCK_SESSIONS_KEY, rows);
+
+/** The loader behind a session id, or undefined when the mock server does not know it. */
+function mockSessionUser(sessionId: number): LoaderUser | undefined {
+  const userId =
+    sessionId === mockSession.session_id ? mockSession.loader.id : loadMockSessions()[sessionId]?.loader_user_id;
+  return mockUsers.find((u) => u.id === userId);
+}
 
 const mockServerRun = (state: Record<string, Run>, code: string) => state[code] ?? findMockRun(code);
 
@@ -234,17 +301,18 @@ export function mockTransport(latencyMs = 300): Transport {
       if (outcome === "noop") return ok(run);
       if (outcome) return outcome;
 
-      // The server records who checked from the session. Null (no sign-in
-      // until L2) leaves checked_by empty; the mock knows one session id and
-      // answers any other with 404, as the API does.
+      // The server records who checked from the session. Null leaves
+      // checked_by empty; an ended session is still accepted (offline taps
+      // replay after sign-out); an id it never issued is a 404, as on the API.
       const sessionId = request.body.loader_session_id ?? null;
-      if (sessionId !== null && sessionId !== mockSession.session_id) {
+      const sessionUser = sessionId === null ? undefined : mockSessionUser(Number(sessionId));
+      if (sessionId !== null && !sessionUser) {
         return errorResponse(404, "NOT_FOUND", `Loader session ${String(sessionId)} not found.`, {
           entity: "LoaderSession",
           entity_id: sessionId,
         });
       }
-      const by = sessionId === mockSession.session_id ? mockSession.loader.short_name : undefined;
+      const by = sessionUser?.short_name;
       state[run.code] = applyAction(run, action, by);
       ids[id] = signature;
       saveMockState(state);
@@ -255,6 +323,38 @@ export function mockTransport(latencyMs = 300): Transport {
       if (!(await probeConnectivity())) throw new NetworkError();
       await new Promise((r) => setTimeout(r, latencyMs));
       return mockServerRun(loadMockState(), code);
+    },
+    async fetchUsers() {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      return mockUsers;
+    },
+    async startSession({ loader_user_id, pin }) {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      const user = mockUsers.find((u) => u.id === loader_user_id);
+      if (!user || mockUserPins[user.id] !== pin) return undefined;
+
+      const rows = loadMockSessions();
+      const id = Math.max(mockSession.session_id, ...Object.keys(rows).map(Number)) + 1;
+      rows[id] = { loader_user_id: user.id };
+      saveMockSessions(rows);
+      return {
+        session_id: id,
+        loader: { id: user.id, short_name: user.short_name },
+        dock: mockSession.dock,
+        depot: mockSession.depot,
+        started_at: new Date().toISOString(),
+      };
+    },
+    async endSession(sessionId, reason) {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      const rows = loadMockSessions();
+      if (rows[sessionId] && !rows[sessionId].ended_reason) {
+        rows[sessionId] = { ...rows[sessionId], ended_reason: reason };
+        saveMockSessions(rows);
+      }
     },
   };
 }
