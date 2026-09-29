@@ -16,19 +16,16 @@ import { useLoaderSync, useOfflineRun } from "@/components/loader/loader-sync-pr
 import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import {
-  formatClock,
   formatKg,
   formatM3,
   formatTime,
   isActiveOrder,
   loadMapSlots,
-  loadOrderLabel,
   planSource,
   runCapacity,
   stopsInLoadOrder,
-  stopTitle,
 } from "@/lib/loader/format";
-import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus, RunStop } from "@/lib/loader/types";
+import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus } from "@/lib/loader/types";
 import { loadRun, ordersLoaded, type LoadResult } from "./checklist-data";
 import { reviewHref } from "./routes";
 
@@ -205,11 +202,7 @@ function Checklist({ initial }: { initial: Run }) {
               aria-label={`Stop ${stop.stop_sequence}, ${stop.outlet.code}`}
               className="flex flex-col gap-2"
             >
-              {stop.eta ? (
-                <StopHeader stop={stop} stopCount={stops.length} />
-              ) : (
-                <StopHeaderWithoutEta stop={stop} stopCount={stops.length} />
-              )}
+              <StopHeader stop={stop} stopCount={stops.length} />
               {stop.orders.map((order) => (
                 <OrderRow
                   key={order.order_number}
@@ -223,30 +216,6 @@ function Checklist({ initial }: { initial: Run }) {
         </div>
       </div>
     </LoaderScreen>
-  );
-}
-
-/**
- * StopHeader for a stop a plan change just added, which has no ETA yet. The
- * API sends eta: null there, and StopHeader formats the ETA unconditionally.
- */
-function StopHeaderWithoutEta({ stop, stopCount }: { stop: RunStop; stopCount: number }) {
-  const details = [
-    stop.outlet.dock_type,
-    `${formatClock(stop.outlet.window_start)}–${formatClock(stop.outlet.window_end)}`,
-    "ETA pending",
-  ];
-  if (stop.note) details.push(stop.note);
-  return (
-    <div className="flex flex-col gap-1 pt-1">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-primary px-2.5 py-[3px] text-xs leading-[17px] font-medium text-primary-foreground">
-          {loadOrderLabel(stop.load_position, stopCount)}
-        </span>
-        <h2 className="text-base leading-[22px] font-semibold text-primary">{stopTitle(stop)}</h2>
-      </div>
-      <p className="text-xs leading-[17px] text-muted-foreground">{details.join(" · ")}</p>
-    </div>
   );
 }
 
