@@ -33,6 +33,7 @@ import { loadRun, ordersLoaded, type LoadResult } from "./checklist-data";
 import { PlanChangeView } from "./plan-change-view";
 import { blockerSummary, displayOrder, pendingUnloads, releaseBlockers } from "./plan-diff";
 import { UnloadCard } from "./unload-card";
+import { usePlanPoll } from "./use-plan-poll";
 import { reviewHref } from "./routes";
 
 // Same labels and tones as the queue's run card.
@@ -63,6 +64,7 @@ const CLOSED: RunStatus[] = ["ready_to_depart", "gated_out"];
 export function ChecklistView({ code }: { code: string }) {
   const { transport } = useLoaderSync();
   const [result, setResult] = React.useState<LoadResult>();
+  const onNewPlan = React.useCallback((run: Run) => setResult({ kind: "ok", run }), []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -102,13 +104,16 @@ export function ChecklistView({ code }: { code: string }) {
       </LoaderScreen>
     );
   }
-  return <Checklist initial={result.run} />;
+  return <Checklist initial={result.run} onNewPlan={onNewPlan} />;
 }
 
-function Checklist({ initial }: { initial: Run }) {
+function Checklist({ initial, onNewPlan }: { initial: Run; onNewPlan: (run: Run) => void }) {
   const router = useRouter();
   const { user } = useLoaderShell();
+  // A fresh server run replaces `initial`; useOfflineRun then resolves it
+  // against this tablet's queued actions, so local taps are never lost.
   const { run, act } = useOfflineRun(initial, user.shortName);
+  usePlanPoll(run, onNewPlan);
 
   const capacity = runCapacity(run);
   const stops = stopsInLoadOrder(run.stops);
