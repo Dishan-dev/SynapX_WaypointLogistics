@@ -16,6 +16,14 @@ from app.models.reference import (
     VehicleType,
 )
 from app.models.loader_user import LoaderSession, LoaderUser, SessionEndReason
+from app.models.delivery_run import (
+    DeliveryRun,
+    RunOrderState,
+    RunStatus,
+    RunStop,
+    RunStopOrder,
+    StopStatus,
+)
 
 __all__ = [
     "User",
@@ -41,4 +49,11 @@ __all__ = [
     "LoaderSession",
     "LoaderUser",
     "SessionEndReason",
+    # Delivery runs
+    "DeliveryRun",
+    "RunOrderState",
+    "RunStatus",
+    "RunStop",
+    "RunStopOrder",
+    "StopStatus",
 ]

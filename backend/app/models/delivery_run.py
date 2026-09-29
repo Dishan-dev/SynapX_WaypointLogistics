@@ -1,0 +1,167 @@
+import enum
+from datetime import datetime, timezone
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String, Enum, UniqueConstraint
+from sqlalchemy.orm import relationship
+from app.core.database import Base
+
+
+class RunStatus(str, enum.Enum):
+    """Lifecycle of a run on the loading dock.
+
+    LOADED and READY_TO_DEPART are deliberately distinct: every order is on the
+    truck, but the loader has not signed the run off yet. The design calls for an
+    unambiguous departure state, so "all checked" must not imply "ready".
+
+    Once the driver leaves the gate the run is GATED_OUT and drops off the loader's
+    queue - from there it is the driver's job.
+    """
+
+    NOT_STARTED = "not_started"
+    LOADING = "loading"
+    ISSUE_FLAGGED = "issue_flagged"
+    LOADED = "loaded"
+    READY_TO_DEPART = "ready_to_depart"
+    GATED_OUT = "gated_out"
+
+
+class StopStatus(str, enum.Enum):
+    PENDING = "pending"
+    LOADING = "loading"
+    COMPLETE = "complete"
+
+
+class RunOrderState(str, enum.Enum):
+    """Per-order state on the checklist.
+
+    These are exactly the seven `Order row` variants in the Figma component set.
+    """
+
+    TO_LOAD = "to_load"
+    LOADED = "loaded"
+    FLAGGED = "flagged"
+    RE_CHECK = "re_check"
+    TAKE_OFF = "take_off"
+    MOVED = "moved"
+    NEW = "new"
+
+
+class DeliveryRun(Base):
+    """One vehicle's trip out of a dock, as the loader sees it ("RUN-021").
+
+    Intentionally NOT an extension of DispatchTrip/Shipment. Those are owned by the
+    dispatcher team and have no concept of stop sequence, plan version, dock or
+    brand. `dispatch_trip_id` is left as the nullable seam for them to wire the two
+    together later, without this module having to wait on their schema.
+
+    planned_* are what the current plan version says the run should carry;
+    loaded_* are what is physically on the truck so far. The checklist capacity
+    bars show loaded over the vehicle limit, with planned as the marker.
+    """
+
+    __tablename__ = "delivery_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(20), unique=True, index=True, nullable=False)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False)
+    dock_id = Column(Integer, ForeignKey("docks.id"), nullable=False)
+    trip_number = Column(Integer, default=1, nullable=False)
+    brand = Column(String(20), nullable=False)
+    district = Column(String(100), nullable=False)
+    wave = Column(String(50), nullable=True)
+    departs_at = Column(DateTime, nullable=False)
+    status = Column(Enum(RunStatus), default=RunStatus.NOT_STARTED, nullable=False)
+    current_plan_version = Column(Integer, default=1, nullable=False)
+
+    planned_weight_kg = Column(Float, default=0.0, nullable=False)
+    planned_volume_m3 = Column(Float, default=0.0, nullable=False)
+    loaded_weight_kg = Column(Float, default=0.0, nullable=False)
+    loaded_volume_m3 = Column(Float, default=0.0, nullable=False)
+
+    released_at = Column(DateTime, nullable=True)
+    released_by_id = Column(Integer, ForeignKey("loader_users.id"), nullable=True)
+    gated_out_at = Column(DateTime, nullable=True)
+
+    # Seam for the dispatcher team; nothing in the loader module reads it yet.
+    dispatch_trip_id = Column(Integer, ForeignKey("dispatch_trips.id"), nullable=True)
+
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    vehicle = relationship("Vehicle")
+    dock = relationship("Dock")
+    released_by = relationship("LoaderUser")
+    stops = relationship(
+        "RunStop",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="RunStop.stop_sequence",
+    )
+
+
+class RunStop(Base):
+    """One outlet on a run.
+
+    Two orderings matter and they are opposite, so both are stored rather than one
+    being derived at read time:
+
+    - stop_sequence is the delivery order the driver follows (1 first).
+    - load_position is the loading order, deepest first - stop_sequence reversed.
+      The checklist works down load_position ("LOAD 1ST - DEEPEST"), because the
+      last stop has to go in at the cab end.
+    """
+
+    __tablename__ = "run_stops"
+    __table_args__ = (
+        UniqueConstraint("run_id", "plan_version", "stop_sequence", name="uq_run_stop_sequence"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("delivery_runs.id"), nullable=False)
+    plan_version = Column(Integer, default=1, nullable=False)
+    stop_sequence = Column(Integer, nullable=False)
+    load_position = Column(Integer, nullable=False)
+    outlet_id = Column(Integer, ForeignKey("outlets.id"), nullable=False)
+    eta = Column(DateTime, nullable=True)
+    handling_minutes = Column(Integer, nullable=True)
+    status = Column(Enum(StopStatus), default=StopStatus.PENDING, nullable=False)
+
+    run = relationship("DeliveryRun", back_populates="stops")
+    outlet = relationship("Outlet")
+    orders = relationship(
+        "RunStopOrder",
+        back_populates="run_stop",
+        cascade="all, delete-orphan",
+    )
+
+
+class RunStopOrder(Base):
+    """An order placed at a stop on a run - one checklist row.
+
+    units / weight_kg / volume_m3 are snapshotted from the order at plan time.
+    A later plan version may drop or re-add the order, and the loader still needs
+    to see what this version said it was carrying.
+
+    `state` is the denormalised current value so the checklist reads cheaply;
+    LoadingCheck holds the append-only history behind it.
+    """
+
+    __tablename__ = "run_stop_orders"
+    __table_args__ = (
+        UniqueConstraint("run_stop_id", "order_id", name="uq_run_stop_order"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_stop_id = Column(Integer, ForeignKey("run_stops.id"), nullable=False)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    plan_version = Column(Integer, default=1, nullable=False)
+    state = Column(Enum(RunOrderState), default=RunOrderState.TO_LOAD, nullable=False)
+
+    units = Column(Integer, nullable=True)
+    weight_kg = Column(Float, nullable=True)
+    volume_m3 = Column(Float, nullable=True)
+
+    checked_at = Column(DateTime, nullable=True)
+    checked_by_id = Column(Integer, ForeignKey("loader_users.id"), nullable=True)
+
+    run_stop = relationship("RunStop", back_populates="orders")
+    order = relationship("Order")
+    checked_by = relationship("LoaderUser")
