@@ -336,16 +336,18 @@ def test_dev_endpoints_are_not_mounted_in_production(monkeypatch):
         dev_paths = [
             route.path for route in reloaded.router.routes if "/dev/" in route.path
         ]
-        read_paths = {
+        live_paths = {
             route.path for route in reloaded.router.routes if "/dev/" not in route.path
         }
         assert dev_paths == []
-        # The ordinary reads are untouched.
-        assert read_paths == {
+        # The ordinary reads and the tablet's writes are untouched.
+        assert live_paths == {
             "/runs/{code}",
             "/runs/{code}/activity",
             "/activity",
             "/issues/{issue_id}",
+            "/runs/{code}/orders/{order_number}/check",
+            "/runs/{code}/orders/{order_number}/recheck",
         }
     finally:
         # Restore the module for the rest of the session.
