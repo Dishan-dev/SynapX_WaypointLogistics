@@ -169,6 +169,13 @@ class ReleaseBlockerRead(BaseModel):
     count: int
 
 
+class LoaderRefRead(BaseModel):
+    """A loader named on a record: {"id": 1, "name": "Saman J."}."""
+
+    id: int
+    name: str
+
+
 class PlanChangeRead(BaseModel):
     change_kind: PlanChangeKind
     order_number: Optional[str] = None
@@ -190,6 +197,12 @@ class RunDetailRead(BaseModel):
     wave: Optional[str] = None
     departs_at: UtcDateTime
     status: RunStatus
+    # Who signed the run off and when ("signed off by Saman J. 03:06"). Only
+    # while the run is ready_to_depart or gated_out: null before release, after
+    # an undo, and after a plan change reopens it (that time is in
+    # plan_change.was_ready_at).
+    released_at: Optional[UtcDateTime] = None
+    released_by: Optional[LoaderRefRead] = None
     current_plan_version: int
     dock: str
     vehicle: VehicleRead

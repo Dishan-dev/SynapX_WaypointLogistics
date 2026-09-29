@@ -248,6 +248,7 @@ class LoaderService:
             wave=run.wave,
             departs_at=run.departs_at,
             status=run.status,
+            **LoaderService.release_fields(run),
             current_plan_version=run.current_plan_version,
             dock=run.dock.name,
             vehicle=schemas.VehicleRead.model_validate(run.vehicle),
@@ -275,6 +276,25 @@ class LoaderService:
             release_locked=bool(blockers),
             release_blockers=blockers,
         )
+
+    @staticmethod
+    def release_fields(run: DeliveryRun) -> dict:
+        """released_at / released_by as the API sends them, for the run read and
+        the queue card alike.
+
+        Only while the run is signed off (ready_to_depart or gated_out). The
+        column keeps the time after a plan change reopens the run, for "was
+        Ready 01:48", but the run is not released any more, so the API says so.
+        """
+        if run.status not in CLOSED_RUN_STATES or run.released_at is None:
+            return {"released_at": None, "released_by": None}
+        who = run.released_by
+        return {
+            "released_at": run.released_at,
+            "released_by": (
+                schemas.LoaderRefRead(id=who.id, name=who.short_name) if who else None
+            ),
+        }
 
     @staticmethod
     def release_blockers(db: Session, run: DeliveryRun) -> List[schemas.ReleaseBlockerRead]:
