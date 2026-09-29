@@ -10,8 +10,18 @@ Two halves:
   not implemented.** Nothing on `loader-sachintha` creates these routes, schemas
   or handlers. Change anything you disagree with before building.
 
-All enum values are the wire values, lowercase with underscores. All times are
-ISO 8601.
+All enum values are the wire values, lowercase with underscores.
+
+**Times.** Every datetime is stored in UTC and sent as ISO 8601 **with a `Z`**:
+`"2026-05-27T22:00:00Z"`. That applies to requests the server stamps and to
+everything it returns. **The frontend formats them in depot time,
+`Asia/Colombo` (UTC+05:30, no DST)** — so that example shows as 03:30 on 28 May,
+the "departs 03:30" in the design. The examples below are UTC; the screens,
+and prose times like "02:14 published", are depot time.
+
+The one exception is an outlet's delivery window (`window_start`,
+`window_end`): a time of day with no date, already in depot time, sent as
+`"05:00:00"` and shown as-is.
 
 ---
 
@@ -201,7 +211,7 @@ the truck from the cab outwards, which is the reverse of the driver's route:
   "brand": "fresh",
   "district": "Gampaha",
   "wave": "night",
-  "departs_at": "2026-05-28T03:30:00",
+  "departs_at": "2026-05-27T22:00:00Z",    // 03:30 depot time
   "status": "loading",
   "current_plan_version": 2,
   "dock": "Dock 3",
@@ -222,10 +232,10 @@ the truck from the cab outwards, which is the reverse of the driver's route:
   },
   "plan": {
     "version": 2,
-    "published_at": "2026-05-27T21:40:00",
+    "published_at": "2026-05-27T16:10:00Z",
     "source": "Dispatcher",
     "summary": null,
-    "acknowledged_at": "2026-05-27T21:45:00",
+    "acknowledged_at": "2026-05-27T16:15:00Z",
     "acknowledged_by": "Saman J."
   },
   "unacknowledged_plan_version": null,   // set when a new plan is waiting — L6 must lock release
@@ -233,7 +243,7 @@ the truck from the cab outwards, which is the reverse of the driver's route:
     {
       "stop_sequence": 4,
       "load_position": 1,                // LOAD 1ST · DEEPEST
-      "eta": "2026-05-28T05:19:00",
+      "eta": "2026-05-27T23:49:00Z",         // 05:19 depot time
       "handling_minutes": 16,
       "status": "pending",
       "outlet": {
@@ -254,7 +264,7 @@ the truck from the cab outwards, which is the reverse of the driver's route:
           "weight_kg": 650.0,
           "volume_m3": 3.2,
           "state": "loaded",
-          "checked_at": "2026-05-28T01:41:00",
+          "checked_at": "2026-05-27T20:11:00Z", // 01:41 depot time
           "checked_by": "Saman J."
         }
       ]
@@ -300,7 +310,7 @@ offline outbox sends. `fetch` and FastAPI both handle it.
 { "code": "RUN-021", "status": "loading", "current_plan_version": 2,
   "capacity": { "loaded_weight_kg": 4100.0, ... },
   "stops": [ { ..., "orders": [ { "order_number": "ORD0092302", "state": "loaded",
-      "checked_at": "2026-05-28T02:15:03", "checked_by": "Saman J." } ] } ],
+      "checked_at": "2026-05-27T20:45:03Z", "checked_by": "Saman J." } ] } ],
   "orders_checked": 6, "orders_total": 8 }
 ```
 
@@ -342,7 +352,7 @@ shift progresses (02:14 published → 02:16 acknowledged → 02:20 …).
 ```jsonc
 [
   {
-    "at": "2026-05-28T02:14:00",
+    "at": "2026-05-27T20:44:00Z",
     "run_code": "RUN-021",
     "actor_kind": "dispatcher",
     "actor": "Dispatcher",
@@ -389,10 +399,10 @@ without changing the ordering.
   "note": "Chilled order not at the dock.",
   "photo_path": null,
   "reported_by": "Tharindu J.",
-  "reported_at": "2026-05-28T02:03:00",
+  "reported_at": "2026-05-27T20:33:00Z",
   "status": "sent",
   "seen_at": null,
-  "decide_by": "2026-05-28T04:10:00",   // departure − 20 min
+  "decide_by": "2026-05-27T22:40:00Z",   // departure − 20 min (04:10 depot time)
   "decided_at": null,
   "decided_by": null,
   "options": [
@@ -463,7 +473,7 @@ per row at 320px.
 
 // 200
 { "session_id": 12, "loader": { "id": 1, "short_name": "Saman J." },
-  "dock": "Dock 3", "depot": "peliyagoda", "started_at": "2026-05-28T01:30:00" }
+  "dock": "Dock 3", "depot": "peliyagoda", "started_at": "2026-05-27T20:00:00Z" }
 
 // 401 — wrong PIN
 { "detail": { "code": "AUTHORIZATION_FAILED", "message": "Incorrect PIN." } }
@@ -508,7 +518,7 @@ it with `end_reason` of `idle_timeout`, `switch_user` or `sign_out`.
           "trip_number": 1,
           "brand": "fresh",
           "district": "Gampaha",
-          "departs_at": "2026-05-28T03:30:00",
+          "departs_at": "2026-05-27T22:00:00Z",
           "status": "loading",
           "stop_count": 4,
           "orders_checked": 5,
