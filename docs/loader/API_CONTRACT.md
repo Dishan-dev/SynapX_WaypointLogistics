@@ -270,19 +270,31 @@ the truck from the cab outwards, which is the reverse of the driver's route:
       ]
     }
   ],
-  "orders_checked": 5,
+  "orders_loaded": 5,    // "5 of 8 loaded"          — on the truck
+  "orders_checked": 5,   // "Review & confirm · 5 of 8" — loaded or flagged
   "orders_total": 8
 }
 ```
 
-**Counting rules** (L6's "Review & confirm · 5 of 7" reads these directly):
+**Counting rules.** Two counts over the same total — keep them apart:
 
+| Field | Counts | Read by |
+| --- | --- | --- |
+| `orders_loaded` | `loaded` only | the queue card's "3 of 5 loaded", the checklist's "x of y orders in" |
+| `orders_checked` | `loaded` **or** `flagged` | the review lock — L6's "Review & confirm · 4 of 5" |
+| `orders_total` | every order except `take_off` and `moved` | both of the above |
+
+RUN-027 at t0 shows the difference: 3 loaded, ORD0092314 flagged Missing, one
+still to load — `orders_loaded` 3, `orders_checked` 4, `orders_total` 5.
+
+- `orders_loaded` counts only `loaded`. A flagged order is not on the truck.
+- `orders_checked` counts `loaded` and `flagged`. A flagged order is in the
+  dispatcher's hands, so it no longer blocks review.
 - `orders_total` **excludes** `take_off` and `moved` — they are no longer orders
   to load, though they are still returned so the checklist can render them greyed
   or as a pinned unload task.
-- `orders_checked` counts only `loaded` and `flagged`. **`re_check` does not
-  count.** A plan change invalidates the earlier check and the loader must
-  confirm it again.
+- **`re_check` counts toward neither.** A plan change invalidates the earlier
+  check and the loader must confirm it again.
 - `re_check` *does* count toward `capacity.loaded_*` — the goods are physically
   aboard, they just need re-confirming.
 
@@ -311,7 +323,7 @@ offline outbox sends. `fetch` and FastAPI both handle it.
   "capacity": { "loaded_weight_kg": 4100.0, ... },
   "stops": [ { ..., "orders": [ { "order_number": "ORD0092302", "state": "loaded",
       "checked_at": "2026-05-27T20:45:03Z", "checked_by": "Saman J." } ] } ],
-  "orders_checked": 6, "orders_total": 8 }
+  "orders_loaded": 6, "orders_checked": 6, "orders_total": 8 }
 ```
 
 What one write changes, together:
@@ -521,6 +533,7 @@ it with `end_reason` of `idle_timeout`, `switch_user` or `sign_out`.
           "departs_at": "2026-05-27T22:00:00Z",
           "status": "loading",
           "stop_count": 4,
+          "orders_loaded": 5,     // the card's "5 of 8 loaded" — see Counting rules
           "orders_checked": 5,
           "orders_total": 8,
           "loader": "Saman J.",

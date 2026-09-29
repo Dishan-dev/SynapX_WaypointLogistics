@@ -141,3 +141,12 @@ def test_both_activity_endpoints_are_documented(contract_text):
     # Their opposite orderings are the thing most likely to surprise a caller.
     assert "**Oldest first.**" in contract_text
     assert "**Newest first**" in contract_text
+
+
+def test_both_progress_counts_are_documented(contract_text):
+    """Loaded (queue) and checked-or-flagged (review lock) must not be conflated."""
+    flat = " ".join(contract_text.split())
+    assert '"orders_loaded"' in contract_text
+    assert '"orders_checked"' in contract_text
+    assert "`orders_loaded` counts only `loaded`" in flat
+    assert "`orders_checked` counts `loaded` and `flagged`" in flat
