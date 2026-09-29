@@ -4,9 +4,10 @@ import pytest
 from app.core.exceptions import InvalidStateTransitionError, NotFoundError
 from app.models.delivery_run import RunOrderState, RunStatus
 from app.models.loader_issue import IssueStatus
+from app.models.plan_revision import PlanChangeKind
 from app.schemas import loader as schemas
 from app.services.loader_service import LoaderService
-from tests.conftest_loader import at, build_run_021, make_issue, make_loader
+from tests.conftest_loader import at, build_run_021, make_issue, make_loader, put_on_truck
 
 
 def test_stops_are_returned_in_load_order_not_delivery_order(db_session):
@@ -37,6 +38,7 @@ def test_run_detail_capacity_matches_the_design(db_session):
 
 def test_plan_change_applies_the_three_kinds_of_change(db_session):
     run, _ = build_run_021(db_session)
+    put_on_truck(db_session, run, "ORD0092308")
 
     revision = LoaderService.simulate_plan_change(
         db_session,
@@ -104,26 +106,154 @@ def test_new_outlet_becomes_the_first_stop_and_loads_last(db_session):
         assert stop.load_position == len(detail.stops) - stop.stop_sequence + 1
 
 
-def test_previously_checked_orders_need_rechecking_after_a_plan_change(db_session):
-    """A new plan invalidates earlier checks; nothing is silently carried over."""
+def _states(db_session, run):
+    detail = LoaderService.build_run_detail(db_session, run)
+    return detail, {
+        order.order_number: order.state
+        for stop in detail.stops
+        for order in stop.orders
+    }
+
+
+def test_only_the_named_orders_need_rechecking_after_a_plan_change(db_session):
+    """Figma 2a: 0092305/06 were moved to reach 0092308; 0092307 stays on."""
     run, _ = build_run_021(db_session)
+    put_on_truck(db_session, run, "ORD0092308")
+
+    LoaderService.simulate_plan_change(
+        db_session,
+        run,
+        schemas.SimulatedPlanChangeRequest(
+            unload_order_numbers=["ORD0092308"],
+            recheck_order_numbers=["ORD0092305", "ORD0092306"],
+        ),
+    )
+    detail, states = _states(db_session, run)
+
+    assert states["ORD0092305"] == RunOrderState.RE_CHECK
+    assert states["ORD0092306"] == RunOrderState.RE_CHECK
+    assert states["ORD0092307"] == RunOrderState.LOADED
+    assert states["ORD0092301"] == RunOrderState.LOADED
+    assert states["ORD0092308"] == RunOrderState.TAKE_OFF
+    # Kept checks still count; the two re-checks do not until confirmed.
+    assert detail.orders_checked == 3
+
+
+def test_without_a_recheck_list_every_order_aboard_is_rechecked(db_session):
+    """The safe fallback when the dispatcher does not say which ones moved."""
+    run, _ = build_run_021(db_session)
+    put_on_truck(db_session, run, "ORD0092308")
 
     LoaderService.simulate_plan_change(
         db_session,
         run,
         schemas.SimulatedPlanChangeRequest(unload_order_numbers=["ORD0092308"]),
     )
-    detail = LoaderService.build_run_detail(db_session, run)
+    detail, states = _states(db_session, run)
 
-    states = {
-        order.order_number: order.state
-        for stop in detail.stops
-        for order in stop.orders
-    }
     assert states["ORD0092307"] == RunOrderState.RE_CHECK
     assert states["ORD0092308"] == RunOrderState.TAKE_OFF
     # Re-check is not resolved, so review stays locked.
     assert detail.orders_checked == 0
+
+
+def test_an_unload_of_an_order_still_in_staging_is_a_dont_load(db_session):
+    run, _ = build_run_021(db_session)
+
+    revision = LoaderService.simulate_plan_change(
+        db_session,
+        run,
+        schemas.SimulatedPlanChangeRequest(unload_order_numbers=["ORD0092308"]),
+    )
+    _, states = _states(db_session, run)
+
+    assert states["ORD0092308"] == RunOrderState.MOVED
+    assert [c.change_kind for c in revision.changes] == [PlanChangeKind.DONT_LOAD]
+
+
+def test_a_dont_load_of_an_order_aboard_is_an_unload(db_session):
+    run, _ = build_run_021(db_session)
+
+    revision = LoaderService.simulate_plan_change(
+        db_session,
+        run,
+        schemas.SimulatedPlanChangeRequest(dont_load_order_numbers=["ORD0092307"]),
+    )
+    _, states = _states(db_session, run)
+
+    assert states["ORD0092307"] == RunOrderState.TAKE_OFF
+    assert [c.change_kind for c in revision.changes] == [PlanChangeKind.UNLOAD_FROM_TRUCK]
+
+
+def test_an_outstanding_take_off_survives_the_next_version(db_session):
+    """Stacked changes never drop a task: v3's take-off is still there in v4."""
+    run, _ = build_run_021(db_session)
+    put_on_truck(db_session, run, "ORD0092308")
+    LoaderService.simulate_plan_change(
+        db_session, run,
+        schemas.SimulatedPlanChangeRequest(
+            unload_order_numbers=["ORD0092308"], recheck_order_numbers=["ORD0092305"],
+        ),
+    )
+
+    LoaderService.simulate_plan_change(
+        db_session, run,
+        # Nothing had to move for v4: an empty list keeps every check.
+        schemas.SimulatedPlanChangeRequest(
+            dont_load_order_numbers=["ORD0092302"], recheck_order_numbers=[],
+        ),
+    )
+    _, states = _states(db_session, run)
+
+    assert states["ORD0092308"] == RunOrderState.TAKE_OFF
+    assert states["ORD0092305"] == RunOrderState.RE_CHECK
+    assert states["ORD0092307"] == RunOrderState.LOADED
+    assert states["ORD0092302"] == RunOrderState.MOVED
+
+
+def test_re_adding_an_order_still_aboard_asks_for_a_re_check(db_session):
+    run, _ = build_run_021(db_session)
+    put_on_truck(db_session, run, "ORD0092308")
+    LoaderService.simulate_plan_change(
+        db_session, run, schemas.SimulatedPlanChangeRequest(unload_order_numbers=["ORD0092308"])
+    )
+
+    revision = LoaderService.simulate_plan_change(
+        db_session, run, schemas.SimulatedPlanChangeRequest(load_new_order_numbers=["ORD0092308"])
+    )
+    _, states = _states(db_session, run)
+
+    assert states["ORD0092308"] == RunOrderState.RE_CHECK
+    assert [c.change_kind for c in revision.changes] == [PlanChangeKind.LOAD_NEW]
+
+
+def test_re_adding_a_dropped_order_makes_it_new_again(db_session):
+    run, _ = build_run_021(db_session)
+    LoaderService.simulate_plan_change(
+        db_session, run, schemas.SimulatedPlanChangeRequest(dont_load_order_numbers=["ORD0092304"])
+    )
+
+    LoaderService.simulate_plan_change(
+        db_session, run, schemas.SimulatedPlanChangeRequest(load_new_order_numbers=["ORD0092304"])
+    )
+    _, states = _states(db_session, run)
+
+    assert states["ORD0092304"] == RunOrderState.NEW
+
+
+def test_the_dispatchers_reasons_are_stored_per_order(db_session):
+    run, _ = build_run_021(db_session)
+
+    revision = LoaderService.simulate_plan_change(
+        db_session,
+        run,
+        schemas.SimulatedPlanChangeRequest(
+            dont_load_order_numbers=["ORD0092304"],
+            reasons={"ORD0092304": "VEH003's loader already has it."},
+        ),
+    )
+
+    assert [c.reason for c in revision.changes] == ["VEH003's loader already has it."]
 
 
 def test_plan_change_leaves_the_revision_unacknowledged(db_session):

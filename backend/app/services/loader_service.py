@@ -3,7 +3,7 @@
 Endpoints stay thin; anything that decides something lives here.
 """
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -918,6 +918,8 @@ class LoaderService:
         unload: List[str],
         dont_load: List[str],
         load_new: List[str],
+        recheck: Optional[List[str]] = None,
+        reasons: Optional[Dict[str, str]] = None,
         summary: Optional[str] = None,
         source: str = "Dispatcher",
     ) -> PlanRevision:
@@ -926,6 +928,21 @@ class LoaderService:
         Copies the current version's stops and rows forward, applies the three
         kinds of change, and leaves the revision unacknowledged so the checklist
         blocks until the loader reads it.
+
+        What happens to each row:
+
+        - unload / dont_load follow where the order actually is, whichever list
+          it came in: aboard -> take_off (it has to come back off), still in
+          staging -> moved. The change is recorded under the kind that applied.
+        - recheck names the loaded orders the loader must re-confirm - the ones
+          moved to reach an order coming off (Figma 2a: ORD0092305/06). Every
+          other check is kept. With recheck=None, every order aboard is put to
+          re_check, the safe default when nobody said which ones moved.
+        - A load_new order already on the run is re-added in place: re_check if
+          it is still aboard (a take_off nobody unloaded yet), new otherwise.
+        - take_off and re_check rows are carried forward as they are, so a
+          stacked change never loses an outstanding task or a check.
+        - reasons are the dispatcher's words per order, shown in the diff.
 
         The dev plan-change endpoint is the only caller today; the dispatcher's
         real publish is meant to call this too, so every rule about what a new
@@ -945,6 +962,11 @@ class LoaderService:
         unload = set(unload)
         dont_load = set(dont_load)
         load_new = list(load_new)
+        recheck = None if recheck is None else set(recheck)
+        readded = set(load_new)
+        readded_rows: set = set()
+        # (kind, order number) as actually applied, for the change records.
+        applied: List[Tuple[PlanChangeKind, str]] = []
 
         old_stops = sorted(
             db.execute(
@@ -1018,14 +1040,31 @@ class LoaderService:
             db.flush()
             for old_row in old_stop.orders:
                 number = old_row.order.order_number
-                if number in unload:
-                    # Already aboard: it has to physically come back off.
-                    state = RunOrderState.TAKE_OFF
-                elif number in dont_load:
-                    # Never left staging, so it is simply dropped.
-                    state = RunOrderState.MOVED
-                elif old_row.state in ON_TRUCK_STATES:
-                    # Anything already checked is re-confirmed, never silently kept.
+                if number in unload or number in dont_load:
+                    if old_row.state in ON_TRUCK_STATES | {RunOrderState.TAKE_OFF}:
+                        # On the truck: it has to physically come back off.
+                        state = RunOrderState.TAKE_OFF
+                        applied.append((PlanChangeKind.UNLOAD_FROM_TRUCK, number))
+                    else:
+                        # Never left staging, so it is simply dropped.
+                        state = RunOrderState.MOVED
+                        applied.append((PlanChangeKind.DONT_LOAD, number))
+                elif number in readded:
+                    readded_rows.add(number)
+                    if old_row.state in OFF_PLAN_STATES:
+                        # Back on the plan: still aboard (never unloaded) needs a
+                        # re-check, otherwise it is loaded like any new order.
+                        state = (
+                            RunOrderState.RE_CHECK
+                            if old_row.state == RunOrderState.TAKE_OFF
+                            else RunOrderState.NEW
+                        )
+                        applied.append((PlanChangeKind.LOAD_NEW, number))
+                    else:
+                        state = old_row.state  # already on the plan
+                elif old_row.state == RunOrderState.LOADED and (
+                    recheck is None or number in recheck
+                ):
                     state = RunOrderState.RE_CHECK
                 else:
                     state = old_row.state
@@ -1046,6 +1085,9 @@ class LoaderService:
 
         # Attach the incoming orders to their stop, new or existing.
         for order in new_orders:
+            if order.order_number in readded_rows:
+                continue
+            applied.append((PlanChangeKind.LOAD_NEW, order.order_number))
             stop = next((s for s in carried if s.outlet_id == order.outlet_id), None)
             if stop is None:
                 raise NotFoundError(
@@ -1082,26 +1124,22 @@ class LoaderService:
         db.add(revision)
         db.flush()
 
-        for position, (kind, numbers) in enumerate(
-            [
-                (PlanChangeKind.UNLOAD_FROM_TRUCK, sorted(unload)),
-                (PlanChangeKind.DONT_LOAD, sorted(dont_load)),
-                (PlanChangeKind.LOAD_NEW, load_new),
-            ]
-        ):
-            for number in numbers:
-                order = db.execute(
-                    select(Order).filter_by(order_number=number)
-                ).scalars().first()
-                db.add(
-                    PlanRevisionChange(
-                        revision_id=revision.id,
-                        change_kind=kind,
-                        order_id=order.id if order else None,
-                        outlet_id=order.outlet_id if order else None,
-                        position=position,
-                    )
+        # The diff's three groups, in the order the takeover shows them.
+        groups = [PlanChangeKind.UNLOAD_FROM_TRUCK, PlanChangeKind.DONT_LOAD, PlanChangeKind.LOAD_NEW]
+        for kind, number in sorted(applied, key=lambda a: (groups.index(a[0]), a[1])):
+            order = db.execute(
+                select(Order).filter_by(order_number=number)
+            ).scalars().first()
+            db.add(
+                PlanRevisionChange(
+                    revision_id=revision.id,
+                    change_kind=kind,
+                    order_id=order.id if order else None,
+                    outlet_id=order.outlet_id if order else None,
+                    reason=(reasons or {}).get(number),
+                    position=groups.index(kind),
                 )
+            )
 
         LoaderService.log(
             db, run, at=now, actor_kind=ActorKind.DISPATCHER,
@@ -1139,6 +1177,8 @@ class LoaderService:
             unload=payload.unload_order_numbers or [],
             dont_load=payload.dont_load_order_numbers or [],
             load_new=payload.load_new_order_numbers or [],
+            recheck=payload.recheck_order_numbers,
+            reasons=payload.reasons,
             summary=payload.summary,
         )
 

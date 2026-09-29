@@ -5,7 +5,7 @@ The queue, sign-in and issue-list shapes (L2/L3/L5) are Sanduni's and are
 proposed in docs/loader/API_CONTRACT.md for her to review rather than coded here.
 """
 from datetime import date, datetime, time, timezone
-from typing import Annotated, List, Optional
+from typing import Annotated, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict
@@ -319,6 +319,11 @@ class SimulatedPlanChangeRequest(BaseModel):
     unload_order_numbers: Optional[List[str]] = None
     dont_load_order_numbers: Optional[List[str]] = None
     load_new_order_numbers: Optional[List[str]] = None
+    # Loaded orders the loader has to re-confirm (moved to reach one coming
+    # off). Omitted: every order aboard goes to re_check.
+    recheck_order_numbers: Optional[List[str]] = None
+    # The dispatcher's words per order, shown in the diff.
+    reasons: Optional[Dict[str, str]] = None
     summary: Optional[str] = None
 
 

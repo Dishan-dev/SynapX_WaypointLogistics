@@ -12,6 +12,7 @@ from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     make_issue,
     make_loader,
     make_run,
+    put_on_truck,
 )
 
 BASE = "/api/v1/loader"
@@ -123,8 +124,8 @@ def test_get_issue_404s_for_an_unknown_id(loader_client, db_session):
 
 
 def test_dev_plan_change_publishes_the_next_version(loader_client, db_session):
-    build_run_021(db_session)
-    db_session.flush()
+    run, _ = build_run_021(db_session)
+    put_on_truck(db_session, run, "ORD0092308")
 
     response = loader_client.post(
         f"{BASE}/dev/runs/RUN-021/plan-change",
@@ -153,18 +154,40 @@ def test_dev_plan_change_publishes_the_next_version(loader_client, db_session):
 
 
 def test_dev_plan_change_defaults_to_the_figma_change(loader_client, db_session):
-    """Posting no body reproduces the design's v2 -> v3 change."""
+    """Posting no body reproduces the design's v2 -> v3 change (2a, T2a)."""
+    run, _ = build_run_021(db_session)
+    put_on_truck(db_session, run, "ORD0092308")
+
+    response = loader_client.post(f"{BASE}/dev/runs/RUN-021/plan-change")
+
+    assert response.status_code == 200, response.text
+    changes = {c["order_number"]: c for c in response.json()["changes"]}
+    assert {n: c["change_kind"] for n, c in changes.items()} == {
+        "ORD0092308": "unload_from_truck",
+        "ORD0092304": "dont_load",
+        "ORD0092319": "load_new",
+    }
+    assert changes["ORD0092308"]["reason"].startswith("Store reported a cold-room fault")
+    after = loader_client.get(f"{BASE}/runs/RUN-021").json()
+    assert after["capacity"]["planned_weight_kg"] == 4690.0
+    states = {o["order_number"]: o["state"] for s in after["stops"] for o in s["orders"]}
+    # Only the two orders moved to reach ORD0092308 need re-checking.
+    assert [n for n, s in sorted(states.items()) if s == "re_check"] == ["ORD0092305", "ORD0092306"]
+    assert states["ORD0092307"] == "loaded"
+    diff = {o["order_number"]: o for s in after["stops"] for o in s["orders"]}
+    assert diff["ORD0092305"]["note"] == "Re-check · moved to reach ORD0092308"
+    assert diff["ORD0092304"]["reason"].startswith("Not loaded yet")
+
+
+def test_dev_plan_change_default_on_the_seeded_t0_is_a_dont_load(loader_client, db_session):
+    """At the seed's t0 ORD0092308 is still in staging, so nothing comes off."""
     build_run_021(db_session)
     db_session.flush()
 
     response = loader_client.post(f"{BASE}/dev/runs/RUN-021/plan-change")
 
-    assert response.status_code == 200, response.text
-    assert {c["change_kind"] for c in response.json()["changes"]} == {
-        "unload_from_truck", "dont_load", "load_new",
-    }
-    after = loader_client.get(f"{BASE}/runs/RUN-021").json()
-    assert after["capacity"]["planned_weight_kg"] == 4690.0
+    kinds = {c["order_number"]: c["change_kind"] for c in response.json()["changes"]}
+    assert kinds["ORD0092308"] == "dont_load"
 
 
 def test_dev_decision_then_activity_is_logged(loader_client, db_session):

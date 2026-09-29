@@ -178,11 +178,28 @@ def get_issue(issue_id: int, db: Session = Depends(deps.get_db)):
 
 dev_router = APIRouter(prefix="/dev", tags=["Loader · dev only"])
 
-# The Figma v2 -> v3 change on RUN-021, used when the request body is empty.
+# The Figma v2 -> v3 change on RUN-021 (frames 2a, T2a), used when the request
+# body is empty. The design has ORD0092308 loaded deepest by then; the seed's
+# t0 does not (it matches the 1c capacity bars), so check ORD0092308 first to
+# get the unload - otherwise it is, correctly, a don't-load.
+# moved_to / deferred_to (VEH003 · Trip 1 · 03:45, Fri 29 May) join this once
+# plan_revision_changes can store them (migration fix).
 FIGMA_PLAN_CHANGE = schemas.SimulatedPlanChangeRequest(
     unload_order_numbers=["ORD0092308"],
     dont_load_order_numbers=["ORD0092304"],
     load_new_order_numbers=["ORD0092319"],
+    recheck_order_numbers=["ORD0092305", "ORD0092306"],
+    reasons={
+        "ORD0092308": (
+            "Store reported a cold-room fault at 02:05. Already loaded, deepest. "
+            "Move ORD0092305 and ORD0092306 to reach it, then return it to the chiller dock."
+        ),
+        "ORD0092304": "Not loaded yet. Leave it in staging; VEH003's loader already has it on their list.",
+        "ORD0092319": (
+            "OUT028 was deferred yesterday and must go today. It loads last, by the door, "
+            "so nothing already loaded has to move."
+        ),
+    },
     summary="Cold-room fault at OUT027; OUT028 must go tonight.",
 )
 

@@ -17,6 +17,7 @@ from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     loader_client,
     make_issue,
     make_loader,
+    put_on_truck,
 )
 
 BASE = "/api/v1/loader"
@@ -72,19 +73,6 @@ def row_for(db, run, number):
             Order.order_number == number,
         )
     ).scalars().one()
-
-
-def put_on_truck(db, run, number):
-    """Load an order at v2 without going through the API.
-
-    The fixture (like the seed) has ORD0092308 still in staging at v2, while
-    the design has it loaded deepest when v3 asks for it back.
-    """
-    row = row_for(db, run, number)
-    row.state = RunOrderState.LOADED
-    row.checked_at = at("02:12")
-    LoaderService.recalculate_capacity(db, run)
-    db.flush()
 
 
 def figma_v3(db, run, acknowledged=True):
