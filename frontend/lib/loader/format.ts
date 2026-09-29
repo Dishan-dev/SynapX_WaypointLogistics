@@ -184,3 +184,21 @@ export function runCapacity(run: Run) {
 export function stopTitle(stop: RunStop): string {
   return `Stop ${stop.stop_sequence} · ${stop.outlet.outlet_code}${stop.is_new ? " · NEW STOP" : ""}`;
 }
+
+export interface PlanSource {
+  version?: number;
+  updatedAt: string;
+  acknowledgedBy?: string;
+  acknowledgedAt?: string;
+}
+
+/** Plan details for the source strip, from a run's plan fields. */
+export function planSource(run: Run): PlanSource {
+  const acknowledged = run.acknowledged_plan_version === run.plan_version;
+  return {
+    version: run.plan_version,
+    updatedAt: run.plan_updated_at,
+    acknowledgedBy: acknowledged ? run.acknowledged_by : undefined,
+    acknowledgedAt: acknowledged ? run.acknowledged_at : undefined,
+  };
+}
