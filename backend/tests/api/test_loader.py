@@ -50,6 +50,25 @@ def test_get_run_exposes_the_capacity_the_design_shows(loader_client, db_session
     assert (body["orders_checked"], body["orders_total"]) == (5, 8)
 
 
+def test_datetimes_are_sent_as_utc_with_a_z(loader_client, db_session):
+    """Stored naive UTC must not reach the browser as naive (read as local time)."""
+    run, _ = build_run_021(db_session)
+    LoaderService.log(
+        db_session, run, at=at("02:14"), actor_kind=ActorKind.DISPATCHER,
+        event_type="plan_published", message="Dispatcher published plan v2",
+    )
+    db_session.flush()
+
+    body = loader_client.get(f"{BASE}/runs/RUN-021").json()
+    activity = loader_client.get(f"{BASE}/runs/RUN-021/activity").json()
+
+    assert body["departs_at"] == "2026-05-28T03:30:00Z"
+    assert body["plan"]["published_at"].endswith("Z")
+    stamped = [o["checked_at"] for s in body["stops"] for o in s["orders"] if o["checked_at"]]
+    assert stamped and all(value.endswith("Z") for value in stamped)
+    assert activity[0]["at"] == "2026-05-28T02:14:00Z"
+
+
 def test_get_run_includes_order_detail_for_the_checklist_rows(loader_client, db_session):
     build_run_021(db_session)
     db_session.flush()
@@ -336,16 +355,18 @@ def test_dev_endpoints_are_not_mounted_in_production(monkeypatch):
         dev_paths = [
             route.path for route in reloaded.router.routes if "/dev/" in route.path
         ]
-        read_paths = {
+        live_paths = {
             route.path for route in reloaded.router.routes if "/dev/" not in route.path
         }
         assert dev_paths == []
-        # The ordinary reads are untouched.
-        assert read_paths == {
+        # The ordinary reads and the tablet's writes are untouched.
+        assert live_paths == {
             "/runs/{code}",
             "/runs/{code}/activity",
             "/activity",
             "/issues/{issue_id}",
+            "/runs/{code}/orders/{order_number}/check",
+            "/runs/{code}/orders/{order_number}/recheck",
         }
     finally:
         # Restore the module for the rest of the session.

@@ -75,6 +75,8 @@ def test_client_action_id_contract_is_stated(contract_text):
     assert "## `client_action_id` — the write contract" in contract_text
 
     section = contract_text.split("## `client_action_id`")[1].split("\n---")[0]
+    # Collapse line wrapping, so rewrapping a paragraph cannot break a phrase check.
+    section = " ".join(section.split())
     lowered = section.lower()
 
     # A UUID the tablet generates.
@@ -82,8 +84,10 @@ def test_client_action_id_contract_is_stated(contract_text):
     # In the JSON body, not a header or query param.
     assert "json request body" in lowered
     assert "not a header" in lowered
-    # A duplicate is a 200 with the original result, not an error.
-    assert "returns the original result with `200`" in section
+    # A duplicate is a 200 with the resource as it is now, not an error, and not
+    # a stored copy of the first response.
+    assert "returns `200` with the resource's current state" in section
+    assert "not a stored copy of the first response" in section
     assert "not applied twice" in lowered
 
 
@@ -137,3 +141,12 @@ def test_both_activity_endpoints_are_documented(contract_text):
     # Their opposite orderings are the thing most likely to surprise a caller.
     assert "**Oldest first.**" in contract_text
     assert "**Newest first**" in contract_text
+
+
+def test_both_progress_counts_are_documented(contract_text):
+    """Loaded (queue) and checked-or-flagged (review lock) must not be conflated."""
+    flat = " ".join(contract_text.split())
+    assert '"orders_loaded"' in contract_text
+    assert '"orders_checked"' in contract_text
+    assert "`orders_loaded` counts only `loaded`" in flat
+    assert "`orders_checked` counts `loaded` and `flagged`" in flat

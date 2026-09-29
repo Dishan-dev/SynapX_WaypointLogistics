@@ -1,7 +1,8 @@
 """Loader endpoints.
 
-Scope: only the reads belonging to L4 (checklist), L8 (decision) and L9
-(activity, per-run and dock-wide), plus the dev-only simulation endpoints from L0.
+Scope: L4 (checklist read, and check / uncheck / recheck), the reads for L8
+(decision) and L9 (activity, per-run and dock-wide), plus the dev-only
+simulation endpoints from L0.
 
 The queue, sign-in and issue-list endpoints (L2/L3/L5) are Sanduni's features.
 Their proposed response shapes are written up in docs/loader/API_CONTRACT.md
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core.config import settings
+from app.models.loader_activity import CheckAction
 from app.schemas import loader as schemas
 from app.services.loader_service import loader_service
 
@@ -53,6 +55,64 @@ def get_dock_activity(
     """
     resolved = loader_service.resolve_dock(db, dock)
     return loader_service.list_dock_activity(db, resolved, run_code=run_code, limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# L4 writes - check, uncheck and re-check one checklist row
+#
+# Every body carries client_action_id (a replay returns the run with 200 and
+# applies nothing) and plan_version (a stale one is refused with 409
+# PLAN_VERSION_STALE). A replay answers with the run's CURRENT state: the
+# original response is not stored. Uncheck is DELETE on the check resource,
+# with a JSON body, because that is what the tablet's offline outbox sends.
+# ---------------------------------------------------------------------------
+
+ORDER_PATH = "/runs/{code}/orders/{order_number}"
+
+
+def _order_action(
+    db: Session,
+    code: str,
+    order_number: str,
+    action: CheckAction,
+    payload: schemas.OrderActionRequest,
+) -> schemas.RunDetailRead:
+    run = loader_service.apply_order_action(db, code, order_number, action, payload)
+    db.commit()
+    return loader_service.build_run_detail(db, run)
+
+
+@router.post(f"{ORDER_PATH}/check", response_model=schemas.RunDetailRead)
+def check_order(
+    code: str,
+    order_number: str,
+    payload: schemas.OrderActionRequest,
+    db: Session = Depends(deps.get_db),
+):
+    """Tick an order as loaded (to_load, new or re_check -> loaded)."""
+    return _order_action(db, code, order_number, CheckAction.CHECK, payload)
+
+
+@router.delete(f"{ORDER_PATH}/check", response_model=schemas.RunDetailRead)
+def uncheck_order(
+    code: str,
+    order_number: str,
+    payload: schemas.OrderActionRequest,
+    db: Session = Depends(deps.get_db),
+):
+    """Untick an order (loaded -> to_load, or -> new if this plan added it)."""
+    return _order_action(db, code, order_number, CheckAction.UNCHECK, payload)
+
+
+@router.post(f"{ORDER_PATH}/recheck", response_model=schemas.RunDetailRead)
+def recheck_order(
+    code: str,
+    order_number: str,
+    payload: schemas.OrderActionRequest,
+    db: Session = Depends(deps.get_db),
+):
+    """Confirm an order a plan change put back to re_check (re_check -> loaded)."""
+    return _order_action(db, code, order_number, CheckAction.RECHECK, payload)
 
 
 @router.get("/issues/{issue_id}", response_model=schemas.IssueDetailRead)

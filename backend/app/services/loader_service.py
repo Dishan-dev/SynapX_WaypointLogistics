@@ -3,15 +3,24 @@
 Endpoints stay thin; anything that decides something lives here.
 """
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import InvalidStateTransitionError, NotFoundError
-from app.models.delivery_run import DeliveryRun, RunOrderState, RunStatus, RunStop, RunStopOrder
-from app.models.loader_activity import ActorKind, LoaderActivity
+from app.models.delivery_run import (
+    DeliveryRun,
+    RunOrderState,
+    RunStatus,
+    RunStop,
+    RunStopOrder,
+    StopStatus,
+)
+from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck
 from app.models.loader_issue import IssueStatus, LoaderIssue, LoaderIssueOption
+from app.models.loader_user import LoaderSession, LoaderUser
 from app.models.order import Order
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
 from app.models.reference import Dock
@@ -31,6 +40,76 @@ RESOLVED_STATES = {RunOrderState.LOADED, RunOrderState.FLAGGED}
 # checklist (greyed, or as a pinned unload task), but not counted in the
 # "x of y" totals - they are no longer orders to load.
 OFF_PLAN_STATES = {RunOrderState.TAKE_OFF, RunOrderState.MOVED}
+
+# Once signed off or through the gate, the checklist is closed to the loader.
+# Reopening after Ready is L7's plan-change path, not a plain check.
+CLOSED_RUN_STATES = {RunStatus.READY_TO_DEPART, RunStatus.GATED_OUT}
+
+# Which row states each tablet action may start from. check also clears
+# re_check: the tablet taps the same tile whatever the row says, so a check on a
+# re_check row confirms it exactly as recheck does.
+ORDER_ACTIONS = {
+    CheckAction.CHECK: {RunOrderState.TO_LOAD, RunOrderState.NEW, RunOrderState.RE_CHECK},
+    CheckAction.RECHECK: {RunOrderState.RE_CHECK},
+    CheckAction.UNCHECK: {RunOrderState.LOADED},
+}
+
+# Rows already where the action would put them. These are a 200 no-op, not an
+# error: two loaders can tick the same order, and the second tap should not
+# bounce. Nothing is recorded, since nothing changed.
+ALREADY_DONE = {
+    CheckAction.CHECK: {RunOrderState.LOADED},
+    CheckAction.RECHECK: {RunOrderState.LOADED},
+    CheckAction.UNCHECK: {RunOrderState.TO_LOAD, RunOrderState.NEW},
+}
+
+ACTION_EVENTS = {
+    CheckAction.CHECK: ("order_checked", "loaded"),
+    CheckAction.RECHECK: ("order_rechecked", "re-checked"),
+    CheckAction.UNCHECK: ("order_unchecked", "unchecked"),
+}
+
+
+class StalePlanVersionError(InvalidStateTransitionError):
+    """The tablet acted on a plan version the dispatcher has since replaced.
+
+    Subclasses InvalidStateTransitionError so the existing 409 handler serves
+    it; only the code and details differ.
+    """
+
+    def __init__(self, run: DeliveryRun, sent_version: int):
+        super().__init__(
+            f"Plan changed to v{run.current_plan_version}; this action was made on "
+            f"v{sent_version}.",
+            current_state=f"v{run.current_plan_version}",
+            target_state=f"v{sent_version}",
+            entity="DeliveryRun",
+        )
+        self.code = "PLAN_VERSION_STALE"
+        self.details = {
+            "entity": "DeliveryRun",
+            "entity_id": run.code,
+            "current_plan_version": run.current_plan_version,
+            "sent_plan_version": sent_version,
+        }
+
+
+class ClientActionIdReusedError(InvalidStateTransitionError):
+    """A client_action_id already recorded for a different order or action.
+
+    A genuine replay always repeats the same request, so a mismatch is a client
+    bug; answering it with the other action's result would hide that.
+    """
+
+    def __init__(self, client_action_id: str):
+        super().__init__(
+            f"client_action_id {client_action_id} was already used for a different action.",
+            current_state="used",
+            target_state="reused",
+            entity="LoadingCheck",
+        )
+        self.code = "CLIENT_ACTION_ID_REUSED"
+        self.details = {"entity": "LoadingCheck", "client_action_id": client_action_id}
 
 
 class LoaderService:
@@ -72,6 +151,7 @@ class LoaderService:
         stops = LoaderService.current_stops(db, run)
 
         stop_reads: List[schemas.RunStopRead] = []
+        loaded = 0
         checked = 0
         total = 0
         for stop in stops:
@@ -79,6 +159,8 @@ class LoaderService:
             for row in sorted(stop.orders, key=lambda r: r.order.order_number):
                 if row.state not in OFF_PLAN_STATES:
                     total += 1
+                    if row.state == RunOrderState.LOADED:
+                        loaded += 1
                     if row.state in RESOLVED_STATES:
                         checked += 1
                 order_reads.append(
@@ -144,6 +226,7 @@ class LoaderService:
             plan=plan_read,
             unacknowledged_plan_version=unacknowledged,
             stops=stop_reads,
+            orders_loaded=loaded,
             orders_checked=checked,
             orders_total=total,
         )
@@ -265,7 +348,233 @@ class LoaderService:
         ).scalars()
         return [LoaderService._to_activity_read(row) for row in rows]
 
+    # --- writes from the tablet -------------------------------------------
+
+    @staticmethod
+    def apply_order_action(
+        db: Session,
+        run_code: str,
+        order_number: str,
+        action: CheckAction,
+        payload: schemas.OrderActionRequest,
+    ) -> DeliveryRun:
+        """Check, uncheck or re-check one checklist row. Returns the run.
+
+        Order matters:
+
+        1. Replay first. A client_action_id already in loading_checks means this
+           tap was applied before, so nothing is applied again. It comes before
+           the stale-plan check on purpose: a check accepted under v2 and
+           replayed after v3 is published must still answer 200, not 409.
+        2. Stale plan: refuse a tap made against an older plan version.
+        3. Transition the row, then roll the change up into stop, run,
+           capacity and the activity log - all in one savepoint, so a racing
+           replay of the same id loses on the unique constraint instead of
+           writing twice.
+        """
+        run = LoaderService.get_run(db, run_code)
+        action_id = str(payload.client_action_id)
+
+        if LoaderService._is_replay(db, run, order_number, action, action_id):
+            return run
+
+        if payload.plan_version != run.current_plan_version:
+            raise StalePlanVersionError(run, payload.plan_version)
+
+        # Serialise writers on this run so two tablets cannot race the run
+        # status rollup. A no-op on SQLite, which has no row locks.
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+
+        if run.status in CLOSED_RUN_STATES:
+            raise InvalidStateTransitionError(
+                f"{run.code} is {run.status.value}; the checklist is closed.",
+                current_state=run.status.value,
+                target_state=action.value,
+                entity="DeliveryRun",
+            )
+
+        row = LoaderService._current_row(db, run, order_number)
+        if row.state in ALREADY_DONE[action]:
+            return run
+        target = LoaderService._target_state(db, run, row, action)
+        if row.state not in ORDER_ACTIONS[action]:
+            raise InvalidStateTransitionError(
+                f"{order_number} is {row.state.value}; it cannot be {action.value}ed.",
+                current_state=row.state.value,
+                target_state=target.value,
+                entity="RunStopOrder",
+            )
+
+        actor = LoaderService._session_actor(db, payload.loader_session_id)
+        now = datetime.now(timezone.utc)
+
+        try:
+            with db.begin_nested():
+                db.add(
+                    LoadingCheck(
+                        run_stop_order_id=row.id,
+                        action=action,
+                        actor_id=actor.id if actor else None,
+                        at=now,
+                        client_action_id=action_id,
+                        plan_version=run.current_plan_version,
+                    )
+                )
+                was_re_check = row.state == RunOrderState.RE_CHECK
+                row.state = target
+                if target == RunOrderState.LOADED:
+                    row.checked_at = now
+                    row.checked_by_id = actor.id if actor else None
+                else:
+                    row.checked_at = None
+                    row.checked_by_id = None
+                db.flush()
+
+                LoaderService.refresh_stop_status(row.run_stop)
+                LoaderService.recalculate_capacity(db, run)
+                LoaderService._refresh_run_status(db, run)
+
+                # The log says what happened to the row: a check that clears
+                # re_check is a re-check. loading_checks keeps the verb sent,
+                # which is what a replay is matched against.
+                logged_as = CheckAction.RECHECK if was_re_check else action
+                event_type, verb = ACTION_EVENTS[logged_as]
+                LoaderService.log(
+                    db, run, at=now, actor_kind=ActorKind.LOADER,
+                    event_type=event_type, actor_id=actor.id if actor else None,
+                    order_id=row.order_id, message=f"{order_number} {verb}",
+                )
+                db.flush()
+        except IntegrityError:
+            # The same id landed between our lookup and our insert. The savepoint
+            # has rolled back our copy; the other one is the original.
+            if LoaderService._is_replay(db, run, order_number, action, action_id):
+                db.refresh(run)
+                return run
+            raise
+
+        return run
+
+    @staticmethod
+    def _find_loading_check(db: Session, action_id: str) -> Optional[LoadingCheck]:
+        return db.execute(
+            select(LoadingCheck).filter_by(client_action_id=action_id)
+        ).scalars().first()
+
+    @staticmethod
+    def _is_replay(
+        db: Session, run: DeliveryRun, order_number: str, action: CheckAction, action_id: str
+    ) -> bool:
+        """True if this exact tap was already applied; raises if the id was reused."""
+        existing = LoaderService._find_loading_check(db, action_id)
+        if existing is None:
+            return False
+        previous = existing.run_stop_order
+        if (
+            existing.action != action
+            or previous.run_stop.run_id != run.id
+            or previous.order.order_number != order_number
+        ):
+            raise ClientActionIdReusedError(action_id)
+        return True
+
+    @staticmethod
+    def _current_row(db: Session, run: DeliveryRun, order_number: str) -> RunStopOrder:
+        row = db.execute(
+            select(RunStopOrder)
+            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+            .join(Order, RunStopOrder.order_id == Order.id)
+            .where(
+                RunStop.run_id == run.id,
+                RunStop.plan_version == run.current_plan_version,
+                Order.order_number == order_number,
+            )
+        ).scalars().first()
+        if row is None:
+            raise NotFoundError(
+                f"Order '{order_number}' is not on {run.code} plan v{run.current_plan_version}.",
+                entity="RunStopOrder",
+                entity_id=order_number,
+            )
+        return row
+
+    @staticmethod
+    def _target_state(
+        db: Session, run: DeliveryRun, row: RunStopOrder, action: CheckAction
+    ) -> RunOrderState:
+        if action != CheckAction.UNCHECK:
+            return RunOrderState.LOADED
+        # Unchecking returns the row to how the plan introduced it: an order the
+        # current version added goes back to "new", not "to load".
+        added_now = db.execute(
+            select(PlanRevisionChange.id)
+            .join(PlanRevision, PlanRevisionChange.revision_id == PlanRevision.id)
+            .where(
+                PlanRevision.run_id == run.id,
+                PlanRevision.version == run.current_plan_version,
+                PlanRevisionChange.change_kind == PlanChangeKind.LOAD_NEW,
+                PlanRevisionChange.order_id == row.order_id,
+            )
+        ).first()
+        return RunOrderState.NEW if added_now else RunOrderState.TO_LOAD
+
+    @staticmethod
+    def _session_actor(db: Session, session_id: Optional[int]) -> Optional[LoaderUser]:
+        """The loader signed in when the tap happened.
+
+        An ended session is still accepted: an offline tap is often replayed
+        after the idle timeout has signed that loader out.
+        """
+        if session_id is None:
+            return None
+        session = db.get(LoaderSession, session_id)
+        if session is None:
+            raise NotFoundError(
+                f"Loader session {session_id} not found.",
+                entity="LoaderSession",
+                entity_id=session_id,
+            )
+        return session.loader_user
+
+    @staticmethod
+    def refresh_stop_status(stop: RunStop) -> None:
+        """complete when every active order is loaded or flagged, loading when
+        any is aboard or resolved, otherwise pending. The seed uses this too."""
+        active = [r for r in stop.orders if r.state not in OFF_PLAN_STATES]
+        if active and all(r.state in RESOLVED_STATES for r in active):
+            stop.status = StopStatus.COMPLETE
+        elif any(r.state in RESOLVED_STATES | ON_TRUCK_STATES for r in active):
+            stop.status = StopStatus.LOADING
+        else:
+            stop.status = StopStatus.PENDING
+
+    @staticmethod
+    def _refresh_run_status(db: Session, run: DeliveryRun) -> None:
+        """not_started -> loading -> loaded, and back to loading on an uncheck.
+
+        issue_flagged is left alone: it clears when the issue is decided (L8),
+        not when rows change. A run never returns to not_started once touched.
+        """
+        if run.status == RunStatus.ISSUE_FLAGGED:
+            return
+        checked, total = LoaderService.progress(db, run)
+        run.status = RunStatus.LOADED if total and checked == total else RunStatus.LOADING
+
     # --- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def progress(db: Session, run: DeliveryRun) -> Tuple[int, int]:
+        """(orders_checked, orders_total) for the current plan - the review gate."""
+        states = db.execute(
+            select(RunStopOrder.state)
+            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+            .where(
+                RunStop.run_id == run.id,
+                RunStop.plan_version == run.current_plan_version,
+            )
+        ).scalars().all()
+        active = [s for s in states if s not in OFF_PLAN_STATES]
+        return sum(1 for s in active if s in RESOLVED_STATES), len(active)
 
     @staticmethod
     def get_revision(db: Session, run: DeliveryRun, version: int) -> Optional[PlanRevision]:
@@ -311,12 +620,14 @@ class LoaderService:
         event_type: str,
         message: str,
         actor_label: Optional[str] = None,
+        actor_id: Optional[int] = None,
         order_id: Optional[int] = None,
     ) -> LoaderActivity:
         entry = LoaderActivity(
             run_id=run.id,
             at=at,
             actor_kind=actor_kind,
+            actor_id=actor_id,
             actor_label=actor_label,
             event_type=event_type,
             order_id=order_id,
