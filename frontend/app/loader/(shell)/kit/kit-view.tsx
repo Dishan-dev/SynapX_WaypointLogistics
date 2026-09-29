@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Snowflake, Truck } from "lucide-react";
+import { openFlagSheet } from "@/components/loader/flag-issue-sheet";
 import { LoaderAppBar } from "@/components/loader/loader-app-bar";
 import { LoaderBottomNav } from "@/components/loader/loader-bottom-nav";
 import { PlanSourceStrip } from "@/components/loader/plan-source-strip";
@@ -87,7 +88,7 @@ export function KitView() {
                   { order_number: order.order_number },
                 )
               }
-              onFlag={() => {}}
+              onFlag={(order) => openFlagSheet(run, order, offline.act)}
             />
           )),
         )}
