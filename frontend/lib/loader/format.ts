@@ -178,11 +178,13 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
  * only for runs changed locally by offline actions.
  *
  * - orders_total excludes take_off and moved
+ * - orders_loaded counts loaded only (not flagged, not re_check)
  * - orders_checked counts loaded and flagged (not re_check)
  * - loaded capacity counts loaded and re_check (goods are aboard)
  */
 export function withRecomputedCounts(run: Run): Run {
   let total = 0;
+  let loaded = 0;
   let checked = 0;
   let loadedKg = 0;
   let loadedM3 = 0;
@@ -194,6 +196,7 @@ export function withRecomputedCounts(run: Run): Run {
       total += 1;
       plannedKg += order.weight_kg;
       plannedM3 += order.volume_m3;
+      if (order.state === "loaded") loaded += 1;
       if (order.state === "loaded" || order.state === "flagged") checked += 1;
       if (order.state === "loaded" || order.state === "re_check") {
         loadedKg += order.weight_kg;
@@ -204,6 +207,7 @@ export function withRecomputedCounts(run: Run): Run {
   return {
     ...run,
     orders_total: total,
+    orders_loaded: loaded,
     orders_checked: checked,
     capacity: {
       ...run.capacity,
@@ -304,8 +308,9 @@ export function runChipKind(label: string): RunChipKind {
 
 /** Display fields for a queue run card. */
 export function runCardView(run: RunSummary) {
-  const progress = run.orders_total ? Math.round((run.orders_checked / run.orders_total) * 100) : 0;
-  const note = `${run.orders_checked} of ${run.orders_total} loaded`;
+  // Loaded only: a flagged order is not on the truck (contract counting rules).
+  const progress = run.orders_total ? Math.round((run.orders_loaded / run.orders_total) * 100) : 0;
+  const note = `${run.orders_loaded} of ${run.orders_total} loaded`;
   return {
     code: run.code,
     status: run.status,

@@ -144,7 +144,9 @@ export interface Run {
   /** Set while a newer plan waits to be acknowledged; release stays locked. */
   unacknowledged_plan_version: number | null;
   stops: RunStop[];
-  /** Counts loaded and flagged; re_check does not count. */
+  /** Counts loaded only: "x of y orders in". re_check does not count. */
+  orders_loaded: number;
+  /** Counts loaded and flagged: the review lock. re_check does not count. */
   orders_checked: number;
   /** Excludes take_off and moved. */
   orders_total: number;
@@ -227,6 +229,8 @@ export interface RunSummary {
   departs_at: string;
   status: RunStatus;
   stop_count: number;
+  /** The card's "x of y loaded". */
+  orders_loaded: number;
   orders_checked: number;
   orders_total: number;
   loader: string | null;

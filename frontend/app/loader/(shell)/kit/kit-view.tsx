@@ -67,7 +67,7 @@ export function KitView() {
         </h2>
         <p className="text-xs text-muted-foreground" data-testid="sync-summary">
           online={String(sync.online)} · pending={sync.pending} · failed={sync.failed} · syncing={String(sync.syncing)} ·
-          checked={run.orders_checked}/{run.orders_total} · source={offline.source}
+          loaded={run.orders_loaded} · checked={run.orders_checked}/{run.orders_total} · source={offline.source}
         </p>
         {stopsInLoadOrder(run.stops).map((stop) =>
           stop.orders.map((o) => (
