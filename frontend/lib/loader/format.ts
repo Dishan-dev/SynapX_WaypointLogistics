@@ -8,6 +8,7 @@ import type {
   QueueSummary,
   ReleaseBlocker,
   Run,
+  RunAlert,
   RunOrder,
   RunQueue,
   RunStop,
@@ -358,6 +359,30 @@ export function runChipKind(label: string): RunChipKind {
   if (label === "Reefer") return "reefer";
   if (label === "van_only") return "access";
   return "plain";
+}
+
+/**
+ * The queue card alert for a plan nobody has acknowledged yet (Figma 2c #1,
+ * "Plan updated 02:14 · v2 → v3 · Review"), or for a change that reopened a
+ * Ready run (2c #7, "Load reopened …"). Built from the run read, for when the
+ * queue has no alert of its own for it. Null once acknowledged.
+ */
+export function planChangeAlert(run: Run): RunAlert | null {
+  const to = run.unacknowledged_plan_version;
+  if (to === null) return null;
+  const from = run.acknowledged_plan_version ?? run.plan_change?.from_version;
+  const versions = from != null && from !== to ? `v${from} → v${to}` : `v${to}`;
+  const at = formatTime(run.plan_change?.published_at ?? run.plan.published_at);
+  const href = `/loader/runs/${encodeURIComponent(run.code)}`;
+  if (run.plan_change?.was_ready_at) {
+    return {
+      tone: "error",
+      message: `Load reopened · ${run.code} · ${run.vehicle.code} · ${versions} at ${at}`,
+      action: "Open",
+      href,
+    };
+  }
+  return { tone: "warning", message: `Plan updated ${at} · ${versions}`, action: "Review", href };
 }
 
 /** Display fields for a queue run card. */

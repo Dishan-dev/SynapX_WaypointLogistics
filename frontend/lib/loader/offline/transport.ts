@@ -3,15 +3,18 @@
 // up; set NEXT_PUBLIC_LOADER_TRANSPORT=api to use the real API at
 // NEXT_PUBLIC_API_URL.
 
-import { withRecomputedCounts } from "../format";
-import { findMockRun, mockSession, mockUserPins, mockUsers } from "../mock-data";
+import { planChangeAlert, withRecomputedCounts } from "../format";
+import { findMockRun, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
 import type {
   LoaderSession,
   LoaderUser,
   OrderState,
+  QueueSummary,
   QueuedAction,
   QueuedActionType,
   Run,
+  RunQueue,
+  RunStatus,
   SessionEndReason,
   SessionRequest,
 } from "../types";
@@ -30,6 +33,10 @@ export interface Transport {
    * NetworkError when the server cannot be reached.
    */
   fetchRun(code: string): Promise<Run | undefined>;
+  /** GET /loader/runs?dock=: the dock's runs, grouped by brand and wave. Throws NetworkError when unreachable. */
+  fetchQueue(dock: string): Promise<RunQueue>;
+  /** GET /loader/summary?dock=: the queue's metric cards. Throws NetworkError when unreachable. */
+  fetchSummary(dock: string): Promise<QueueSummary>;
   /** GET /loader/users: the loaders registered at this tablet's depot. */
   fetchUsers(): Promise<LoaderUser[]>;
   /** POST /loader/session. Undefined for a wrong PIN (401); throws NetworkError when unreachable. */
@@ -91,6 +98,16 @@ export function apiTransport(baseUrl: string): Transport {
       if (res.status === 404) return undefined;
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as Run;
+    },
+    async fetchQueue(dock) {
+      const res = await request(`${api}/loader/runs?dock=${encodeURIComponent(dock)}`, { cache: "no-store" });
+      if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
+      return (await res.json()) as RunQueue;
+    },
+    async fetchSummary(dock) {
+      const res = await request(`${api}/loader/summary?dock=${encodeURIComponent(dock)}`, { cache: "no-store" });
+      if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
+      return (await res.json()) as QueueSummary;
     },
     async fetchUsers() {
       const res = await request(`${api}/loader/users`, { cache: "no-store" });
@@ -335,6 +352,16 @@ export function mockTransport(latencyMs = 300): Transport {
       await new Promise((r) => setTimeout(r, latencyMs));
       return mockServerRun(loadMockState(), code);
     },
+    async fetchQueue() {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      return mockServerQueue();
+    },
+    async fetchSummary() {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      return mockServerSummary(mockServerQueue());
+    },
     async fetchUsers() {
       if (!(await probeConnectivity())) throw new NetworkError();
       await new Promise((r) => setTimeout(r, latencyMs));
@@ -367,6 +394,53 @@ export function mockTransport(latencyMs = 300): Transport {
         saveMockSessions(rows);
       }
     },
+  };
+}
+
+/**
+ * The mock queue with each run the mock server holds in detail (RUN-021)
+ * brought up to date: status, counts, and the plan-change alert while a new
+ * plan is unread. The other runs are queue-level only.
+ */
+function mockServerQueue(): RunQueue {
+  const state = loadMockState();
+  return {
+    groups: mockQueue.groups.map((group) => ({
+      ...group,
+      runs: group.runs
+        .map((card) => {
+          const run = mockServerRun(state, card.code);
+          if (!run) return card;
+          return {
+            ...card,
+            status: run.status,
+            orders_loaded: run.orders_loaded,
+            orders_checked: run.orders_checked,
+            orders_total: run.orders_total,
+            alert: planChangeAlert(run) ?? (card.alert?.tone === "warning" ? null : card.alert),
+          };
+        })
+        // Through the gate, a run drops off the dock's queue.
+        .filter((card) => card.status !== "gated_out"),
+    })),
+  };
+}
+
+const LOADING: RunStatus[] = ["loading", "issue_flagged", "loaded"];
+
+/** The mock summary, counted from the mock queue so the two agree. */
+function mockServerSummary(queue: RunQueue): QueueSummary {
+  const runs = queue.groups.flatMap((g) => g.runs);
+  const loading = runs.filter((r) => LOADING.includes(r.status));
+  const ready = runs.filter((r) => r.status === "ready_to_depart");
+  return {
+    ...mockSummary,
+    runs: runs.length,
+    loading: {
+      count: loading.length,
+      loaders: [...new Set(loading.flatMap((r) => (r.loader ? [r.loader.split(" ")[0]] : [])))],
+    },
+    ready: { count: ready.length, run_codes: ready.map((r) => r.code) },
   };
 }
 
