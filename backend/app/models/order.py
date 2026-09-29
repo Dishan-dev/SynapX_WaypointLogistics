@@ -23,11 +23,13 @@ class Order(Base):
     destination_address = Column(String(500), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.DRAFT, nullable=False)
     total_amount = Column(Float, default=0.0)
+    allocation_id = Column(Integer, ForeignKey("allocations.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     shipment = relationship("Shipment", back_populates="order", uselist=False)
+    allocation = relationship("Allocation", back_populates="orders")
 
 
 class OrderItem(Base):
