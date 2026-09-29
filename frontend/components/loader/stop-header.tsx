@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { formatStopDetails, loadOrderLabel } from "@/lib/loader/format";
+import { formatStopDetails, loadOrderLabel, stopTitle } from "@/lib/loader/format";
 import type { RunStop } from "@/lib/loader/types";
 
 interface StopHeaderProps {
@@ -18,8 +18,7 @@ export function StopHeader({ stop, stopCount, className }: StopHeaderProps) {
           {loadOrderLabel(stop.load_position, stopCount)}
         </span>
         <h2 className="text-base leading-[22px] font-semibold text-primary">
-          Stop {stop.stop_sequence} · {stop.outlet.outlet_code}
-          {stop.is_new && " · NEW STOP"}
+          {stopTitle(stop)}
         </h2>
       </div>
       <p className="text-xs leading-[17px] text-muted-foreground">{formatStopDetails(stop)}</p>

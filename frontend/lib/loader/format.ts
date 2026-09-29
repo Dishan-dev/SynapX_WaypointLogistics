@@ -138,3 +138,49 @@ export function runTotals(run: Run): RunTotals {
 export function percentOf(value: number, max: number): number {
   return max > 0 ? Math.round((value / max) * 100) : 0;
 }
+
+export type LoadMapSlotState = "loaded" | "loading" | "new" | "pending";
+
+export interface LoadMapSlot {
+  stopSequence: number;
+  outletCode: string;
+  /** Planned volume of the stop's active orders. */
+  volumeM3: number;
+  state: LoadMapSlotState;
+}
+
+/** One slot per stop, cab to door (load order), sized by planned volume. */
+export function loadMapSlots(run: Run): LoadMapSlot[] {
+  return stopsInLoadOrder(run.stops).map((stop) => {
+    const active = stop.orders.filter(isActiveOrder);
+    const loaded = active.filter((o) => o.load_state === "loaded").length;
+    let state: LoadMapSlotState = "pending";
+    if (active.length > 0 && loaded === active.length) state = "loaded";
+    else if (loaded > 0) state = "loading";
+    else if (stop.is_new) state = "new";
+    const volume = active.reduce((sum, o) => sum + o.volume_m3, 0);
+    return {
+      stopSequence: stop.stop_sequence,
+      outletCode: stop.outlet.outlet_code,
+      volumeM3: Math.round(volume * 10) / 10,
+      state,
+    };
+  });
+}
+
+/** Vehicle limits and run totals in the shape the capacity card takes. */
+export function runCapacity(run: Run) {
+  const totals = runTotals(run);
+  return {
+    vehicleCode: run.vehicle.vehicle_code,
+    planVersion: run.plan_version,
+    weight: { loaded: totals.loadedKg, planned: totals.plannedKg, max: run.vehicle.max_weight_kg },
+    volume: { loaded: totals.loadedM3, planned: totals.plannedM3, max: run.vehicle.max_volume_m3 },
+    spareM3: Math.max(0, Math.round((run.vehicle.max_volume_m3 - totals.plannedM3) * 10) / 10),
+  };
+}
+
+/** "Stop 1 · OUT028 · NEW STOP" */
+export function stopTitle(stop: RunStop): string {
+  return `Stop ${stop.stop_sequence} · ${stop.outlet.outlet_code}${stop.is_new ? " · NEW STOP" : ""}`;
+}
