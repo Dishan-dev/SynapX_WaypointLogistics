@@ -31,7 +31,8 @@ import {
 import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus, RunStop } from "@/lib/loader/types";
 import { loadRun, ordersLoaded, type LoadResult } from "./checklist-data";
 import { PlanChangeView } from "./plan-change-view";
-import { displayOrder } from "./plan-diff";
+import { blockerSummary, displayOrder, pendingUnloads, releaseBlockers } from "./plan-diff";
+import { UnloadCard } from "./unload-card";
 import { reviewHref } from "./routes";
 
 // Same labels and tones as the queue's run card.
@@ -116,7 +117,11 @@ function Checklist({ initial }: { initial: Run }) {
   const closed = CLOSED.includes(run.status);
   const loaded = ordersLoaded(run);
   const { orders_checked: checked, orders_total: total } = run;
-  const reviewUnlocked = total > 0 && checked === total && !closed;
+  const unloads = pendingUnloads(run.stops);
+  const blockers = releaseBlockers(run);
+  // take_off rows are outside orders_total, so "all checked" is not enough
+  // while one is still on the truck.
+  const reviewUnlocked = total > 0 && checked === total && !closed && unloads.length === 0;
   const vehicleLabel = run.vehicle.vehicle_type === "van" ? "Van" : "Truck";
   const reefer = run.vehicle.temp_capability === "reefer";
   const href = reviewHref(run.code);
@@ -147,18 +152,43 @@ function Checklist({ initial }: { initial: Run }) {
     if (action) void act(action, { order_number: order.order_number });
   };
 
+  const alsoWaiting = blockerSummary(blockers);
   const footer = (
     <div className="flex flex-col gap-2 md:flex-row-reverse md:items-center md:justify-between md:gap-4">
-      <LoaderButton
-        className="w-full md:w-auto"
-        disabled={!reviewUnlocked}
-        onClick={() => router.push(href)}
-      >
-        Review &amp; confirm · {checked} of {total}
-      </LoaderButton>
-      <p className="text-xs leading-[17px] text-muted-foreground">{footerHint(run)}</p>
+      {unloads.length > 0 && !closed ? (
+        <LoaderButton className="w-full md:w-auto" locked>
+          Release locked · unload first
+        </LoaderButton>
+      ) : (
+        <LoaderButton
+          className="w-full md:w-auto"
+          disabled={!reviewUnlocked}
+          onClick={() => router.push(href)}
+        >
+          Review &amp; confirm · {checked} of {total}
+        </LoaderButton>
+      )}
+      <p className="text-xs leading-[17px] text-muted-foreground">
+        {unloads.length > 0 && !closed
+          ? alsoWaiting
+            ? `Also waiting: ${alsoWaiting}.`
+            : "Unload first, then review."
+          : footerHint(run)}
+      </p>
     </div>
   );
+
+  const unloadCards = closed
+    ? []
+    : unloads.map(({ stop, order }) => (
+        <UnloadCard
+          key={order.order_number}
+          stop={stop}
+          order={order}
+          stops={run.stops}
+          onUnloaded={() => void act("unload", { order_number: order.order_number })}
+        />
+      ));
 
   return (
     <LoaderScreen
@@ -169,6 +199,7 @@ function Checklist({ initial }: { initial: Run }) {
     >
       <div className="mx-auto flex max-w-5xl flex-col gap-4 md:grid md:grid-cols-[248px_1fr] md:items-start md:gap-6">
         <aside aria-label="Vehicle" className="hidden flex-col gap-4 md:sticky md:top-28 md:flex">
+          {unloadCards}
           <CapacityCard {...capacity} />
           <LoaderCard title="Load map" description="Cab to door, as seen from the dock">
             <LoadMap slots={slots} spareM3={capacity.spareM3} />
@@ -209,6 +240,7 @@ function Checklist({ initial }: { initial: Run }) {
           </header>
 
           <div className="flex flex-col gap-4 md:hidden">
+            {unloadCards}
             <CapacityCard {...capacity} />
             <LoaderCard
               title={`${vehicleLabel}, cab to door`}

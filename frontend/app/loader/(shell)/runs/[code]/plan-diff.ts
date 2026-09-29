@@ -3,8 +3,8 @@
 // typed here and read through these helpers; when the shared types gain them,
 // only this file changes.
 
-import { formatDay, formatTime } from "@/lib/loader/format";
-import type { ChangeKind, Run, RunOrder } from "@/lib/loader/types";
+import { formatDay, formatTime, isActiveOrder } from "@/lib/loader/format";
+import type { ChangeKind, Run, RunOrder, RunStop } from "@/lib/loader/types";
 
 export interface MovedTo {
   run_code: string | null;
@@ -117,4 +117,46 @@ export function displayOrder(raw: RunOrder): RunOrder {
     moved_to: undefined,
     changed_in_version: order.changed_in_version ?? undefined,
   };
+}
+
+/** Orders the plan took off that are still on the truck, deepest stop first. */
+export function pendingUnloads(stops: RunStop[]): { stop: RunStop; order: DiffOrder }[] {
+  return [...stops]
+    .sort((a, b) => a.load_position - b.load_position)
+    .flatMap((stop) =>
+      stop.orders.filter((o) => o.state === "take_off").map((o) => ({ stop, order: diffOrder(o) })),
+    );
+}
+
+/**
+ * What still locks release, from this tablet's copy of the run. The row counts
+ * are recounted so taps made before they sync show at once; issues come from
+ * the server's list, since nothing on the tablet tracks their status.
+ */
+export function releaseBlockers(run: Run): ReleaseBlocker[] {
+  const orders = run.stops.flatMap((s) => s.orders);
+  const count = (...states: string[]) => orders.filter((o) => states.includes(o.state)).length;
+  const issues =
+    (run as Run & DiffRunFields).release_blockers?.find((b) => b.code === "issue_waiting")?.count ?? 0;
+  const blockers: ReleaseBlocker[] = [
+    { code: "plan_not_acknowledged", count: run.unacknowledged_plan_version != null ? 1 : 0 },
+    { code: "unload_pending", count: count("take_off") },
+    { code: "re_check_pending", count: count("re_check") },
+    { code: "orders_open", count: orders.filter((o) => isActiveOrder(o) && (o.state === "to_load" || o.state === "new")).length },
+    { code: "issue_waiting", count: issues },
+  ];
+  return blockers.filter((b) => b.count > 0);
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** "1 flag answer, 2 re-checks, 2 orders to load" (T2b footer). */
+export function blockerSummary(blockers: ReleaseBlocker[]): string {
+  const parts: string[] = [];
+  for (const { code, count } of blockers) {
+    if (code === "issue_waiting") parts.push(plural(count, "flag answer", "flag answers"));
+    if (code === "re_check_pending") parts.push(plural(count, "re-check", "re-checks"));
+    if (code === "orders_open") parts.push(plural(count, "order to load", "orders to load"));
+  }
+  return parts.join(", ");
 }
