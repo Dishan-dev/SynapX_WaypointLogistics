@@ -51,7 +51,7 @@ from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, L
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderUser
 from app.models.order import Order, OrderStatus
-from app.models.plan_revision import PlanRevision
+from app.models.plan_revision import PlanRevision, PlanRevisionChange
 from app.models.reference import (
     Brand,
     CalendarDay,
@@ -217,20 +217,24 @@ def reset(db: Session) -> None:
         LoaderIssue,
         RunStopOrder,
         RunStop,
+        PlanRevisionChange,
         PlanRevision,
         DeliveryRun,
         DockTablet,
         LoaderUser,
         Dock,
-        Outlet,
-        Vehicle,
-        CalendarDay,
     ):
         db.execute(delete(model))
-    # Orders carry loader columns but belong to the wider system; only the
-    # scenario's own orders are removed.
+
+    # Orders carry loader columns but belong to the wider system, so only the
+    # scenario's own orders are removed. They must go before outlets: orders
+    # reference outlets via fk_orders_outlet_id_outlets, and deleting outlets
+    # first violates it.
     scenario_orders = [row[0] for row in RUN_021_ORDERS + RUN_027_ORDERS]
     db.execute(delete(Order).where(Order.order_number.in_(scenario_orders)))
+
+    for model in (Outlet, Vehicle, CalendarDay):
+        db.execute(delete(model))
     db.flush()
 
 
