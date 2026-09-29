@@ -30,6 +30,7 @@ import {
 } from "@/lib/loader/format";
 import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus, RunStop } from "@/lib/loader/types";
 import { loadRun, ordersLoaded, type LoadResult } from "./checklist-data";
+import { displayOrder } from "./plan-diff";
 import { reviewHref } from "./routes";
 
 // Same labels and tones as the queue's run card.
@@ -213,7 +214,7 @@ function Checklist({ initial }: { initial: Run }) {
               {stop.orders.map((order) => (
                 <OrderRow
                   key={order.order_number}
-                  order={order}
+                  order={displayOrder(order)}
                   onToggle={closed || !toggleAction[order.state] ? undefined : onToggle}
                   // Flag stays disabled until Sanduni's flag sheet (L5) lands; then pass onFlag.
                 />
