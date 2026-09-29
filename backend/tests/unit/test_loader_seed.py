@@ -8,6 +8,7 @@ The seed's module-level tables are checked directly rather than by running the
 script, so no database is needed and nothing can accidentally point at Neon.
 """
 import importlib
+from datetime import datetime
 
 seed = importlib.import_module("scripts.seed_loader_demo")
 
@@ -162,3 +163,11 @@ def test_v3_pushes_every_gampaha_stop_back_by_the_new_stops_cost():
 
 def test_calendar_day_is_the_operating_day_from_the_design():
     assert seed.DAY.isoformat() == "2026-05-28"
+
+
+def test_seed_times_are_depot_local_stored_as_utc():
+    """Asia/Colombo is UTC+05:30: departs 03:30 on 28 May is 22:00 UTC on 27 May."""
+    assert seed.at("03:30") == datetime(2026, 5, 27, 22, 0)
+    assert seed.at("21:40", day=seed.EVE) == datetime(2026, 5, 27, 16, 10)
+    # Differences are unaffected, so the ETA method checks above still hold.
+    assert (seed.at("04:07") - seed.at("03:30")).total_seconds() == 37 * 60

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 # Allow running as `python scripts/seed_loader_demo.py` from backend/.
@@ -66,8 +66,14 @@ from app.models.reference import (
     VehicleType,
 )
 
-# The operating day the whole scenario sits on.
+# The operating day the whole scenario sits on. Plans are published the evening
+# before (EVE). Both are depot dates; every time below is depot-local too.
 DAY = date(2026, 5, 28)
+EVE = DAY - timedelta(days=1)
+
+# Asia/Colombo is UTC+05:30 all year (no DST), so a fixed offset is exact and
+# does not depend on a tz database, which Windows Python does not ship.
+DEPOT_UTC_OFFSET = timedelta(hours=5, minutes=30)
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", ""}
 
@@ -198,10 +204,15 @@ RUN_027_LOADED_AT_T0 = {
 }
 
 
-def at(hhmm: str) -> datetime:
-    """Combine a HH:MM string with the scenario's operating day."""
+def at(hhmm: str, day: date = DAY) -> datetime:
+    """A depot-local HH:MM on `day`, as the naive UTC value the database stores.
+
+    The design quotes depot time ("departs 03:30"); the backend stores UTC, like
+    every other datetime.now(timezone.utc) it writes. So 03:30 on 28 May in
+    Colombo is stored as 22:00 on 27 May, and the API sends "…T22:00:00Z".
+    """
     hour, minute = (int(part) for part in hhmm.split(":"))
-    return datetime.combine(DAY, time(hour, minute))
+    return datetime.combine(day, time(hour, minute)) - DEPOT_UTC_OFFSET
 
 
 def as_time(hhmm: str) -> time:
@@ -515,12 +526,12 @@ def seed_scenario(db: Session) -> None:
     upsert(
         db, PlanRevision, {"run_id": run_021.id, "version": 2},
         {
-            "published_at": at("21:40") .replace(day=27),
+            "published_at": at("21:40", day=EVE),
             "source": "Dispatcher",
             "summary": "Initial plan for the night wave.",
             "planned_weight_kg": run_021.planned_weight_kg,
             "planned_volume_m3": run_021.planned_volume_m3,
-            "acknowledged_at": at("21:45").replace(day=27),
+            "acknowledged_at": at("21:45", day=EVE),
             "acknowledged_by_id": saman.id,
         },
     )
@@ -543,12 +554,12 @@ def seed_scenario(db: Session) -> None:
     upsert(
         db, PlanRevision, {"run_id": run_027.id, "version": 1},
         {
-            "published_at": at("21:40").replace(day=27),
+            "published_at": at("21:40", day=EVE),
             "source": "Dispatcher",
             "summary": "Initial plan for the night wave.",
             "planned_weight_kg": run_027.planned_weight_kg,
             "planned_volume_m3": run_027.planned_volume_m3,
-            "acknowledged_at": at("21:50").replace(day=27),
+            "acknowledged_at": at("21:50", day=EVE),
             "acknowledged_by_id": tharindu.id,
         },
     )
