@@ -27,7 +27,7 @@ export type RunStatus =
 // flagged  – shortage / damage / won't fit reported to the Dispatcher
 // re_check – plan change touched it; must be checked again (a check clears it)
 // take_off – plan change removed it after it was loaded; unload it
-// moved    – moved off this run (other vehicle or deferred), nothing to do
+// moved    – not on this trip (other vehicle or deferred), nothing to do
 // new      – added in the latest plan version, not yet checked
 export type OrderState =
   | "to_load"
