@@ -2,6 +2,19 @@ from app.models.user import User
 from app.models.order import Order, OrderItem
 from app.models.inventory import InventoryItem, Warehouse
 from app.models.shipment import Shipment, DispatchTrip
+from app.models.reference import (
+    Brand,
+    CalendarDay,
+    Depot,
+    Dock,
+    DockTablet,
+    DockType,
+    Outlet,
+    TempCapability,
+    TemperatureClass,
+    Vehicle,
+    VehicleType,
+)
 
 __all__ = [
     "User",
@@ -11,4 +24,16 @@ __all__ = [
     "Warehouse",
     "Shipment",
     "DispatchTrip",
+    # Loader reference data
+    "Brand",
+    "CalendarDay",
+    "Depot",
+    "Dock",
+    "DockTablet",
+    "DockType",
+    "Outlet",
+    "TempCapability",
+    "TemperatureClass",
+    "Vehicle",
+    "VehicleType",
 ]
