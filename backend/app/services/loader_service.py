@@ -636,19 +636,28 @@ class LoaderService:
         db.add(entry)
         return entry
 
-    # --- dev-only simulation ---------------------------------------------
+    # --- publishing a plan ------------------------------------------------
 
     @staticmethod
-    def simulate_plan_change(
+    def publish_plan(
         db: Session,
         run: DeliveryRun,
-        payload: schemas.SimulatedPlanChangeRequest,
+        *,
+        unload: List[str],
+        dont_load: List[str],
+        load_new: List[str],
+        summary: Optional[str] = None,
+        source: str = "Dispatcher",
     ) -> PlanRevision:
-        """Publish the next plan version, as the dispatcher would.
+        """Publish the next plan version for a run.
 
         Copies the current version's stops and rows forward, applies the three
         kinds of change, and leaves the revision unacknowledged so the checklist
         blocks until the loader reads it.
+
+        The dev plan-change endpoint is the only caller today; the dispatcher's
+        real publish is meant to call this too, so every rule about what a new
+        version does to the run lives here and not in the simulation.
         """
         if run.status == RunStatus.GATED_OUT:
             raise InvalidStateTransitionError(
@@ -661,9 +670,9 @@ class LoaderService:
         old_version = run.current_plan_version
         new_version = old_version + 1
 
-        unload = set(payload.unload_order_numbers or [])
-        dont_load = set(payload.dont_load_order_numbers or [])
-        load_new = list(payload.load_new_order_numbers or [])
+        unload = set(unload)
+        dont_load = set(dont_load)
+        load_new = list(load_new)
 
         old_stops = sorted(
             db.execute(
@@ -793,8 +802,8 @@ class LoaderService:
             run_id=run.id,
             version=new_version,
             published_at=now,
-            source="Dispatcher",
-            summary=payload.summary or f"Plan v{old_version} -> v{new_version}",
+            source=source,
+            summary=summary or f"Plan v{old_version} -> v{new_version}",
             planned_weight_kg=run.planned_weight_kg,
             planned_volume_m3=run.planned_volume_m3,
         )
@@ -824,11 +833,29 @@ class LoaderService:
 
         LoaderService.log(
             db, run, at=now, actor_kind=ActorKind.DISPATCHER,
-            event_type="plan_published", actor_label="Dispatcher",
-            message=f"Dispatcher published plan v{new_version}",
+            event_type="plan_published", actor_label=source,
+            message=f"{source} published plan v{new_version}",
         )
         db.flush()
         return revision
+
+    # --- dev-only simulation ---------------------------------------------
+
+    @staticmethod
+    def simulate_plan_change(
+        db: Session,
+        run: DeliveryRun,
+        payload: schemas.SimulatedPlanChangeRequest,
+    ) -> PlanRevision:
+        """Publish the next plan version, as the dispatcher would."""
+        return LoaderService.publish_plan(
+            db,
+            run,
+            unload=payload.unload_order_numbers or [],
+            dont_load=payload.dont_load_order_numbers or [],
+            load_new=payload.load_new_order_numbers or [],
+            summary=payload.summary,
+        )
 
     @staticmethod
     def simulate_decision(
