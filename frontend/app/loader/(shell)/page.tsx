@@ -1,5 +1,5 @@
 import { dockPlanSource } from "@/lib/loader/format";
-import { mockCurrentUser, mockNow, mockQueue, mockRunDetails, mockSummary } from "@/lib/loader/mock-data";
+import { mockNow, mockQueue, mockRunDetails, mockSummary } from "@/lib/loader/mock-data";
 import { QueueView } from "./queue-view";
 
 export default function LoaderQueuePage() {
@@ -7,7 +7,6 @@ export default function LoaderQueuePage() {
     <QueueView
       queue={mockQueue}
       summary={mockSummary}
-      firstName={mockCurrentUser.full_name.split(" ")[0]}
       now={mockNow}
       plan={dockPlanSource(mockRunDetails)}
     />

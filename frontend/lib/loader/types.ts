@@ -210,6 +210,17 @@ export interface LoaderSession {
   started_at: string;
 }
 
+/** POST /loader/session body. The PIN is checked on the server only. */
+export interface SessionRequest {
+  loader_user_id: number;
+  pin: string;
+  /** Which tablet is signing in; the server knows its dock. */
+  dock_tablet_label: string;
+}
+
+/** end_reason of DELETE /loader/session/{id}. */
+export type SessionEndReason = "idle_timeout" | "switch_user" | "sign_out";
+
 export type RunAlertTone = "warning" | "error" | "success" | "neutral";
 
 export interface RunAlert {

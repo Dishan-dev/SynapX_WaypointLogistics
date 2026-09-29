@@ -4,6 +4,7 @@ import * as React from "react";
 import { FilterChip } from "@/components/loader/filter-chip";
 import { InfoChip } from "@/components/loader/info-chip";
 import { LoaderScreen } from "@/components/loader/loader-screen";
+import { useLoaderShell } from "@/components/loader/loader-shell";
 import { MetricTile } from "@/components/loader/metric-tile";
 import { RunCard } from "@/components/loader/run-card";
 import { greeting, type PlanSource } from "@/lib/loader/format";
@@ -21,13 +22,13 @@ interface QueueViewProps {
   queue: RunQueue;
   /** GET /loader/summary */
   summary: QueueSummary;
-  firstName: string;
   now: string;
   plan: PlanSource;
 }
 
 /** Loading queue built from mock data. Full behaviour arrives with L3. */
-export function QueueView({ queue, summary, firstName, now, plan }: QueueViewProps) {
+export function QueueView({ queue, summary, now, plan }: QueueViewProps) {
+  const firstName = useLoaderShell().user.name.split(" ")[0];
   const [filter, setFilter] = React.useState<BrandFilter>("fresh");
 
   const fresh = queue.groups.filter((g) => inFilter(g, "fresh"));

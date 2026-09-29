@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "cn";
+import { nameMatch } from "@/lib/loader/format";
 
 interface SuggestionRowProps extends Omit<React.ComponentProps<"button">, "onSelect" | "children"> {
   initials: string;
@@ -8,6 +9,8 @@ interface SuggestionRowProps extends Omit<React.ComponentProps<"button">, "onSel
   detail: string;
   /** Best match: Enter selects it. */
   highlighted: boolean;
+  /** The search text; the part of the name it matches is shown in bold. */
+  query?: string;
   onSelect: () => void;
 }
 
@@ -17,10 +20,12 @@ export function SuggestionRow({
   name,
   detail,
   highlighted,
+  query,
   onSelect,
   className,
   ...props
 }: SuggestionRowProps) {
+  const match = query ? nameMatch(name, query) : undefined;
   return (
     <button
       type="button"
@@ -43,7 +48,17 @@ export function SuggestionRow({
         {initials}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-[15px] font-semibold text-foreground">{name}</span>
+        <span className={cn("truncate text-[15px] text-foreground", match ? "font-normal" : "font-semibold")}>
+          {match ? (
+            <>
+              {name.slice(0, match.start)}
+              <strong className="font-bold">{name.slice(match.start, match.end)}</strong>
+              {name.slice(match.end)}
+            </>
+          ) : (
+            name
+          )}
+        </span>
         <span className="truncate text-xs text-muted-foreground">{detail}</span>
       </span>
     </button>
