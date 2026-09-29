@@ -75,12 +75,37 @@ every state-changing call the tablet makes.
 **Does not apply to:** `GET`s, and the `/loader/dev/*` simulation endpoints, which
 stand in for the dispatcher and never originate from the tablet.
 
-> **Storage note, for whoever builds the writes.** `loading_checks` already has a
-> unique, indexed `client_action_id` column, so the check/uncheck/unload path is
-> ready. `loader_issues`, `plan_revisions` and `delivery_runs` do **not** have one
-> yet — adding it for flag, acknowledge and release is a nullable unique column
-> plus a migration, in the same shape as `loading_checks`. Please add it with the
-> endpoint rather than after, so the column is never populated inconsistently.
+**Storage — all four paths are ready.** Nothing to add before building a write.
+
+| Write | Stored in | Shape |
+| --- | --- | --- |
+| check · uncheck · unload | `loading_checks` | append-only row per action |
+| flag | `loader_issues.client_action_id` | one column on the issue |
+| acknowledge | `plan_revisions.client_action_id` | one column on the revision |
+| release · release/undo | `run_release_actions` | append-only row per action |
+
+Every one is a nullable, unique, indexed `String(64)`.
+
+**Why two of them are tables rather than columns.** A column holds one id, so it
+only works where the action happens once: a flag creates one issue, and a
+revision is acknowledged once. Check and release both **repeat on the same row** —
+check/uncheck/re-check, and mark ready → undo within 10 s → mark ready again. A
+single column would be overwritten each time, so the earlier action's id would be
+forgotten and its replay applied a second time; it also could not tell a replayed
+release from a replayed undo.
+
+**Nullable on purpose.** Not every row comes from a tablet tap — the dispatcher
+publishes revisions, and seeded rows have no client action behind them. Postgres
+lets NULLs repeat under a unique index, so those rows never collide.
+
+**`run_release_actions` is not the activity log.** It exists for idempotency;
+`loader_activity` stays the single source for the Log tab, so a release writes one
+row to each.
+
+**Implementing a write:** look the id up in the relevant table first. Found →
+return the original result with `200` and change nothing. Not found → apply the
+action and store the id in the same transaction, so a replay arriving mid-flight
+hits the unique constraint rather than doubling the write.
 
 ---
 
@@ -436,9 +461,9 @@ above; a duplicate returns the original result with 200. Returns the updated
 the stepper shows. Returns the created `IssueDetailRead`. Setting an issue puts
 the run into `issue_flagged` and the row into `flagged`.
 
-`loader_issues` has no `client_action_id` column yet — see the storage note in the
-write contract. Please add it alongside this endpoint, or a replayed offline flag
-files the issue twice.
+`loader_issues.client_action_id` is already there — look it up before inserting
+and return the existing `IssueDetailRead` with 200 if it matches, so a replayed
+offline flag does not file the issue twice.
 
 ### `GET /loader/issues` — L5 Issues tab
 
@@ -457,6 +482,10 @@ the built endpoints:
 `POST /release` sets `released_at` / `released_by` and moves the run to
 `ready_to_depart`; `POST /release/undo` reverses it within the 10 s window, and
 should refuse once `gated_out_at` is set — after the gate it is the driver's job.
+
+Both write a row to `run_release_actions` carrying the `client_action_id`. That
+table is append-only precisely because this pair repeats: release → undo →
+release again is normal, and each is its own action with its own id.
 
 ---
 

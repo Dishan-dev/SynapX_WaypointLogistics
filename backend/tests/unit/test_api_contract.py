@@ -87,6 +87,26 @@ def test_client_action_id_contract_is_stated(contract_text):
     assert "not applied twice" in lowered
 
 
+def test_write_contract_states_where_each_action_id_is_stored(contract_text):
+    """The storage table replaced an earlier "not built yet" caveat.
+
+    If it ever reverts to saying a column is missing, that is wrong now and would
+    send whoever builds the write down a pointless migration.
+    """
+    section = contract_text.split("## `client_action_id`")[1].split("\n---")[0]
+
+    for store in (
+        "`loading_checks`",
+        "`loader_issues.client_action_id`",
+        "`plan_revisions.client_action_id`",
+        "`run_release_actions`",
+    ):
+        assert store in section, f"write contract does not say where {store} lives"
+
+    assert "all four paths are ready" in section.lower()
+    assert "do **not** have one" not in section, "the stale storage caveat is back"
+
+
 def test_write_contract_names_the_endpoints_it_covers(contract_text):
     section = contract_text.split("## `client_action_id`")[1].split("\n---")[0]
 
