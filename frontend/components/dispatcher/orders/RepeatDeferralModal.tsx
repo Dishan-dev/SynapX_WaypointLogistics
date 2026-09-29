@@ -29,7 +29,10 @@ export function RepeatDeferralModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-[520px] p-6 rounded-[10px] bg-white border border-[#E5E5E2] shadow-xl text-[#171A1F] overflow-hidden">
+      <DialogContent
+        showCloseButton={false}
+        className="sm:max-w-[480px] w-full p-6 rounded-[14px] bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F] overflow-hidden"
+      >
         {/* Header */}
         <div className="space-y-1">
           <div className="flex items-center gap-2">
