@@ -3,18 +3,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.api import api_router
 from app.core.config import settings
-from app.core.database import create_tables
 from app.core.exceptions import register_exception_handlers
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Safe auto-creation in development / test environments if needed
-    if settings.DEBUG or settings.DATABASE_URL.startswith("sqlite"):
-        try:
-            create_tables()
-        except Exception:
-            pass
+    # Schema is managed exclusively by Alembic migrations.
+    # Run `alembic upgrade head` before starting the server.
     yield
 
 

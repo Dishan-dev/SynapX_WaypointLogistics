@@ -63,3 +63,6 @@ Thumbs.db
 
 # Graphify
 graphify-out/
+
+# Antigravity Agents
+.agents/mcp_config.json
