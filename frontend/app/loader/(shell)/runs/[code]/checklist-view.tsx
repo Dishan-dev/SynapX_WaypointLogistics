@@ -30,6 +30,7 @@ import {
 } from "@/lib/loader/format";
 import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus, RunStop } from "@/lib/loader/types";
 import { loadRun, ordersLoaded, type LoadResult } from "./checklist-data";
+import { PlanChangeView } from "./plan-change-view";
 import { displayOrder } from "./plan-diff";
 import { reviewHref } from "./routes";
 
@@ -124,6 +125,23 @@ function Checklist({ initial }: { initial: Run }) {
     if (reviewUnlocked) router.prefetch(href);
   }, [reviewUnlocked, router, href]);
 
+  const subtitle = `${run.code} · ${run.dock} · ${user.shortName}`;
+
+  // A plan nobody has acknowledged blocks the checklist (the API refuses row
+  // writes until then, 409 PLAN_NOT_ACKNOWLEDGED).
+  if (run.unacknowledged_plan_version != null) {
+    return (
+      <PlanChangeView
+        run={run}
+        subtitle={subtitle}
+        status={status}
+        loaderName={user.name}
+        loaderInitials={user.initials}
+        onAcknowledge={() => void act("acknowledge", {})}
+      />
+    );
+  }
+
   const onToggle = (order: RunOrder) => {
     const action = toggleAction[order.state];
     if (action) void act(action, { order_number: order.order_number });
@@ -145,7 +163,7 @@ function Checklist({ initial }: { initial: Run }) {
   return (
     <LoaderScreen
       title="Loading checklist"
-      subtitle={`${run.code} · ${run.dock} · ${user.shortName}`}
+      subtitle={subtitle}
       plan={planSource(run)}
       footer={footer}
     >
