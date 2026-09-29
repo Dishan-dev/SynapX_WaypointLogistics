@@ -16,20 +16,21 @@ import { useLoaderSync, useOfflineRun } from "@/components/loader/loader-sync-pr
 import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import {
-  formatClock,
   formatKg,
   formatM3,
   formatTime,
   isActiveOrder,
   loadMapSlots,
-  loadOrderLabel,
   planSource,
   runCapacity,
   stopsInLoadOrder,
-  stopTitle,
 } from "@/lib/loader/format";
-import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus, RunStop } from "@/lib/loader/types";
+import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus } from "@/lib/loader/types";
 import { loadRun, ordersLoaded, type LoadResult } from "./checklist-data";
+import { PlanChangeView } from "./plan-change-view";
+import { blockerSummary, displayOrder, pendingUnloads, releaseBlockers } from "./plan-diff";
+import { UnloadCard } from "./unload-card";
+import { usePlanPoll } from "./use-plan-poll";
 import { reviewHref } from "./routes";
 
 // Same labels and tones as the queue's run card.
@@ -60,6 +61,7 @@ const CLOSED: RunStatus[] = ["ready_to_depart", "gated_out"];
 export function ChecklistView({ code }: { code: string }) {
   const { transport } = useLoaderSync();
   const [result, setResult] = React.useState<LoadResult>();
+  const onNewPlan = React.useCallback((run: Run) => setResult({ kind: "ok", run }), []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -99,13 +101,16 @@ export function ChecklistView({ code }: { code: string }) {
       </LoaderScreen>
     );
   }
-  return <Checklist initial={result.run} />;
+  return <Checklist initial={result.run} onNewPlan={onNewPlan} />;
 }
 
-function Checklist({ initial }: { initial: Run }) {
+function Checklist({ initial, onNewPlan }: { initial: Run; onNewPlan: (run: Run) => void }) {
   const router = useRouter();
   const { user } = useLoaderShell();
+  // A fresh server run replaces `initial`; useOfflineRun then resolves it
+  // against this tablet's queued actions, so local taps are never lost.
   const { run, act } = useOfflineRun(initial, user.shortName);
+  usePlanPoll(run, onNewPlan);
 
   const capacity = runCapacity(run);
   const stops = stopsInLoadOrder(run.stops);
@@ -114,7 +119,11 @@ function Checklist({ initial }: { initial: Run }) {
   const closed = CLOSED.includes(run.status);
   const loaded = ordersLoaded(run);
   const { orders_checked: checked, orders_total: total } = run;
-  const reviewUnlocked = total > 0 && checked === total && !closed;
+  const unloads = pendingUnloads(run.stops);
+  const blockers = releaseBlockers(run);
+  // take_off rows are outside orders_total, so "all checked" is not enough
+  // while one is still on the truck.
+  const reviewUnlocked = total > 0 && checked === total && !closed && unloads.length === 0;
   const vehicleLabel = run.vehicle.vehicle_type === "van" ? "Van" : "Truck";
   const reefer = run.vehicle.temp_capability === "reefer";
   const href = reviewHref(run.code);
@@ -123,33 +132,76 @@ function Checklist({ initial }: { initial: Run }) {
     if (reviewUnlocked) router.prefetch(href);
   }, [reviewUnlocked, router, href]);
 
+  const subtitle = `${run.code} · ${run.dock} · ${user.shortName}`;
+
+  // A plan nobody has acknowledged blocks the checklist (the API refuses row
+  // writes until then, 409 PLAN_NOT_ACKNOWLEDGED).
+  if (run.unacknowledged_plan_version != null) {
+    return (
+      <PlanChangeView
+        run={run}
+        subtitle={subtitle}
+        status={status}
+        loaderName={user.name}
+        loaderInitials={user.initials}
+        onAcknowledge={() => void act("acknowledge", {})}
+      />
+    );
+  }
+
   const onToggle = (order: RunOrder) => {
     const action = toggleAction[order.state];
     if (action) void act(action, { order_number: order.order_number });
   };
 
+  const alsoWaiting = blockerSummary(blockers);
   const footer = (
     <div className="flex flex-col gap-2 md:flex-row-reverse md:items-center md:justify-between md:gap-4">
-      <LoaderButton
-        className="w-full md:w-auto"
-        disabled={!reviewUnlocked}
-        onClick={() => router.push(href)}
-      >
-        Review &amp; confirm · {checked} of {total}
-      </LoaderButton>
-      <p className="text-xs leading-[17px] text-muted-foreground">{footerHint(run)}</p>
+      {unloads.length > 0 && !closed ? (
+        <LoaderButton className="w-full md:w-auto" locked>
+          Release locked · unload first
+        </LoaderButton>
+      ) : (
+        <LoaderButton
+          className="w-full md:w-auto"
+          disabled={!reviewUnlocked}
+          onClick={() => router.push(href)}
+        >
+          Review &amp; confirm · {checked} of {total}
+        </LoaderButton>
+      )}
+      <p className="text-xs leading-[17px] text-muted-foreground">
+        {unloads.length > 0 && !closed
+          ? alsoWaiting
+            ? `Also waiting: ${alsoWaiting}.`
+            : "Unload first, then review."
+          : footerHint(run)}
+      </p>
     </div>
   );
+
+  const unloadCards = closed
+    ? []
+    : unloads.map(({ stop, order }) => (
+        <UnloadCard
+          key={order.order_number}
+          stop={stop}
+          order={order}
+          stops={run.stops}
+          onUnloaded={() => void act("unload", { order_number: order.order_number })}
+        />
+      ));
 
   return (
     <LoaderScreen
       title="Loading checklist"
-      subtitle={`${run.code} · ${run.dock} · ${user.shortName}`}
+      subtitle={subtitle}
       plan={planSource(run)}
       footer={footer}
     >
       <div className="mx-auto flex max-w-5xl flex-col gap-4 md:grid md:grid-cols-[248px_1fr] md:items-start md:gap-6">
         <aside aria-label="Vehicle" className="hidden flex-col gap-4 md:sticky md:top-28 md:flex">
+          {unloadCards}
           <CapacityCard {...capacity} />
           <LoaderCard title="Load map" description="Cab to door, as seen from the dock">
             <LoadMap slots={slots} spareM3={capacity.spareM3} />
@@ -190,6 +242,7 @@ function Checklist({ initial }: { initial: Run }) {
           </header>
 
           <div className="flex flex-col gap-4 md:hidden">
+            {unloadCards}
             <CapacityCard {...capacity} />
             <LoaderCard
               title={`${vehicleLabel}, cab to door`}
@@ -205,15 +258,11 @@ function Checklist({ initial }: { initial: Run }) {
               aria-label={`Stop ${stop.stop_sequence}, ${stop.outlet.code}`}
               className="flex flex-col gap-2"
             >
-              {stop.eta ? (
-                <StopHeader stop={stop} stopCount={stops.length} />
-              ) : (
-                <StopHeaderWithoutEta stop={stop} stopCount={stops.length} />
-              )}
+              <StopHeader stop={stop} stopCount={stops.length} />
               {stop.orders.map((order) => (
                 <OrderRow
                   key={order.order_number}
-                  order={order}
+                  order={displayOrder(order)}
                   onToggle={closed || !toggleAction[order.state] ? undefined : onToggle}
                   // Flag stays disabled until Sanduni's flag sheet (L5) lands; then pass onFlag.
                 />
@@ -223,30 +272,6 @@ function Checklist({ initial }: { initial: Run }) {
         </div>
       </div>
     </LoaderScreen>
-  );
-}
-
-/**
- * StopHeader for a stop a plan change just added, which has no ETA yet. The
- * API sends eta: null there, and StopHeader formats the ETA unconditionally.
- */
-function StopHeaderWithoutEta({ stop, stopCount }: { stop: RunStop; stopCount: number }) {
-  const details = [
-    stop.outlet.dock_type,
-    `${formatClock(stop.outlet.window_start)}–${formatClock(stop.outlet.window_end)}`,
-    "ETA pending",
-  ];
-  if (stop.note) details.push(stop.note);
-  return (
-    <div className="flex flex-col gap-1 pt-1">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-primary px-2.5 py-[3px] text-xs leading-[17px] font-medium text-primary-foreground">
-          {loadOrderLabel(stop.load_position, stopCount)}
-        </span>
-        <h2 className="text-base leading-[22px] font-semibold text-primary">{stopTitle(stop)}</h2>
-      </div>
-      <p className="text-xs leading-[17px] text-muted-foreground">{details.join(" · ")}</p>
-    </div>
   );
 }
 

@@ -272,7 +272,12 @@ the truck from the cab outwards, which is the reverse of the driver's route:
   ],
   "orders_loaded": 5,    // "5 of 8 loaded"          — on the truck
   "orders_checked": 5,   // "Review & confirm · 5 of 8" — loaded or flagged
-  "orders_total": 8
+  "orders_total": 8,
+  // L7 — see "Plan diff" and "Release lock" below
+  "acknowledged_plan_version": 2,
+  "plan_change": null,
+  "release_locked": true,
+  "release_blockers": [ { "code": "orders_open", "count": 3 } ]
 }
 ```
 
@@ -297,6 +302,79 @@ still to load — `orders_loaded` 3, `orders_checked` 4, `orders_total` 5.
   check and the loader must confirm it again.
 - `re_check` *does* count toward `capacity.loaded_*` — the goods are physically
   aboard, they just need re-confirming.
+
+### Plan diff — L7, on the same `GET /loader/runs/{code}`
+
+The latest plan change, read against the plan the loader **last confirmed**. The
+window is every version the latest acknowledgement covers: all unread versions,
+or, once read, every version acknowledged in that same tap. So v3 and v4 both
+unread read as **one diff, v2 → v4**, confirmed once — and after the
+acknowledgement the checklist keeps showing that diff ("was Stop 4", the take-off
+note) until the next change.
+
+```jsonc
+"acknowledged_plan_version": 2,      // newest version someone acknowledged
+"plan_change": {                     // null when there is no earlier plan on record
+  "from_version": 2, "to_version": 3,
+  "published_at": "2026-05-27T20:44:00Z",
+  "summary": "Cold-room fault at OUT027; OUT028 must go tonight.",
+  "planned_weight_before_kg": 4920.0, "planned_weight_after_kg": 4690.0,   // "4,920 → 4,690 kg"
+  "planned_volume_before_m3": 23.9,   "planned_volume_after_m3": 22.6,
+  "checks_saved": 5,                 // "Your 5 checked orders are saved"
+  "was_ready_at": null               // set when this change reopened a Ready run: "was Ready 01:48"
+},
+"stops": [ {
+  "note": "was Stop 4",              // or "new stop"; null if the stop kept its place
+  "is_new": false,
+  "orders": [ {
+    "order_number": "ORD0092308", "state": "take_off",
+    "changed_in_version": 3,
+    "change_kind": "unload_from_truck",      // the diff group; see below
+    "note": "Take off the truck",            // short, time-free line for the row
+    "reason": "Store reported a cold-room fault at 02:05. …",   // the dispatcher's words
+    "moved_to": null,                        // { run_code|null, vehicle_code, trip_number, departs_at|null }
+    "deferred_to": null,                     // "2026-05-29"
+    "unloaded_at": null, "unloaded_by": null // "off truck 02:24 · Saman J."
+  } ]
+} ]
+```
+
+**Which group an order is in follows where it is now**, so stacked versions
+collapse:
+
+| Row now | `change_kind` | `note` |
+| --- | --- | --- |
+| `take_off` | `unload_from_truck` | "Take off the truck" |
+| `moved`, unloaded in this change | `unload_from_truck` | "Off truck · back in chiller" (staging for ambient) |
+| `moved`, was on the plan before | `dont_load` | null — the row shows "Removed in vN" |
+| on the plan, was not before | `load_new` | null |
+| `re_check` | null | "Re-check · moved to reach ORD0092308", or "Re-check · plan changed" |
+| `loaded` after a re-check | null, `changed_in_version` set | null — the row reads "Re-checked 02:26" |
+
+An order added and dropped again inside the window, never loaded, is no change
+at all. Notes carry no times; the frontend adds them (`unloaded_at`,
+`moved_to.departs_at`) in depot time.
+
+**`moved_to` and `deferred_to` are always `null` for now.** They are in the shape
+so the frontend can build against it; they are filled once
+`plan_revision_changes` stores the target (the pending migration fix).
+
+### Release lock — L7, on the same read
+
+`release_locked` is true while `release_blockers` lists anything. Codes, in the
+order the footer names them:
+
+| Code | `count` | Figma |
+| --- | --- | --- |
+| `plan_not_acknowledged` | 1 | 2c #2 "Acknowledge plan v3 first" |
+| `unload_pending` | `take_off` rows | T2b "Release locked · unload first" |
+| `re_check_pending` | `re_check` rows | "2 re-checks" |
+| `orders_open` | `to_load` + `new` rows | "2 orders to load" |
+| `issue_waiting` | issues `sent` or `seen` | "1 flag answer" |
+
+`take_off` rows are outside `orders_total`, so "all checked" alone would let a
+truck leave with an order the plan took off — `unload_pending` is what stops it.
+`LoaderService.release_blockers(db, run)` is the same check for `POST /release`.
 
 ### Check · uncheck · recheck — L4 writes
 
@@ -354,6 +432,7 @@ order, and the second tap should not bounce. Nothing is recorded.
 | Status | `detail.code` | When |
 | --- | --- | --- |
 | 409 | `PLAN_VERSION_STALE` | `plan_version` ≠ the run's `current_plan_version` (see the write contract) |
+| 409 | `PLAN_NOT_ACKNOWLEDGED` | the current plan version has not been acknowledged yet (L7); `detail.unacknowledged_plan_version` says which |
 | 409 | `CLIENT_ACTION_ID_REUSED` | the id was already used for another order or action |
 | 409 | `INVALID_STATE_TRANSITION` | the row is `flagged`, `take_off` or `moved`; `recheck` on `to_load` or `new`; `uncheck` on `re_check`; the run is `ready_to_depart` or `gated_out` |
 | 404 | `NOT_FOUND` | unknown run; order not on the current plan version; a `loader_session_id` that does not exist |
@@ -363,6 +442,43 @@ order, and the second tap should not bounce. Nothing is recorded.
 write is applied and `checked_by` stays empty. When it is sent it must exist. An
 **ended** session is accepted: an offline tap is often replayed after the idle
 timeout has already signed that loader out.
+
+### Acknowledge · unload — L7 writes
+
+| Action | Method and path | Effect |
+| --- | --- | --- |
+| acknowledge | `POST /loader/runs/{code}/plan/{version}/acknowledge` | stamps `acknowledged_at` / `_by` on `{version}` **and every unread version before it**; unblocks the checklist |
+| unload | `POST /loader/runs/{code}/orders/{order_number}/unload` | `take_off` → `moved` (Figma 2c: "not on this trip"); there is no separate `unloaded` state |
+
+Same body as the L4 writes: `client_action_id` (required), `plan_version`
+(required), `loader_session_id` (optional until L2). Both return the checklist.
+Replay first, then stale plan, then the write — as in L4.
+
+- **acknowledge** — `plan_version` in the body must equal `{version}` in the
+  path (422 `PLAN_VERSION_MISMATCH`). Acknowledging an older version than the
+  current one is `409 PLAN_VERSION_STALE`: the tablet then shows the whole
+  diff (v2 → v4) and the loader confirms once. Already acknowledged by someone
+  else → `200`, nothing recorded. The id is stored on `{version}`'s revision.
+  The log reads "Plan v3 received · Saman Jayawardena".
+  **`loader_session_id` is optional until L2 sign-in is merged**: without it
+  `acknowledged_by` stays null and the log reads "Plan v3 received · unknown
+  loader". It becomes **required** after L2 (so the Dispatcher always sees who).
+- **unload** — writes a `loading_checks` row (`action: unload`), which is where
+  `unloaded_at` / `unloaded_by` come from. The log reads "ORD0092308 off truck,
+  back in chiller" (staging for ambient). Unloading a `moved` row is a `200`
+  no-op; anything other than `take_off` or `moved` is `409
+  INVALID_STATE_TRANSITION`.
+
+**Row writes wait for the acknowledgement.** While the current plan version is
+unread, check, uncheck, recheck and unload answer `409 PLAN_NOT_ACKNOWLEDGED` —
+a tablet that missed the takeover still cannot act on a plan nobody has seen. A
+replay still answers `200`, and a stale `plan_version` is reported as stale first.
+
+**Plan changes and the run.** A new version on a `ready_to_depart` run reopens
+it (→ `loading`, log `load_reopened`); `released_at` is kept for "was Ready".
+A `loaded` run is re-rolled; `issue_flagged` is left alone. After `gated_out`
+no plan is published and acknowledge / row writes are `409` — the change is
+the Driver's.
 
 ### `GET /loader/runs/{code}/activity` — L9, one run's timeline
 
@@ -444,11 +560,37 @@ appear in the OpenAPI schema.
 
 | Endpoint | Effect |
 | --- | --- |
-| `POST /loader/dev/runs/{code}/plan-change` | Publishes the next plan version. **Empty body reproduces the Figma v2 → v3 change exactly.** |
+| `POST /loader/dev/runs/{code}/plan-change` | Publishes the next plan version. **Empty body reproduces the Figma v2 → v3 change** — see below. |
 | `POST /loader/dev/issues/{id}/decide` | Applies a decision. `{"option_label": "...", "decided_by": "..."}`; no body applies the default. |
 | `POST /loader/dev/issues/{id}/expire` | Decide-by passes; the `is_default` option is applied and status becomes `default_applied`. |
 
 Use these to drive L5/L6 states without waiting for a dispatcher UI.
+
+The plan-change body (all optional):
+
+```jsonc
+{
+  "unload_order_numbers": ["ORD0092308"],
+  "dont_load_order_numbers": ["ORD0092304"],
+  "load_new_order_numbers": ["ORD0092319"],
+  "recheck_order_numbers": ["ORD0092305", "ORD0092306"],  // omit: every order aboard goes to re_check
+  "reasons": { "ORD0092308": "Store reported a cold-room fault at 02:05. …" },
+  "summary": "Cold-room fault at OUT027; OUT028 must go tonight."
+}
+```
+
+- **unload and dont_load follow where the order is**: aboard → `take_off`,
+  still in staging → `moved`, whichever list it came in. The recorded
+  `change_kind` is the one that applied.
+- **recheck** names the loaded orders moved to reach one coming off; every
+  other check is kept. `[]` keeps them all.
+- A `load_new` order already on the run is re-added in place: `re_check` if it
+  is a `take_off` nobody unloaded yet, `new` if it was dropped.
+- The empty-body default re-checks only ORD0092305/06 and fills the three T2a
+  reasons. **In the seed, ORD0092308 is still in staging at t0** (the t0 set
+  matches the 1c capacity bars), so **check ORD0092308 first** to get the unload
+  the design shows; otherwise it is, correctly, a don't-load. VEH003 · Trip 1 ·
+  03:45 and "deferred to Fri 29 May" join the default with the migration fix.
 
 ### Errors
 
@@ -459,7 +601,9 @@ Existing domain handlers, so the envelope matches the rest of the API:
 | 404 | `NOT_FOUND` | unknown run code, issue id or order number |
 | 409 | `INVALID_STATE_TRANSITION` | resolving a settled issue; plan change after gate-out; an L4 write the row or run state does not allow |
 | 409 | `PLAN_VERSION_STALE` | a write made against a plan version that is no longer current |
+| 409 | `PLAN_NOT_ACKNOWLEDGED` | a row write while the current plan version is unread |
 | 409 | `CLIENT_ACTION_ID_REUSED` | a `client_action_id` sent again for a different action |
+| 422 | `PLAN_VERSION_MISMATCH` | acknowledge body `plan_version` ≠ `{version}` in the path |
 
 ```jsonc
 { "detail": { "code": "NOT_FOUND", "message": "Run 'RUN-999' not found.",
@@ -588,16 +732,19 @@ is not designed yet, so treat the shape as provisional.
 
 ### `GET /loader/runs/{code}/release-summary` · `POST …/release` · `POST …/release/undo` — L6
 
-Release must be **locked** when any of these hold — all three are readable from
-the built endpoints:
-
-1. `unacknowledged_plan_version` is not null.
-2. Any issue on the run is `sent` or `seen`.
-3. `orders_checked < orders_total`.
+Release is **locked** while the run read's `release_blockers` lists anything
+(`release_locked: true`; see "Release lock" above). That covers the unread plan,
+waiting issues and open orders, plus the two plan-change tasks the older
+`orders_checked < orders_total` rule missed: an order still to take off
+(`take_off` is outside `orders_total`) and re-checks. `POST /release` should call
+`LoaderService.release_blockers(db, run)` and refuse (suggested: `409
+RELEASE_LOCKED` with the list) before writing anything.
 
 `POST /release` sets `released_at` / `released_by` and moves the run to
 `ready_to_depart`; `POST /release/undo` reverses it within the 10 s window, and
 should refuse once `gated_out_at` is set — after the gate it is the driver's job.
+It should also refuse unless the run is still `ready_to_depart`: a plan published
+inside the 10 s window has already reopened the run to `loading`.
 
 Both write a row to `run_release_actions` carrying the `client_action_id`. That
 table is append-only precisely because this pair repeats: release → undo →

@@ -1,6 +1,7 @@
 """Loader endpoints.
 
-Scope: L4 (checklist read, and check / uncheck / recheck), the reads for L8
+Scope: L4 (checklist read, and check / uncheck / recheck), L7 (acknowledge a
+plan change, unload a take-off order), the reads for L8
 (decision) and L9 (activity, per-run and dock-wide), plus the dev-only
 simulation endpoints from L0.
 
@@ -10,7 +11,7 @@ rather than implemented here.
 """
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api import deps
@@ -115,6 +116,50 @@ def recheck_order(
     return _order_action(db, code, order_number, CheckAction.RECHECK, payload)
 
 
+# ---------------------------------------------------------------------------
+# L7 writes - acknowledge a plan change, unload a take-off order
+# ---------------------------------------------------------------------------
+
+
+@router.post(f"{ORDER_PATH}/unload", response_model=schemas.RunDetailRead)
+def unload_order(
+    code: str,
+    order_number: str,
+    payload: schemas.OrderActionRequest,
+    db: Session = Depends(deps.get_db),
+):
+    """The loader took a plan-removed order back off the truck (take_off -> moved).
+
+    Same body, replay and stale-plan rules as check.
+    """
+    return _order_action(db, code, order_number, CheckAction.UNLOAD, payload)
+
+
+@router.post("/runs/{code}/plan/{version}/acknowledge", response_model=schemas.RunDetailRead)
+def acknowledge_plan(
+    code: str,
+    version: int,
+    payload: schemas.AcknowledgePlanRequest,
+    db: Session = Depends(deps.get_db),
+):
+    """The loader has read the plan-change diff; unblocks the checklist.
+
+    Acknowledging the latest version also acknowledges any unread version
+    before it, so stacked changes are confirmed once.
+    """
+    if payload.plan_version != version:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "PLAN_VERSION_MISMATCH",
+                "message": f"Body plan_version {payload.plan_version} does not match v{version} in the path.",
+            },
+        )
+    run = loader_service.acknowledge_plan(db, code, version, payload)
+    db.commit()
+    return loader_service.build_run_detail(db, run)
+
+
 @router.get("/issues/{issue_id}", response_model=schemas.IssueDetailRead)
 def get_issue(issue_id: int, db: Session = Depends(deps.get_db)):
     """One flagged issue with the options the dispatcher had."""
@@ -133,11 +178,28 @@ def get_issue(issue_id: int, db: Session = Depends(deps.get_db)):
 
 dev_router = APIRouter(prefix="/dev", tags=["Loader · dev only"])
 
-# The Figma v2 -> v3 change on RUN-021, used when the request body is empty.
+# The Figma v2 -> v3 change on RUN-021 (frames 2a, T2a), used when the request
+# body is empty. The design has ORD0092308 loaded deepest by then; the seed's
+# t0 does not (it matches the 1c capacity bars), so check ORD0092308 first to
+# get the unload - otherwise it is, correctly, a don't-load.
+# moved_to / deferred_to (VEH003 · Trip 1 · 03:45, Fri 29 May) join this once
+# plan_revision_changes can store them (migration fix).
 FIGMA_PLAN_CHANGE = schemas.SimulatedPlanChangeRequest(
     unload_order_numbers=["ORD0092308"],
     dont_load_order_numbers=["ORD0092304"],
     load_new_order_numbers=["ORD0092319"],
+    recheck_order_numbers=["ORD0092305", "ORD0092306"],
+    reasons={
+        "ORD0092308": (
+            "Store reported a cold-room fault at 02:05. Already loaded, deepest. "
+            "Move ORD0092305 and ORD0092306 to reach it, then return it to the chiller dock."
+        ),
+        "ORD0092304": "Not loaded yet. Leave it in staging; VEH003's loader already has it on their list.",
+        "ORD0092319": (
+            "OUT028 was deferred yesterday and must go today. It loads last, by the door, "
+            "so nothing already loaded has to move."
+        ),
+    },
     summary="Cold-room fault at OUT027; OUT028 must go tonight.",
 )
 

@@ -150,3 +150,40 @@ def test_both_progress_counts_are_documented(contract_text):
     assert '"orders_checked"' in contract_text
     assert "`orders_loaded` counts only `loaded`" in flat
     assert "`orders_checked` counts `loaded` and `flagged`" in flat
+
+
+def test_every_loader_error_code_is_documented(contract_text):
+    """A code the tablet can receive but the contract never names is a defect."""
+    section = contract_text.split("### Errors")[1].split("\n---")[0]
+
+    for code in (
+        "NOT_FOUND",
+        "INVALID_STATE_TRANSITION",
+        "PLAN_VERSION_STALE",
+        "PLAN_NOT_ACKNOWLEDGED",
+        "CLIENT_ACTION_ID_REUSED",
+        "PLAN_VERSION_MISMATCH",
+    ):
+        assert f"`{code}`" in section, f"{code} missing from the Errors table"
+
+
+def test_release_blocker_codes_are_documented(contract_text):
+    section = contract_text.split("### Release lock")[1].split("\n### ")[0]
+
+    for code in (
+        "plan_not_acknowledged",
+        "unload_pending",
+        "re_check_pending",
+        "orders_open",
+        "issue_waiting",
+    ):
+        assert f"`{code}`" in section, f"release blocker {code} is not documented"
+
+
+def test_the_l7_writes_are_documented(contract_text):
+    assert "`POST /loader/runs/{code}/plan/{version}/acknowledge`" in contract_text
+    assert "`POST /loader/runs/{code}/orders/{order_number}/unload`" in contract_text
+    # Optional now, required after sign-in: both halves must stay stated.
+    section = " ".join(contract_text.split("### Acknowledge · unload")[1].split("\n### ")[0].split())
+    assert "optional until L2 sign-in is merged" in section
+    assert "becomes **required** after L2" in section

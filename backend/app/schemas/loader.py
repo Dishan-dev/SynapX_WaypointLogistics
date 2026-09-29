@@ -4,8 +4,8 @@ Scope note: only the endpoints in this module's own features are modelled here.
 The queue, sign-in and issue-list shapes (L2/L3/L5) are Sanduni's and are
 proposed in docs/loader/API_CONTRACT.md for her to review rather than coded here.
 """
-from datetime import datetime, time, timezone
-from typing import Annotated, List, Optional
+from datetime import date, datetime, time, timezone
+from typing import Annotated, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict
@@ -69,6 +69,19 @@ class CapacityRead(BaseModel):
     max_volume_m3: float
 
 
+class MovedToRead(BaseModel):
+    """Where a dont_load order went: "Moved to VEH003 · Trip 1 · 03:45".
+
+    run_code is null when the other trip has no loader run yet, and departs_at
+    when the dispatcher has not timed it. The frontend formats the time.
+    """
+
+    run_code: Optional[str] = None
+    vehicle_code: str
+    trip_number: int
+    departs_at: Optional[UtcDateTime] = None
+
+
 class RunOrderRead(BaseModel):
     order_number: str
     temperature_class: Optional[TemperatureClass] = None
@@ -79,6 +92,25 @@ class RunOrderRead(BaseModel):
     checked_at: Optional[UtcDateTime] = None
     checked_by: Optional[str] = None
 
+    # --- Plan diff (L7). All null on an order the latest change left alone.
+    # Plan version whose change this row is showing.
+    changed_in_version: Optional[int] = None
+    # Which group of the diff the order is in. null for re_check (the loader
+    # re-confirms it; the dispatcher did not change it) and for a rechecked row.
+    change_kind: Optional[PlanChangeKind] = None
+    # Short, time-free line for the row, e.g. "Take off the truck" or
+    # "Re-check · moved to reach ORD0092308". Times are added by the frontend.
+    note: Optional[str] = None
+    # The dispatcher's own words for this order, shown in the diff card.
+    reason: Optional[str] = None
+    # Filled once plan_revision_changes stores the target (migration fix);
+    # always null until then.
+    moved_to: Optional[MovedToRead] = None
+    deferred_to: Optional[date] = None
+    # When the order came off the truck ("off truck 02:24") and who took it off.
+    unloaded_at: Optional[UtcDateTime] = None
+    unloaded_by: Optional[str] = None
+
 
 class RunStopRead(BaseModel):
     stop_sequence: int
@@ -88,6 +120,9 @@ class RunStopRead(BaseModel):
     status: StopStatus
     outlet: OutletRead
     orders: List[RunOrderRead]
+    # Against the plan before the latest change: "was Stop 4", or "new stop".
+    note: Optional[str] = None
+    is_new: bool = False
 
 
 class PlanRevisionRead(BaseModel):
@@ -97,6 +132,41 @@ class PlanRevisionRead(BaseModel):
     summary: Optional[str] = None
     acknowledged_at: Optional[UtcDateTime] = None
     acknowledged_by: Optional[str] = None
+
+
+class PlanDiffRead(BaseModel):
+    """The latest plan change as one diff, for the takeover (Figma 2a, 2d).
+
+    from_version is the plan the loader last acknowledged before this change,
+    so stacked versions read as one diff: v2 -> v4, confirmed once. Still sent
+    after the acknowledgement, so the updated checklist keeps its notes.
+    """
+
+    from_version: int
+    to_version: int
+    published_at: UtcDateTime
+    summary: Optional[str] = None
+    # "Capacity after change": 4,920 -> 4,690 kg.
+    planned_weight_before_kg: float
+    planned_weight_after_kg: float
+    planned_volume_before_m3: float
+    planned_volume_after_m3: float
+    # "Your 5 checked orders are saved": rows that still carry a check.
+    checks_saved: int
+    # Set when this change reopened a signed-off run: "was Ready 01:48".
+    was_ready_at: Optional[UtcDateTime] = None
+
+
+class ReleaseBlockerRead(BaseModel):
+    """One reason release is locked, e.g. {"code": "re_check_pending", "count": 2}.
+
+    Codes, in the order the footer lists them:
+    plan_not_acknowledged, unload_pending, re_check_pending, orders_open,
+    issue_waiting.
+    """
+
+    code: str
+    count: int
 
 
 class PlanChangeRead(BaseModel):
@@ -126,6 +196,11 @@ class RunDetailRead(BaseModel):
     capacity: CapacityRead
     plan: Optional[PlanRevisionRead] = None
     unacknowledged_plan_version: Optional[int] = None
+    # The newest version someone acknowledged; with current_plan_version it
+    # makes the queue card's "Plan updated · v2 -> v3".
+    acknowledged_plan_version: Optional[int] = None
+    # null when the run has no earlier plan on record to compare against.
+    plan_change: Optional[PlanDiffRead] = None
     stops: List[RunStopRead]
     # Two different counts over the same orders_total (take_off / moved excluded):
     # - orders_loaded: state loaded only - what is on the truck and confirmed.
@@ -136,6 +211,10 @@ class RunDetailRead(BaseModel):
     orders_loaded: int
     orders_checked: int
     orders_total: int
+    # Release (L6) is locked while any blocker is listed. The same list backs
+    # LoaderService.release_blockers, which POST /release should check.
+    release_locked: bool
+    release_blockers: List[ReleaseBlockerRead]
 
 
 class IssueOptionRead(BaseModel):
@@ -209,6 +288,25 @@ class OrderActionRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class AcknowledgePlanRequest(BaseModel):
+    """Body for POST /loader/runs/{code}/plan/{version}/acknowledge.
+
+    plan_version must match the version in the path; it is carried in the body
+    too so every tablet write has the same shape.
+
+    loader_session_id is who the Dispatcher sees as "received by". It is
+    optional until L2 sign-in lands; without it the acknowledgement is recorded
+    with no loader.
+    TODO(L2): make loader_session_id required once sign-in is merged.
+    """
+
+    client_action_id: UUID
+    plan_version: int
+    loader_session_id: Optional[int] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
 # --- Dev-only simulation payloads ----------------------------------------
 
 
@@ -221,6 +319,11 @@ class SimulatedPlanChangeRequest(BaseModel):
     unload_order_numbers: Optional[List[str]] = None
     dont_load_order_numbers: Optional[List[str]] = None
     load_new_order_numbers: Optional[List[str]] = None
+    # Loaded orders the loader has to re-confirm (moved to reach one coming
+    # off). Omitted: every order aboard goes to re_check.
+    recheck_order_numbers: Optional[List[str]] = None
+    # The dispatcher's words per order, shown in the diff.
+    reasons: Optional[Dict[str, str]] = None
     summary: Optional[str] = None
 
 
