@@ -16,7 +16,7 @@ interface LoaderShellContextValue {
   user: LoaderShellUser;
   /** "Peliyagoda DC · Dock 3" */
   dockLabel: string;
-  /** Sent as loader_session_id on check / uncheck. */
+  /** Sent as loader_session_id on every write. */
   sessionId: number;
 }
 
@@ -65,7 +65,7 @@ export function LoaderShell({ user, dockLabel, sessionId, issueCount, children }
 
   return (
     <LoaderShellContext.Provider value={ctx}>
-      <LoaderSyncProvider>
+      <LoaderSyncProvider sessionId={sessionId}>
         <div className="flex min-h-dvh flex-col bg-background">
           <div className="flex flex-1 flex-col">{children}</div>
           <LoaderBottomNav

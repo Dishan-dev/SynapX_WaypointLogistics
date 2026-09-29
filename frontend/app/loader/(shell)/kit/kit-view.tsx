@@ -52,7 +52,7 @@ export function KitView() {
   const [query, setQuery] = useState("");
   const [pin, setPin] = useState("");
   const [picked, setPicked] = useState(false);
-  const { user, sessionId } = useLoaderShell();
+  const { user } = useLoaderShell();
   const { sync } = useLoaderSync();
   const offline = useOfflineRun(initialRun, user.shortName);
   // Capacity and counts follow local actions (recomputed after each tap).
@@ -77,7 +77,6 @@ export function KitView() {
               onToggle={(order) =>
                 void offline.act(order.state === "loaded" ? "uncheck" : "check", {
                   order_number: order.order_number,
-                  loader_session_id: sessionId,
                 })
               }
               onFlag={() => {}}

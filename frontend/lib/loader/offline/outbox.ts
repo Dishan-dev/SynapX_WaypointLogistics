@@ -5,14 +5,13 @@
 
 import { withRecomputedCounts } from "../format";
 import type {
-  CheckActionPayload,
   FlagActionPayload,
+  OrderActionPayload,
   OrderState,
   QueuedAction,
   QueuedActionPayload,
   QueuedActionType,
   Run,
-  UnloadActionPayload,
 } from "../types";
 import { putOutboxAction } from "./db";
 
@@ -49,7 +48,7 @@ export interface ActionRequest {
 const enc = encodeURIComponent;
 
 function orderPath(a: QueuedAction, verb: string): string {
-  const { order_number } = a.payload as CheckActionPayload | UnloadActionPayload;
+  const { order_number } = a.payload as OrderActionPayload;
   return `/loader/runs/${enc(a.run_code)}/orders/${enc(order_number)}/${verb}`;
 }
 
@@ -67,20 +66,17 @@ const ENDPOINTS: Record<QueuedActionType, (a: QueuedAction) => Pick<ActionReques
   release_undo: (a) => ({ method: "POST", path: `${runPath(a)}/release/undo` }),
 };
 
-/** JSON body: client_action_id plus what the contract shows for that write. */
+/**
+ * JSON body: client_action_id and loader_session_id on every write. The flag
+ * body is the full POST /loader/issues payload; the rest carry nothing else
+ * (order number and plan version are in the path).
+ */
 function bodyFor(action: QueuedAction): Record<string, unknown> {
-  const id = { client_action_id: action.client_action_id };
-  switch (action.action_type) {
-    case "check":
-    case "uncheck": {
-      const { loader_session_id } = action.payload as CheckActionPayload;
-      return { ...id, loader_session_id };
-    }
-    case "flag":
-      return { ...(action.payload as FlagActionPayload), ...id };
-    default:
-      return id;
-  }
+  const base = {
+    client_action_id: action.client_action_id,
+    loader_session_id: action.payload.loader_session_id,
+  };
+  return action.action_type === "flag" ? { ...(action.payload as FlagActionPayload), ...base } : base;
 }
 
 export function requestFor(action: QueuedAction): ActionRequest {
@@ -120,7 +116,7 @@ export function applyAction(run: Run, action: QueuedAction, actorName?: string):
   }
 
   const nextState = ORDER_STATE_AFTER[action.action_type];
-  const { order_number } = action.payload as CheckActionPayload | UnloadActionPayload | FlagActionPayload;
+  const { order_number } = action.payload as OrderActionPayload | FlagActionPayload;
   if (!nextState || !order_number) return run;
 
   const loaded = nextState === "loaded";

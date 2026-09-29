@@ -6,7 +6,14 @@ import { applyAction, enqueue, type NewAction } from "@/lib/loader/offline/outbo
 import { resolveRun, type RunSource } from "@/lib/loader/offline/run-cache";
 import { flushOutbox } from "@/lib/loader/offline/sync";
 import { createTransport, probeConnectivity, type Transport } from "@/lib/loader/offline/transport";
-import type { QueuedAction, QueuedActionPayload, QueuedActionType, Run, SyncState } from "@/lib/loader/types";
+import type {
+  ActionInput,
+  QueuedAction,
+  QueuedActionPayload,
+  QueuedActionType,
+  Run,
+  SyncState,
+} from "@/lib/loader/types";
 
 const PROBE_ONLINE_MS = 30_000;
 const PROBE_OFFLINE_MS = 5_000;
@@ -18,6 +25,8 @@ interface LoaderSyncValue {
   flush: () => Promise<void>;
   /** Used to refetch runs after a sync. */
   transport: Transport;
+  /** Sent as loader_session_id on every write. */
+  sessionId: number;
 }
 
 const LoaderSyncContext = React.createContext<LoaderSyncValue | null>(null);
@@ -32,7 +41,13 @@ export function useLoaderSync(): LoaderSyncValue {
  * Tracks connectivity, owns the outbox and flushes it on reconnect, when the
  * tab becomes visible, and on a timer.
  */
-export function LoaderSyncProvider({ children }: { children: React.ReactNode }) {
+export function LoaderSyncProvider({
+  sessionId,
+  children,
+}: {
+  sessionId: number;
+  children: React.ReactNode;
+}) {
   const transport = React.useMemo(() => createTransport(), []);
   const [online, setOnline] = React.useState(true);
   const [syncing, setSyncing] = React.useState(false);
@@ -117,8 +132,9 @@ export function LoaderSyncProvider({ children }: { children: React.ReactNode }) 
       enqueueAction,
       flush,
       transport,
+      sessionId,
     }),
-    [online, syncing, counts, lastSyncedAt, enqueueAction, flush, transport],
+    [online, syncing, counts, lastSyncedAt, enqueueAction, flush, transport, sessionId],
   );
 
   return <LoaderSyncContext.Provider value={value}>{children}</LoaderSyncContext.Provider>;
@@ -131,7 +147,7 @@ export function LoaderSyncProvider({ children }: { children: React.ReactNode }) 
  * Each action is applied locally as soon as it is queued.
  */
 export function useOfflineRun(initial: Run, actorName?: string) {
-  const { enqueueAction, transport, sync } = useLoaderSync();
+  const { enqueueAction, transport, sync, sessionId } = useLoaderSync();
   const [run, setRun] = React.useState(initial);
   const [source, setSource] = React.useState<RunSource>("initial");
   const runRef = React.useRef(initial);
@@ -157,14 +173,14 @@ export function useOfflineRun(initial: Run, actorName?: string) {
   }, [initial, transport, sync.lastSyncedAt]);
 
   const act = React.useCallback(
-    async (actionType: QueuedActionType, payload: QueuedActionPayload = {}) => {
+    async (actionType: QueuedActionType, input: ActionInput = {}) => {
       actSeq.current += 1;
       const current = runRef.current;
       const action = await enqueueAction({
         action_type: actionType,
         run_code: current.code,
         plan_version: current.current_plan_version,
-        payload,
+        payload: { ...input, loader_session_id: sessionId } as QueuedActionPayload,
       });
       const next = applyAction(current, action, actorName);
       runRef.current = next;
@@ -173,7 +189,7 @@ export function useOfflineRun(initial: Run, actorName?: string) {
       await putCachedRun(next);
       return action;
     },
-    [enqueueAction, actorName],
+    [enqueueAction, actorName, sessionId],
   );
 
   /** source: where the shown run came from (server, local, cache or initial). */

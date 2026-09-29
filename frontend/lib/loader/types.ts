@@ -288,19 +288,21 @@ export interface QueuedAction {
 
 export type QueuedActionStatus = "pending" | "conflict" | "failed";
 
-/** check / uncheck: the contract body carries loader_session_id. */
-export interface CheckActionPayload {
-  order_number: string;
+/**
+ * Every write carries the loader session (optional on the server until L2
+ * sign-in exists, then required).
+ */
+export interface SessionPayload {
   loader_session_id: number;
 }
 
-/** unload: body not shown in the contract yet. */
-export interface UnloadActionPayload {
+/** check / uncheck / unload. */
+export interface OrderActionPayload extends SessionPayload {
   order_number: string;
 }
 
 /** POST /loader/issues body (minus client_action_id). */
-export interface FlagActionPayload {
+export interface FlagActionPayload extends SessionPayload {
   run_code: string;
   order_number: string;
   issue_type: IssueType;
@@ -309,11 +311,13 @@ export interface FlagActionPayload {
   note: string;
 }
 
-export type QueuedActionPayload =
-  | CheckActionPayload
-  | UnloadActionPayload
-  | FlagActionPayload
-  | Record<string, never>;
+/** acknowledge / release / release_undo: session only. */
+export type QueuedActionPayload = OrderActionPayload | FlagActionPayload | SessionPayload;
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+/** What a screen passes when it acts; the session is added by the outbox hook. */
+export type ActionInput = DistributiveOmit<QueuedActionPayload, "loader_session_id">;
 
 /** Client-only connectivity and outbox state (not an API shape). */
 export interface SyncState {
