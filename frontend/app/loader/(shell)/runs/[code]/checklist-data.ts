@@ -21,9 +21,6 @@ import type {
 const USE_API = process.env.NEXT_PUBLIC_LOADER_TRANSPORT === "api";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
-// The API sends naive times in depot time ("2026-05-28T03:30:00"). The loader
-// formatters render in Asia/Colombo, so pin the offset before they parse it.
-const DEPOT_OFFSET = "+05:30";
 
 interface RunDetailRead {
   code: string;
@@ -76,11 +73,17 @@ export type LoadResult =
   | { kind: "not_found" }
   | { kind: "unavailable" };
 
-function depotTime(iso: string): string;
-function depotTime(iso: string | null): string | undefined;
-function depotTime(iso: string | null): string | undefined {
+/**
+ * The API sends UTC with a Z ("2026-05-27T22:00:00Z"); the loader formatters
+ * show it in depot time (Asia/Colombo). A time without an offset is UTC by the
+ * same convention, so it is marked as such rather than left for the browser
+ * to read as its own local time.
+ */
+function utcTime(iso: string): string;
+function utcTime(iso: string | null): string | undefined;
+function utcTime(iso: string | null): string | undefined {
   if (!iso) return undefined;
-  return /(Z|[+-]\d\d:\d\d)$/.test(iso) ? iso : `${iso}${DEPOT_OFFSET}`;
+  return /(Z|[+-]\d\d:\d\d)$/.test(iso) ? iso : `${iso}Z`;
 }
 
 /** "05:00:00" -> "05:00" */
@@ -103,18 +106,18 @@ export function runFromApi(detail: RunDetailRead): Run {
     },
     brand: detail.brand,
     area: detail.district,
-    departs_at: depotTime(detail.departs_at),
+    departs_at: utcTime(detail.departs_at),
     status: detail.status,
     plan_version: detail.current_plan_version,
-    plan_updated_at: depotTime(plan?.published_at ?? detail.departs_at),
+    plan_updated_at: utcTime(plan?.published_at ?? detail.departs_at),
     acknowledged_plan_version: acknowledged?.version,
     acknowledged_by: acknowledged?.acknowledged_by ?? undefined,
-    acknowledged_at: depotTime(acknowledged?.acknowledged_at ?? null),
+    acknowledged_at: utcTime(acknowledged?.acknowledged_at ?? null),
     stops: detail.stops.map((stop) => ({
       stop_sequence: stop.stop_sequence,
       load_position: stop.load_position,
       // A stop a plan change added has no ETA yet; the view shows it without one.
-      eta: depotTime(stop.eta) ?? "",
+      eta: utcTime(stop.eta) ?? "",
       outlet: {
         outlet_code: stop.outlet.code,
         brand: stop.outlet.brand,
@@ -131,7 +134,7 @@ export function runFromApi(detail: RunDetailRead): Run {
         weight_kg: order.weight_kg ?? 0,
         volume_m3: order.volume_m3 ?? 0,
         load_state: order.state,
-        checked_at: depotTime(order.checked_at),
+        checked_at: utcTime(order.checked_at),
         checked_by: order.checked_by ?? undefined,
       })),
     })),
