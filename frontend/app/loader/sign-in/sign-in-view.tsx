@@ -15,9 +15,12 @@ import {
   formatDate,
   matchUsers,
   shiftLabel,
+  signInOverview,
   userLabel,
+  type PlanSource,
   type SignInOverview,
 } from "@/lib/loader/format";
+import { cachedQueue } from "@/lib/loader/offline/queue-cache";
 import { mockSession } from "@/lib/loader/mock-data";
 import { createTransport, NetworkError, probeConnectivity } from "@/lib/loader/offline/transport";
 import {
@@ -71,7 +74,16 @@ function pinMessage(picked: LoaderUser | null, online: boolean, status: PinStatu
  * that signs in on the last digit. The PIN is checked on the server, so
  * signing in needs a connection; names come from the last user list offline.
  */
-export function SignInView({ overview, now }: { overview: SignInOverview; now: string }) {
+export function SignInView({
+  overview: fallbackOverview,
+  plan,
+  now,
+}: {
+  /** From the mock queue, until this tablet has loaded its dock's queue. */
+  overview: SignInOverview;
+  plan: PlanSource;
+  now: string;
+}) {
   const router = useRouter();
   const params = useSearchParams();
   const reason = params.get("reason") as SessionEndReason | null;
@@ -80,6 +92,19 @@ export function SignInView({ overview, now }: { overview: SignInOverview; now: s
 
   const place = React.useSyncExternalStore(subscribeSession, lastPlace, () => null) ?? DEFAULT_PLACE;
   const placeName = depotName(place.depot);
+
+  // Tablet cards: this dock's last loaded queue, which also works offline.
+  const [cachedOverview, setCachedOverview] = React.useState<SignInOverview>();
+  React.useEffect(() => {
+    let cancelled = false;
+    void cachedQueue(place.dock).then((cached) => {
+      if (!cancelled && cached) setCachedOverview(signInOverview(cached.queue, cached.summary, plan, now));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [place.dock, plan, now]);
+  const overview = cachedOverview ?? fallbackOverview;
 
   // Signed in (here or in another tab): go on to the loader. A link here to
   // switch user or sign out (e.g. from the plan-change takeover) ends the
