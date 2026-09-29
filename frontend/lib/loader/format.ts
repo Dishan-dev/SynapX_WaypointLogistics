@@ -4,8 +4,11 @@
 import type {
   LoaderSession,
   LoaderUser,
+  MovedTo,
   QueueSummary,
+  ReleaseBlocker,
   Run,
+  RunAlert,
   RunOrder,
   RunQueue,
   RunStop,
@@ -163,13 +166,31 @@ export function formatStopDetails(stop: RunStop): string {
   return parts.join(" · ");
 }
 
+/** "VEH003 · Trip 1 · 03:45" */
+export function movedToLabel(to: MovedTo): string {
+  const parts = [to.vehicle_code, `Trip ${to.trip_number}`];
+  if (to.departs_at) parts.push(formatTime(to.departs_at));
+  return parts.join(" · ");
+}
+
+/** A date without a time ("2026-05-29"), as a depot day: "Fri 29 May". */
+export function formatDateOnly(date: string): string {
+  return formatDay(`${date}T12:00:00+05:30`);
+}
+
 /**
- * Status line under an order: its note, where it moved to, or
+ * Status line under an order: where a moved order went ("Moved to VEH003 ·
+ * Trip 1 · 03:45", "Deferred to Fri 29 May · off truck 02:24"), its note, or
  * "Loaded 01:41 · Saman J." ("Re-checked …" after a plan change).
  */
 export function orderStatusLine(order: RunOrder): string | undefined {
+  const where = order.moved_to
+    ? `Moved to ${movedToLabel(order.moved_to)}`
+    : order.deferred_to
+      ? `Deferred to ${formatDateOnly(order.deferred_to)}`
+      : undefined;
+  if (where) return order.unloaded_at ? `${where} · off truck ${formatTime(order.unloaded_at)}` : where;
   if (order.note) return order.note;
-  if (order.moved_to) return `Moved to ${order.moved_to}`;
   if (order.state !== "loaded" || !order.checked_at) return undefined;
   const verb = order.changed_in_version ? "Re-checked" : "Loaded";
   const by = order.checked_by ? ` · ${order.checked_by}` : "";
@@ -222,6 +243,7 @@ export function withRecomputedCounts(run: Run): Run {
     orders_total: total,
     orders_loaded: loaded,
     orders_checked: checked,
+    ...releaseLock(run),
     capacity: {
       ...run.capacity,
       loaded_weight_kg: loadedKg,
@@ -230,6 +252,26 @@ export function withRecomputedCounts(run: Run): Run {
       planned_volume_m3: round1(plannedM3),
     },
   };
+}
+
+/**
+ * release_blockers / release_locked recomputed from the rows (contract
+ * "Release lock"), for a run changed locally. Waiting issues keep the
+ * server's count. Runs without the L7 fields are left without them.
+ */
+function releaseLock(run: Run): Pick<Run, "release_blockers" | "release_locked"> {
+  if (!run.release_blockers) return {};
+  const orders = run.stops.flatMap((s) => s.orders);
+  const count = (...states: RunOrder["state"][]) => orders.filter((o) => states.includes(o.state)).length;
+  const blockers: ReleaseBlocker[] = [
+    { code: "plan_not_acknowledged", count: run.unacknowledged_plan_version !== null ? 1 : 0 },
+    { code: "unload_pending", count: count("take_off") },
+    { code: "re_check_pending", count: count("re_check") },
+    { code: "orders_open", count: count("to_load", "new") },
+    { code: "issue_waiting", count: run.release_blockers.find((b) => b.code === "issue_waiting")?.count ?? 0 },
+  ];
+  const open = blockers.filter((b) => b.count > 0);
+  return { release_blockers: open, release_locked: open.length > 0 };
 }
 
 /** Capacity card props, from the run's server capacity. */
@@ -317,6 +359,30 @@ export function runChipKind(label: string): RunChipKind {
   if (label === "Reefer") return "reefer";
   if (label === "van_only") return "access";
   return "plain";
+}
+
+/**
+ * The queue card alert for a plan nobody has acknowledged yet (Figma 2c #1,
+ * "Plan updated 02:14 · v2 → v3 · Review"), or for a change that reopened a
+ * Ready run (2c #7, "Load reopened …"). Built from the run read, for when the
+ * queue has no alert of its own for it. Null once acknowledged.
+ */
+export function planChangeAlert(run: Run): RunAlert | null {
+  const to = run.unacknowledged_plan_version;
+  if (to === null) return null;
+  const from = run.acknowledged_plan_version ?? run.plan_change?.from_version;
+  const versions = from != null && from !== to ? `v${from} → v${to}` : `v${to}`;
+  const at = formatTime(run.plan_change?.published_at ?? run.plan.published_at);
+  const href = `/loader/runs/${encodeURIComponent(run.code)}`;
+  if (run.plan_change?.was_ready_at) {
+    return {
+      tone: "error",
+      message: `Load reopened · ${run.code} · ${run.vehicle.code} · ${versions} at ${at}`,
+      action: "Open",
+      href,
+    };
+  }
+  return { tone: "warning", message: `Plan updated ${at} · ${versions}`, action: "Review", href };
 }
 
 /** Display fields for a queue run card. */

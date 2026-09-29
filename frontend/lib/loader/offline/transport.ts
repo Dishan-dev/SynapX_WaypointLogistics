@@ -3,15 +3,18 @@
 // up; set NEXT_PUBLIC_LOADER_TRANSPORT=api to use the real API at
 // NEXT_PUBLIC_API_URL.
 
-import { withRecomputedCounts } from "../format";
-import { findMockRun, mockSession, mockUserPins, mockUsers } from "../mock-data";
+import { planChangeAlert, withRecomputedCounts } from "../format";
+import { findMockRun, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
 import type {
   LoaderSession,
   LoaderUser,
   OrderState,
+  QueueSummary,
   QueuedAction,
   QueuedActionType,
   Run,
+  RunQueue,
+  RunStatus,
   SessionEndReason,
   SessionRequest,
 } from "../types";
@@ -30,6 +33,10 @@ export interface Transport {
    * NetworkError when the server cannot be reached.
    */
   fetchRun(code: string): Promise<Run | undefined>;
+  /** GET /loader/runs?dock=: the dock's runs, grouped by brand and wave. Throws NetworkError when unreachable. */
+  fetchQueue(dock: string): Promise<RunQueue>;
+  /** GET /loader/summary?dock=: the queue's metric cards. Throws NetworkError when unreachable. */
+  fetchSummary(dock: string): Promise<QueueSummary>;
   /** GET /loader/users: the loaders registered at this tablet's depot. */
   fetchUsers(): Promise<LoaderUser[]>;
   /** POST /loader/session. Undefined for a wrong PIN (401); throws NetworkError when unreachable. */
@@ -91,6 +98,16 @@ export function apiTransport(baseUrl: string): Transport {
       if (res.status === 404) return undefined;
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as Run;
+    },
+    async fetchQueue(dock) {
+      const res = await request(`${api}/loader/runs?dock=${encodeURIComponent(dock)}`, { cache: "no-store" });
+      if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
+      return (await res.json()) as RunQueue;
+    },
+    async fetchSummary(dock) {
+      const res = await request(`${api}/loader/summary?dock=${encodeURIComponent(dock)}`, { cache: "no-store" });
+      if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
+      return (await res.json()) as QueueSummary;
     },
     async fetchUsers() {
       const res = await request(`${api}/loader/users`, { cache: "no-store" });
@@ -297,6 +314,17 @@ export function mockTransport(latencyMs = 300): Transport {
         );
       }
 
+      // L7: row writes wait for the acknowledgement (a replay already answered above).
+      if (ORDER_WRITES[action.action_type] || action.action_type === "unload") {
+        if (run.unacknowledged_plan_version !== null) {
+          return errorResponse(409, "PLAN_NOT_ACKNOWLEDGED", `Plan v${run.unacknowledged_plan_version} has not been acknowledged.`, {
+            entity: "DeliveryRun",
+            entity_id: run.code,
+            unacknowledged_plan_version: run.unacknowledged_plan_version,
+          });
+        }
+      }
+
       const outcome = orderWriteOutcome(run, action);
       if (outcome === "noop") return ok(run);
       if (outcome) return outcome;
@@ -323,6 +351,16 @@ export function mockTransport(latencyMs = 300): Transport {
       if (!(await probeConnectivity())) throw new NetworkError();
       await new Promise((r) => setTimeout(r, latencyMs));
       return mockServerRun(loadMockState(), code);
+    },
+    async fetchQueue() {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      return mockServerQueue();
+    },
+    async fetchSummary() {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      return mockServerSummary(mockServerQueue());
     },
     async fetchUsers() {
       if (!(await probeConnectivity())) throw new NetworkError();
@@ -360,6 +398,53 @@ export function mockTransport(latencyMs = 300): Transport {
 }
 
 /**
+ * The mock queue with each run the mock server holds in detail (RUN-021)
+ * brought up to date: status, counts, and the plan-change alert while a new
+ * plan is unread. The other runs are queue-level only.
+ */
+function mockServerQueue(): RunQueue {
+  const state = loadMockState();
+  return {
+    groups: mockQueue.groups.map((group) => ({
+      ...group,
+      runs: group.runs
+        .map((card) => {
+          const run = mockServerRun(state, card.code);
+          if (!run) return card;
+          return {
+            ...card,
+            status: run.status,
+            orders_loaded: run.orders_loaded,
+            orders_checked: run.orders_checked,
+            orders_total: run.orders_total,
+            alert: planChangeAlert(run) ?? (card.alert?.tone === "warning" ? null : card.alert),
+          };
+        })
+        // Through the gate, a run drops off the dock's queue.
+        .filter((card) => card.status !== "gated_out"),
+    })),
+  };
+}
+
+const LOADING: RunStatus[] = ["loading", "issue_flagged", "loaded"];
+
+/** The mock summary, counted from the mock queue so the two agree. */
+function mockServerSummary(queue: RunQueue): QueueSummary {
+  const runs = queue.groups.flatMap((g) => g.runs);
+  const loading = runs.filter((r) => LOADING.includes(r.status));
+  const ready = runs.filter((r) => r.status === "ready_to_depart");
+  return {
+    ...mockSummary,
+    runs: runs.length,
+    loading: {
+      count: loading.length,
+      loaders: [...new Set(loading.flatMap((r) => (r.loader ? [r.loader.split(" ")[0]] : [])))],
+    },
+    ready: { count: ready.length, run_codes: ready.map((r) => r.code) },
+  };
+}
+
+/**
  * Mock transport only, for the dev kit: what POST
  * /loader/dev/runs/{code}/plan-change does on the API. Publishes the next plan
  * version on the mock server, waiting to be acknowledged. The first loaded
@@ -371,12 +456,34 @@ export function simulateMockPlanChange(code: string): Run | undefined {
   if (!run) return undefined;
 
   const version = run.current_plan_version + 1;
+  const now = new Date().toISOString();
+  // The diff reads from the plan last confirmed (contract "Plan diff").
+  const confirmed =
+    run.unacknowledged_plan_version === null
+      ? run.current_plan_version
+      : (run.acknowledged_plan_version ?? run.current_plan_version - 1);
+  const wasReady = run.status === "ready_to_depart";
   let marked = false;
   const next = withRecomputedCounts({
     ...run,
     current_plan_version: version,
     unacknowledged_plan_version: version,
-    plan: { ...run.plan, version, published_at: new Date().toISOString(), acknowledged_at: null, acknowledged_by: null },
+    acknowledged_plan_version: confirmed,
+    plan: { ...run.plan, version, published_at: now, acknowledged_at: null, acknowledged_by: null },
+    plan_change: {
+      from_version: confirmed,
+      to_version: version,
+      published_at: now,
+      summary: "Simulated plan change (dev kit).",
+      planned_weight_before_kg: run.capacity.planned_weight_kg,
+      planned_weight_after_kg: run.capacity.planned_weight_kg,
+      planned_volume_before_m3: run.capacity.planned_volume_m3,
+      planned_volume_after_m3: run.capacity.planned_volume_m3,
+      checks_saved: run.orders_loaded,
+      was_ready_at: wasReady ? now : null,
+    },
+    // Runs cached before L7 get the release lock from here on.
+    release_blockers: run.release_blockers ?? [],
     stops: run.stops.map((stop) => ({
       ...stop,
       orders: stop.orders.map((order) => {
@@ -386,7 +493,8 @@ export function simulateMockPlanChange(code: string): Run | undefined {
       }),
     })),
   });
-  const reopened = run.status === "loaded" && next.orders_checked < next.orders_total;
+  // A new plan reopens a Ready or fully loaded run (L7).
+  const reopened = wasReady || (run.status === "loaded" && next.orders_checked < next.orders_total);
   state[code] = { ...next, status: reopened ? "loading" : run.status };
   saveMockState(state);
   return state[code];

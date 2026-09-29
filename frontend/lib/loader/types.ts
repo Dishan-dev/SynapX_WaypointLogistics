@@ -27,7 +27,7 @@ export type RunStatus =
 // flagged  – shortage / damage / won't fit reported to the Dispatcher
 // re_check – plan change touched it; must be checked again (a check clears it)
 // take_off – plan change removed it after it was loaded; unload it
-// moved    – moved off this run (other vehicle or deferred), nothing to do
+// moved    – not on this trip (other vehicle or deferred), nothing to do
 // new      – added in the latest plan version, not yet checked
 export type OrderState =
   | "to_load"
@@ -84,12 +84,30 @@ export interface RunOrder {
   checked_by: string | null;
   /** Not in contract, pending Sachintha: units loaded when fewer than ordered. */
   loaded_units?: number;
-  /** Not in contract, pending Sachintha: one-line note under the order. */
-  note?: string;
-  /** Not in contract, pending Sachintha: plan version that last changed it. */
-  changed_in_version?: number;
-  /** Not in contract, pending Sachintha: where a moved order went. */
-  moved_to?: string;
+  // L7 plan diff ("Plan diff" in the contract). Optional: runs cached before
+  // L7 do not carry them.
+  /** Short, time-free line for the row, e.g. "Take off the truck". */
+  note?: string | null;
+  /** Plan version that last changed the order. */
+  changed_in_version?: number | null;
+  /** The diff group the order is in now. */
+  change_kind?: ChangeKind | null;
+  /** The Dispatcher's words for the change. */
+  reason?: string | null;
+  /** Where a moved order went. Null for now (pending migration fix). */
+  moved_to?: MovedTo | null;
+  /** Day a deferred order goes instead, "2026-05-29". Null for now. */
+  deferred_to?: string | null;
+  /** When and by whom a take-off order came off the truck. */
+  unloaded_at?: string | null;
+  unloaded_by?: string | null;
+}
+
+export interface MovedTo {
+  run_code: string | null;
+  vehicle_code: string;
+  trip_number: number;
+  departs_at: string | null;
 }
 
 export interface RunStop {
@@ -104,9 +122,9 @@ export interface RunStop {
   status: string;
   outlet: Outlet;
   orders: RunOrder[];
-  /** Not in contract, pending Sachintha: note after the ETA line. */
-  note?: string;
-  /** Not in contract, pending Sachintha: stop added in the current plan. */
+  /** L7: "was Stop 4" or "new stop"; null if the stop kept its place. */
+  note?: string | null;
+  /** L7: stop added in the current plan. */
   is_new?: boolean;
 }
 
@@ -151,6 +169,43 @@ export interface Run {
   orders_checked: number;
   /** Excludes take_off and moved. */
   orders_total: number;
+  // L7 ("Plan diff" and "Release lock"). Optional: runs cached before L7 do
+  // not carry them.
+  /** Newest plan version someone acknowledged. */
+  acknowledged_plan_version?: number | null;
+  /** The latest change against the plan the loader last confirmed; null when there is none. */
+  plan_change?: PlanChange | null;
+  /** True while release_blockers lists anything. */
+  release_locked?: boolean;
+  /** What still stops release, in the order the footer names them. */
+  release_blockers?: ReleaseBlocker[];
+}
+
+export interface PlanChange {
+  from_version: number;
+  to_version: number;
+  published_at: string;
+  summary: string | null;
+  planned_weight_before_kg: number;
+  planned_weight_after_kg: number;
+  planned_volume_before_m3: number;
+  planned_volume_after_m3: number;
+  /** "Your 5 checked orders are saved" */
+  checks_saved: number;
+  /** Set when this change reopened a Ready run: "was Ready 01:48". */
+  was_ready_at: string | null;
+}
+
+export type ReleaseBlockerCode =
+  | "plan_not_acknowledged"
+  | "unload_pending"
+  | "re_check_pending"
+  | "orders_open"
+  | "issue_waiting";
+
+export interface ReleaseBlocker {
+  code: ReleaseBlockerCode;
+  count: number;
 }
 
 // ---- Built (L0): activity and issues -------------------------------------
@@ -316,10 +371,20 @@ export type QueuedActionStatus = "pending" | "conflict" | "failed";
 /**
  * detail.code of a 409 (API_CONTRACT.md "Errors"). None is retried:
  * - PLAN_VERSION_STALE: made on a plan that is no longer current.
+ * - PLAN_NOT_ACKNOWLEDGED: a row write while the current plan is unread (L7).
  * - CLIENT_ACTION_ID_REUSED: the id was already used for another action (a client bug).
  * - INVALID_STATE_TRANSITION: the row or run no longer allows it.
  */
-export type ConflictCode = "PLAN_VERSION_STALE" | "CLIENT_ACTION_ID_REUSED" | "INVALID_STATE_TRANSITION";
+export type ConflictCode =
+  | "PLAN_VERSION_STALE"
+  | "PLAN_NOT_ACKNOWLEDGED"
+  | "CLIENT_ACTION_ID_REUSED"
+  | "INVALID_STATE_TRANSITION";
+
+/** Refused because the plan moved on: the refetch brings the plan-change takeover. */
+export function isPlanConflict(code: ConflictCode | undefined): boolean {
+  return code === "PLAN_VERSION_STALE" || code === "PLAN_NOT_ACKNOWLEDGED";
+}
 
 /**
  * Every write carries the loader session. Null until L2 sign-in exists: the
@@ -358,7 +423,7 @@ export interface SyncState {
   online: boolean;
   pending: number;
   syncing: boolean;
-  /** Writes refused because the plan changed since the tap (PLAN_VERSION_STALE). */
+  /** Writes refused because the plan changed (PLAN_VERSION_STALE, PLAN_NOT_ACKNOWLEDGED). */
   stale: number;
   /** Other writes that were refused or failed and will not be retried. */
   failed: number;

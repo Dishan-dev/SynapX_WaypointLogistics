@@ -7,13 +7,14 @@ import { rejectedActions, resolveRun, type RunSource } from "@/lib/loader/offlin
 import { flushOutbox } from "@/lib/loader/offline/sync";
 import { createTransport, probeConnectivity, type Transport } from "@/lib/loader/offline/transport";
 import { flushSessionEnds } from "@/lib/loader/session";
-import type {
-  ActionInput,
-  QueuedAction,
-  QueuedActionPayload,
-  QueuedActionType,
-  Run,
-  SyncState,
+import {
+  isPlanConflict,
+  type ActionInput,
+  type QueuedAction,
+  type QueuedActionPayload,
+  type QueuedActionType,
+  type Run,
+  type SyncState,
 } from "@/lib/loader/types";
 
 const PROBE_ONLINE_MS = 30_000;
@@ -61,7 +62,7 @@ export function LoaderSyncProvider({
   const refreshCounts = React.useCallback(async () => {
     try {
       const outbox = await listOutbox();
-      const stale = (a: QueuedAction) => a.conflict_code === "PLAN_VERSION_STALE";
+      const stale = (a: QueuedAction) => isPlanConflict(a.conflict_code);
       setCounts({
         pending: outbox.filter((a) => a.status === "pending").length,
         stale: outbox.filter((a) => a.status === "conflict" && stale(a)).length,

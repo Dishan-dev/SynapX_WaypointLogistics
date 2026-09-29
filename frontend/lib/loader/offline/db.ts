@@ -1,13 +1,24 @@
-// IndexedDB store for the loader tablet: the last copy of each open run and
-// the outbox of writes made while offline. Raw IndexedDB, no dependency.
+// IndexedDB store for the loader tablet: the last copy of each open run, the
+// last queue per dock, and the outbox of writes made while offline. Raw
+// IndexedDB, no dependency.
 
-import type { QueuedAction, Run } from "../types";
+import type { QueueSummary, QueuedAction, Run, RunQueue } from "../types";
 
 const DB_NAME = "waypoint-loader";
 // v2: runs keyed by "code" (API contract shapes); v1 data is dropped.
-const DB_VERSION = 2;
+// v3: adds the queue store; runs and the outbox are kept.
+const DB_VERSION = 3;
 const RUNS = "runs";
 const OUTBOX = "outbox";
+const QUEUE = "queue";
+
+/** The last GET /loader/runs and /loader/summary this tablet saw for a dock. */
+export interface CachedQueue {
+  dock: string;
+  queue: RunQueue;
+  summary: QueueSummary;
+  fetched_at: string;
+}
 
 let dbPromise: Promise<IDBDatabase> | undefined;
 
@@ -24,15 +35,18 @@ function openDb(): Promise<IDBDatabase> {
   }
   dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (event) => {
       const db = req.result;
-      // Pre-contract shapes cannot be read by this version: start clean.
-      for (const name of [RUNS, OUTBOX]) {
-        if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
+      if (event.oldVersion < 2) {
+        // Pre-contract shapes cannot be read by this version: start clean.
+        for (const name of [RUNS, OUTBOX]) {
+          if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
+        }
+        db.createObjectStore(RUNS, { keyPath: "code" });
+        const outbox = db.createObjectStore(OUTBOX, { keyPath: "client_action_id" });
+        outbox.createIndex("created_at", "created_at");
       }
-      db.createObjectStore(RUNS, { keyPath: "code" });
-      const outbox = db.createObjectStore(OUTBOX, { keyPath: "client_action_id" });
-      outbox.createIndex("created_at", "created_at");
+      if (!db.objectStoreNames.contains(QUEUE)) db.createObjectStore(QUEUE, { keyPath: "dock" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => {
@@ -56,6 +70,16 @@ export async function getCachedRun(code: string): Promise<Run | undefined> {
 
 export async function putCachedRun(run: Run): Promise<void> {
   await request((await store(RUNS, "readwrite")).put(run));
+}
+
+// ---- Queue -------------------------------------------------------------
+
+export async function getCachedQueue(dock: string): Promise<CachedQueue | undefined> {
+  return request((await store(QUEUE, "readonly")).get(dock));
+}
+
+export async function putCachedQueue(entry: CachedQueue): Promise<void> {
+  await request((await store(QUEUE, "readwrite")).put(entry));
 }
 
 // ---- Outbox ------------------------------------------------------------

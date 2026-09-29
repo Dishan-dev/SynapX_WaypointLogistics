@@ -110,12 +110,14 @@ export function applyAction(run: Run, action: QueuedAction, actorName?: string):
 
   switch (action.action_type) {
     case "acknowledge":
-      return {
+      // Recounted so the release lock drops plan_not_acknowledged.
+      return withRecomputedCounts({
         ...run,
         current_plan_version: action.plan_version,
         unacknowledged_plan_version: null,
+        acknowledged_plan_version: action.plan_version,
         plan: { ...run.plan, version: action.plan_version, acknowledged_at: action.created_at, acknowledged_by: by },
-      };
+      });
     case "release":
       return { ...run, status: "ready_to_depart" };
     case "release_undo":

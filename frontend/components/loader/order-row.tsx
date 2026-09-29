@@ -76,7 +76,7 @@ const stateLabels: Record<OrderState, string> = {
   flagged: "flagged",
   re_check: "needs re-check",
   take_off: "take off the vehicle",
-  moved: "moved off this run",
+  moved: "not on this trip",
   new: "new, to load",
 };
 
@@ -144,8 +144,11 @@ export function OrderRow({ order, onToggle, onFlag, disabled = false, className 
             {order.order_number}
           </span>
           <TempBadge temp={order.temperature_class} />
-          {isMoved && order.changed_in_version !== undefined && (
-            <LoaderPill tone="neutral">Removed in v{order.changed_in_version}</LoaderPill>
+          {/* Figma 1c "Removed in v3"; 2c "Not on this trip" when the version is unknown. */}
+          {isMoved && (
+            <LoaderPill tone="neutral">
+              {order.changed_in_version != null ? `Removed in v${order.changed_in_version}` : "Not on this trip"}
+            </LoaderPill>
           )}
         </div>
         <p className="text-xs leading-[17px] text-muted-foreground">{formatOrderSize(order)}</p>
