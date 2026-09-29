@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { getCachedRun, listOutbox, putCachedRun } from "@/lib/loader/offline/db";
+import { listOutbox, putCachedRun } from "@/lib/loader/offline/db";
 import { applyAction, enqueue, type NewAction } from "@/lib/loader/offline/outbox";
+import { resolveRun, type RunSource } from "@/lib/loader/offline/run-cache";
 import { flushOutbox } from "@/lib/loader/offline/sync";
-import { createTransport, probeConnectivity } from "@/lib/loader/offline/transport";
+import { createTransport, probeConnectivity, type Transport } from "@/lib/loader/offline/transport";
 import type { QueuedAction, QueuedActionPayload, QueuedActionType, Run, SyncState } from "@/lib/loader/types";
 
 const PROBE_ONLINE_MS = 30_000;
@@ -15,6 +16,8 @@ interface LoaderSyncValue {
   /** Queue a write; it is sent now if online, otherwise on reconnect. */
   enqueueAction: (input: NewAction) => Promise<QueuedAction>;
   flush: () => Promise<void>;
+  /** Used to refetch runs after a sync. */
+  transport: Transport;
 }
 
 const LoaderSyncContext = React.createContext<LoaderSyncValue | null>(null);
@@ -113,45 +116,49 @@ export function LoaderSyncProvider({ children }: { children: React.ReactNode }) 
       sync: { online, syncing, pending: counts.pending, failed: counts.failed, lastSyncedAt },
       enqueueAction,
       flush,
+      transport,
     }),
-    [online, syncing, counts, lastSyncedAt, enqueueAction, flush],
+    [online, syncing, counts, lastSyncedAt, enqueueAction, flush, transport],
   );
 
   return <LoaderSyncContext.Provider value={value}>{children}</LoaderSyncContext.Provider>;
 }
 
 /**
- * A run that survives reloads and offline use: starts from the cached copy in
- * IndexedDB (unless the given run has a newer plan), and applies each action
- * locally as soon as it is queued.
+ * A run that survives reloads and offline use. The server copy wins while
+ * nothing is pending for the run; while actions are pending the local copy is
+ * kept, and after each sync the run is resolved again (see run-cache.ts).
+ * Each action is applied locally as soon as it is queued.
  */
 export function useOfflineRun(initial: Run, actorName?: string) {
-  const { enqueueAction } = useLoaderSync();
+  const { enqueueAction, transport, sync } = useLoaderSync();
   const [run, setRun] = React.useState(initial);
+  const [source, setSource] = React.useState<RunSource>("initial");
   const runRef = React.useRef(initial);
+  // Bumped on every local action, so a slower resolve cannot overwrite it.
+  const actSeq = React.useRef(0);
 
   React.useEffect(() => {
     let cancelled = false;
-    getCachedRun(initial.code)
-      .then((cached) => {
-        if (cancelled) return;
-        if (cached && cached.current_plan_version >= initial.current_plan_version) {
-          runRef.current = cached;
-          setRun(cached);
-        } else {
-          return putCachedRun(initial);
-        }
+    const seq = actSeq.current;
+    resolveRun(initial, transport)
+      .then((resolved) => {
+        if (cancelled || seq !== actSeq.current) return;
+        runRef.current = resolved.run;
+        setRun(resolved.run);
+        setSource(resolved.source);
       })
       .catch(() => {
-        // No IndexedDB: work from the given run only.
+        // Unexpected storage error: keep showing what we have.
       });
     return () => {
       cancelled = true;
     };
-  }, [initial]);
+  }, [initial, transport, sync.lastSyncedAt]);
 
   const act = React.useCallback(
     async (actionType: QueuedActionType, payload: QueuedActionPayload = {}) => {
+      actSeq.current += 1;
       const current = runRef.current;
       const action = await enqueueAction({
         action_type: actionType,
@@ -162,11 +169,13 @@ export function useOfflineRun(initial: Run, actorName?: string) {
       const next = applyAction(current, action, actorName);
       runRef.current = next;
       setRun(next);
+      setSource("local");
       await putCachedRun(next);
       return action;
     },
     [enqueueAction, actorName],
   );
 
-  return { run, act };
+  /** source: where the shown run came from (server, local, cache or initial). */
+  return { run, source, act };
 }
