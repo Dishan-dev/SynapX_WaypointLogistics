@@ -204,6 +204,11 @@ RUN_027_LOADED_AT_T0 = {
     "ORD0092311": "02:01",
 }
 
+# RUN-027's chilled order is not at the dock: flagged Missing at 02:03 and
+# waiting on the dispatcher (Figma 3a). Flagged is not loaded, so the queue still
+# reads "3 of 5 loaded", but it no longer blocks review - 4 of 5 checked or flagged.
+RUN_027_FLAGGED_AT_T0 = {"ORD0092314"}
+
 
 def at(hhmm: str, day: date = DAY) -> datetime:
     """A depot-local HH:MM on `day`, as the naive UTC value the database stores.
@@ -407,8 +412,9 @@ def seed_stops_and_orders(
     plan_version: int,
     loaded_at: dict,
     loader: LoaderUser,
+    flagged: frozenset | set = frozenset(),
 ) -> None:
-    """Create stops plus their checklist rows, and mark the t0 checks."""
+    """Create stops plus their checklist rows, and mark the t0 checks and flags."""
     total_stops = len(stop_spec)
     orders_by_outlet: dict[str, list] = {}
     for number, outlet_code, _temp, units, weight, volume in order_spec:
@@ -435,13 +441,19 @@ def seed_stops_and_orders(
         )
         for number, units, weight, volume in orders_by_outlet.get(outlet_code, []):
             checked = loaded_at.get(number)
+            if checked:
+                state = RunOrderState.LOADED
+            elif number in flagged:
+                state = RunOrderState.FLAGGED
+            else:
+                state = RunOrderState.TO_LOAD
             upsert(
                 db,
                 RunStopOrder,
                 {"run_stop_id": stop.id, "order_id": orders[number].id},
                 {
                     "plan_version": plan_version,
-                    "state": RunOrderState.LOADED if checked else RunOrderState.TO_LOAD,
+                    "state": state,
                     "units": units,
                     "weight_kg": weight,
                     "volume_m3": volume,
@@ -557,6 +569,7 @@ def seed_scenario(db: Session) -> None:
     seed_stops_and_orders(
         db, run_027, RUN_027_STOPS, RUN_027_ORDERS, orders, outlets,
         plan_version=1, loaded_at=RUN_027_LOADED_AT_T0, loader=tharindu,
+        flagged=RUN_027_FLAGGED_AT_T0,
     )
     seed_checks(db, run_027, RUN_027_LOADED_AT_T0, tharindu)
     upsert(

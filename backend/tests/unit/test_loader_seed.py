@@ -199,3 +199,37 @@ def test_seeded_stop_status_follows_its_orders(db_session):
         "OUT030": "loading",
         "OUT027": "loading",
     }
+
+
+def test_run_027_seeds_its_missing_order_as_flagged(db_session):
+    """Figma 3a: ORD0092314 is flagged Missing, so the row is flagged, not to_load.
+
+    Flagged is not loaded (the queue reads "3 of 5 loaded"), but it no longer
+    blocks review, so 4 of 5 are checked or flagged.
+    """
+    from sqlalchemy import select
+
+    from app.models.delivery_run import DeliveryRun, RunStop, RunStopOrder
+    from app.models.loader_issue import IssueStatus, LoaderIssue
+    from app.models.order import Order
+    from app.services.loader_service import LoaderService
+
+    seed.seed_scenario(db_session)
+    db_session.flush()
+
+    run = db_session.execute(select(DeliveryRun).filter_by(code="RUN-027")).scalars().one()
+    states = dict(
+        db_session.execute(
+            select(Order.order_number, RunStopOrder.state)
+            .join(RunStopOrder, RunStopOrder.order_id == Order.id)
+            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+            .where(RunStop.run_id == run.id)
+        ).all()
+    )
+    issue = db_session.execute(select(LoaderIssue).filter_by(run_id=run.id)).scalars().one()
+
+    assert states["ORD0092314"].value == "flagged"
+    assert issue.order.order_number == "ORD0092314"
+    assert issue.status == IssueStatus.SENT
+    assert sum(1 for s in states.values() if s.value == "loaded") == 3
+    assert LoaderService.progress(db_session, run) == (4, 5)
