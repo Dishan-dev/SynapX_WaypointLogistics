@@ -95,9 +95,20 @@ function clearSession() {
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
-/** Dock and depot from this tablet's last session; the sign-in screen shows them before anyone signs in. */
-export function lastPlace(): TabletPlace | undefined {
-  return parse<TabletPlace>(read(PLACE_KEY));
+let cachedPlaceRaw: string | null = null;
+let cachedPlace: TabletPlace | null = null;
+
+/**
+ * Dock and depot from this tablet's last session, which the sign-in screen
+ * shows before anyone signs in. The same object until it changes.
+ */
+export function lastPlace(): TabletPlace | null {
+  const raw = read(PLACE_KEY);
+  if (raw !== cachedPlaceRaw) {
+    cachedPlaceRaw = raw;
+    cachedPlace = parse<TabletPlace>(raw) ?? null;
+  }
+  return cachedPlace;
 }
 
 // ---- Users ----------------------------------------------------------------

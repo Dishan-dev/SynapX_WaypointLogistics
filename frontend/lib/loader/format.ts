@@ -4,8 +4,10 @@
 import type {
   LoaderSession,
   LoaderUser,
+  QueueSummary,
   Run,
   RunOrder,
+  RunQueue,
   RunStop,
   RunSummary,
 } from "./types";
@@ -73,6 +75,17 @@ export function formatDay(iso: string): string {
   })
     .format(date)
     .replace(",", "");
+}
+
+/** "Thu 28 May 2026" */
+export function formatDate(iso: string): string {
+  return `${formatDay(iso)} ${parseLocalDateTime(iso).year}`;
+}
+
+/** "Night shift" from 18:00 to 06:00 depot time, otherwise "Day shift". */
+export function shiftLabel(iso: string): string {
+  const { hour } = parseLocalDateTime(iso);
+  return hour < 6 || hour >= 18 ? "Night shift" : "Day shift";
 }
 
 /** Delivery window time "05:00:00" → "05:00". Already depot time; shown as-is. */
@@ -340,8 +353,68 @@ export function userLabel(user: LoaderUser) {
   return { name: user.full_name, shortName: user.short_name, initials };
 }
 
+/** "Peliyagoda DC" from a depot slug. */
+export function depotName(depot: string): string {
+  return `${depot.charAt(0).toUpperCase()}${depot.slice(1)} DC`;
+}
+
 /** "Peliyagoda DC · Dock 3" from a session's depot slug and dock. */
 export function dockLabel(session: Pick<LoaderSession, "depot" | "dock">): string {
-  const depot = session.depot.charAt(0).toUpperCase() + session.depot.slice(1);
-  return `${depot} DC · ${session.dock}`;
+  return `${depotName(session.depot)} · ${session.dock}`;
+}
+
+// ---- Sign-in ---------------------------------------------------------------------------
+
+/**
+ * The part of a loader's name that a search matches: the start of any word,
+ * case-insensitive. Undefined when it does not match.
+ */
+export function nameMatch(name: string, query: string): { start: number; end: number } | undefined {
+  const q = query.trim().toLowerCase();
+  if (!q) return undefined;
+  const lower = name.toLowerCase();
+  for (let i = 0; i < lower.length; i++) {
+    if ((i === 0 || lower[i - 1] === " ") && lower.startsWith(q, i)) return { start: i, end: i + q.length };
+  }
+  return undefined;
+}
+
+/** Loaders whose first or last name starts with the search, by name. */
+export function matchUsers(users: LoaderUser[], query: string): LoaderUser[] {
+  return users
+    .filter((u) => nameMatch(u.full_name, query))
+    .sort((a, b) => a.full_name.localeCompare(b.full_name));
+}
+
+export interface SignInOverview {
+  /** "Dock 3 tonight · plan from Dispatcher, updated 02:14" */
+  heading: string;
+  nextDeparture?: { time: string; caption: string };
+  runs: { count: number; caption: string };
+  issues: { count: number; caption: string };
+}
+
+/** Tablet sign-in cards (Figma 00 tablet): the dock's night at a glance. */
+export function signInOverview(
+  queue: RunQueue,
+  summary: QueueSummary,
+  plan: { updatedAt?: string },
+  now: string,
+): SignInOverview {
+  const runs = queue.groups.flatMap((g) => g.runs);
+  const next = runs
+    .filter((r) => r.status !== "ready_to_depart" && r.status !== "gated_out")
+    .sort((a, b) => a.departs_at.localeCompare(b.departs_at))[0];
+  const fresh = runs.filter((r) => r.brand === "fresh").length;
+  const when = shiftLabel(now) === "Night shift" ? "tonight" : "today";
+  const updated = plan.updatedAt ? `, updated ${formatTime(plan.updatedAt)}` : "";
+  return {
+    heading: `${summary.dock} ${when} · plan from Dispatcher${updated}`,
+    nextDeparture: next && {
+      time: formatTime(next.departs_at),
+      caption: `${next.code} · ${next.vehicle_code} · ${BRAND_LABELS[next.brand]}`,
+    },
+    runs: { count: summary.runs, caption: `${fresh} Fresh · ${runs.length - fresh} Style & Tech` },
+    issues: { count: summary.issues.count, caption: summary.issues.label },
+  };
 }
