@@ -836,6 +836,19 @@ class LoaderService:
             event_type="plan_published", actor_label=source,
             message=f"{source} published plan v{new_version}",
         )
+
+        # A new plan reopens a signed-off load: the loader acknowledges, works
+        # the diff and releases again. released_at is kept so the reopen screen
+        # can say "was Ready 01:48"; the next release overwrites it.
+        if run.status == RunStatus.READY_TO_DEPART:
+            run.status = RunStatus.LOADING
+            LoaderService.log(
+                db, run, at=now, actor_kind=ActorKind.SYSTEM,
+                event_type="load_reopened", actor_label="System",
+                message=f"Load reopened · plan changed after Ready · v{old_version} -> v{new_version}",
+            )
+        elif run.status == RunStatus.LOADED:
+            LoaderService._refresh_run_status(db, run)
         db.flush()
         return revision
 

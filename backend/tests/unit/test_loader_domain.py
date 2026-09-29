@@ -6,7 +6,7 @@ from app.models.delivery_run import RunOrderState, RunStatus
 from app.models.loader_issue import IssueStatus
 from app.schemas import loader as schemas
 from app.services.loader_service import LoaderService
-from tests.conftest_loader import build_run_021, make_issue, make_loader
+from tests.conftest_loader import at, build_run_021, make_issue, make_loader
 
 
 def test_stops_are_returned_in_load_order_not_delivery_order(db_session):
@@ -146,6 +146,45 @@ def test_plan_change_is_refused_after_the_run_leaves_the_gate(db_session):
         LoaderService.simulate_plan_change(
             db_session, run, schemas.SimulatedPlanChangeRequest()
         )
+
+
+def test_a_plan_change_reopens_a_ready_run(db_session):
+    """Figma 2d: Ready -> Loading, and the release time is kept for "was Ready"."""
+    run, _ = build_run_021(db_session)
+    run.status = RunStatus.READY_TO_DEPART
+    run.released_at = at("01:48")
+
+    LoaderService.simulate_plan_change(
+        db_session, run, schemas.SimulatedPlanChangeRequest(load_new_order_numbers=["ORD0092319"])
+    )
+
+    assert run.status == RunStatus.LOADING
+    assert run.released_at == at("01:48")
+    events = [entry.event_type for entry in LoaderService.list_activity(db_session, run)]
+    assert events == ["plan_published", "load_reopened"]
+
+
+def test_a_plan_change_takes_a_loaded_run_back_to_loading(db_session):
+    run, _ = build_run_021(db_session)
+    run.status = RunStatus.LOADED
+
+    LoaderService.simulate_plan_change(
+        db_session, run, schemas.SimulatedPlanChangeRequest(load_new_order_numbers=["ORD0092319"])
+    )
+
+    assert run.status == RunStatus.LOADING
+
+
+def test_a_plan_change_leaves_an_issue_flagged_run_alone(db_session):
+    """issue_flagged clears when the issue is decided, not when the plan changes."""
+    run, _ = build_run_021(db_session)
+    run.status = RunStatus.ISSUE_FLAGGED
+
+    LoaderService.simulate_plan_change(
+        db_session, run, schemas.SimulatedPlanChangeRequest(load_new_order_numbers=["ORD0092319"])
+    )
+
+    assert run.status == RunStatus.ISSUE_FLAGGED
 
 
 def test_decision_removing_the_order_frees_capacity_and_unlocks_release(db_session):
