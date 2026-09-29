@@ -11,9 +11,14 @@ export interface FlushResult {
   offline: boolean;
 }
 
+// Error envelope: { detail: { code, message, ... } } (API_CONTRACT.md "Errors").
 function detail(body: unknown, fallback: string): string {
-  if (body && typeof body === "object" && "detail" in body) return String(body.detail);
-  return fallback;
+  if (!body || typeof body !== "object" || !("detail" in body)) return fallback;
+  const d = body.detail;
+  if (d && typeof d === "object" && "code" in d) {
+    return "message" in d ? `${String(d.code)}: ${String(d.message)}` : String(d.code);
+  }
+  return String(d);
 }
 
 export async function flushOutbox(transport: Transport): Promise<FlushResult> {
@@ -34,12 +39,13 @@ export async function flushOutbox(transport: Transport): Promise<FlushResult> {
       await deleteOutboxAction(action.client_action_id);
       sent += 1;
     } else if (res.status === 409) {
-      // Plan changed under this action: keep it for review, never retry.
+      // INVALID_STATE_TRANSITION: the run moved on (e.g. gated out). Keep it
+      // for review, never retry.
       await putOutboxAction({
         ...action,
         status: "conflict",
         attempts: action.attempts + 1,
-        last_error: detail(res.body, "Plan changed"),
+        last_error: detail(res.body, "INVALID_STATE_TRANSITION"),
       });
     } else if (res.status >= 500) {
       // Server trouble: keep order, retry on the next flush.

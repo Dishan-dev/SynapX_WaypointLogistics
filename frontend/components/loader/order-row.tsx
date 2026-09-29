@@ -4,7 +4,7 @@ import * as React from "react";
 import { ArrowUpRight, Ban, Check, Flag, RefreshCw } from "lucide-react";
 import { cn } from "cn";
 import { formatOrderSize, orderStatusLine } from "@/lib/loader/format";
-import type { LoadState, RunOrder } from "@/lib/loader/types";
+import type { OrderState, RunOrder } from "@/lib/loader/types";
 import { LoaderPill } from "./loader-pill";
 import { TempBadge } from "./temp-badge";
 
@@ -19,7 +19,7 @@ interface StateStyle {
 
 const tileIcon = "size-[26px]";
 
-const stateStyles: Record<LoadState, StateStyle> = {
+const stateStyles: Record<OrderState, StateStyle> = {
   to_load: {
     row: "border-border bg-card",
     tile: "border-2 border-muted-foreground/40 bg-card",
@@ -70,7 +70,7 @@ const stateStyles: Record<LoadState, StateStyle> = {
 };
 
 // Spoken state for the check tile, so state is never colour-only.
-const stateLabels: Record<LoadState, string> = {
+const stateLabels: Record<OrderState, string> = {
   to_load: "to load",
   loaded: "loaded",
   flagged: "flagged",
@@ -82,7 +82,7 @@ const stateLabels: Record<LoadState, string> = {
 
 interface OrderRowProps {
   order: RunOrder;
-  /** Check / uncheck the order. Only offered in to_load, loaded, re_check and new. */
+  /** Check / uncheck the order. Offered in to_load, loaded, re_check (a check clears it) and new. */
   onToggle?: (order: RunOrder) => void;
   /** Open the flag-an-issue flow for this order. */
   onFlag?: (order: RunOrder) => void;
@@ -92,8 +92,8 @@ interface OrderRowProps {
 
 /** One order in the loading checklist, in any of the seven Figma states. */
 export function OrderRow({ order, onToggle, onFlag, disabled = false, className }: OrderRowProps) {
-  const style = stateStyles[order.load_state];
-  const isMoved = order.load_state === "moved";
+  const style = stateStyles[order.state];
+  const isMoved = order.state === "moved";
   const statusLine = orderStatusLine(order);
   const canToggle = style.toggleable && !!onToggle && !disabled;
   const canFlag = !isMoved && !!onFlag && !disabled;
@@ -114,9 +114,9 @@ export function OrderRow({ order, onToggle, onFlag, disabled = false, className 
       {style.toggleable ? (
         <button
           type="button"
-          aria-pressed={order.load_state === "loaded"}
-          aria-label={`${order.order_number}: ${stateLabels[order.load_state]}. ${
-            order.load_state === "loaded" ? "Mark not loaded" : "Mark loaded"
+          aria-pressed={order.state === "loaded"}
+          aria-label={`${order.order_number}: ${stateLabels[order.state]}. ${
+            order.state === "loaded" ? "Mark not loaded" : "Mark loaded"
           }`}
           disabled={!canToggle}
           onClick={() => onToggle?.(order)}
@@ -128,7 +128,7 @@ export function OrderRow({ order, onToggle, onFlag, disabled = false, className 
           {style.icon}
         </button>
       ) : (
-        <div role="img" aria-label={`${order.order_number}: ${stateLabels[order.load_state]}`} className={tileClass}>
+        <div role="img" aria-label={`${order.order_number}: ${stateLabels[order.state]}`} className={tileClass}>
           {style.icon}
         </div>
       )}

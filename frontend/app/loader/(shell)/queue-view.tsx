@@ -6,30 +6,33 @@ import { InfoChip } from "@/components/loader/info-chip";
 import { LoaderScreen } from "@/components/loader/loader-screen";
 import { MetricTile } from "@/components/loader/metric-tile";
 import { RunCard } from "@/components/loader/run-card";
-import { formatDay, greeting, queueMetrics, runAlert, type PlanSource } from "@/lib/loader/format";
-import type { LoaderIssue, Run } from "@/lib/loader/types";
+import { greeting, type PlanSource } from "@/lib/loader/format";
+import type { QueueSummary, RunGroup, RunQueue } from "@/lib/loader/types";
 
-type BrandGroup = "fresh" | "style_tech";
+type BrandFilter = "fresh" | "style_tech";
+
+const inFilter = (group: RunGroup, filter: BrandFilter) =>
+  filter === "fresh" ? group.brand === "fresh" : group.brand !== "fresh";
+
+const runCount = (groups: RunGroup[]) => groups.reduce((n, g) => n + g.runs.length, 0);
 
 interface QueueViewProps {
-  runs: Run[];
-  issues: LoaderIssue[];
+  /** GET /loader/runs */
+  queue: RunQueue;
+  /** GET /loader/summary */
+  summary: QueueSummary;
   firstName: string;
-  dockName: string;
   now: string;
   plan: PlanSource;
 }
 
 /** Loading queue built from mock data. Full behaviour arrives with L3. */
-export function QueueView({ runs, issues, firstName, dockName, now, plan }: QueueViewProps) {
-  const [group, setGroup] = React.useState<BrandGroup>("fresh");
+export function QueueView({ queue, summary, firstName, now, plan }: QueueViewProps) {
+  const [filter, setFilter] = React.useState<BrandFilter>("fresh");
 
-  const sorted = [...runs].sort((a, b) => a.departs_at.localeCompare(b.departs_at));
-  const fresh = sorted.filter((r) => r.brand === "fresh");
-  const styleTech = sorted.filter((r) => r.brand !== "fresh");
-  const shown = group === "fresh" ? fresh : styleTech;
-  const metrics = queueMetrics(runs, issues);
-  const heading = group === "fresh" ? "Fresh · night wave" : "Style & Tech";
+  const fresh = queue.groups.filter((g) => inFilter(g, "fresh"));
+  const styleTech = queue.groups.filter((g) => inFilter(g, "style_tech"));
+  const shown = filter === "fresh" ? fresh : styleTech;
 
   return (
     <LoaderScreen title="Loading queue" plan={plan}>
@@ -40,47 +43,53 @@ export function QueueView({ runs, issues, firstName, dockName, now, plan }: Queu
               {greeting(now)}, {firstName}
             </h2>
             <div className="flex flex-wrap gap-1.5">
-              <InfoChip tone="primary">{formatDay(now)}</InfoChip>
+              <InfoChip tone="primary">{summary.day_label}</InfoChip>
+              {summary.next_holiday && <InfoChip tone="warning">{summary.next_holiday.label}</InfoChip>}
             </div>
-            <p className="text-xs text-muted-foreground">{dockName} · runs sorted by departure time.</p>
+            <p className="text-xs text-muted-foreground">{summary.dock} · runs sorted by departure time.</p>
           </div>
           <div className="flex gap-2" role="group" aria-label="Brand">
-            <FilterChip label="Fresh" count={fresh.length} active={group === "fresh"} onClick={() => setGroup("fresh")} />
+            <FilterChip
+              label="Fresh"
+              count={runCount(fresh)}
+              active={filter === "fresh"}
+              onClick={() => setFilter("fresh")}
+            />
             <FilterChip
               label="Style & Tech"
-              count={styleTech.length}
-              active={group === "style_tech"}
-              onClick={() => setGroup("style_tech")}
+              count={runCount(styleTech)}
+              active={filter === "style_tech"}
+              onClick={() => setFilter("style_tech")}
             />
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <MetricTile label="Runs" value={metrics.runs} caption={`At ${dockName} today`} />
-          <MetricTile label="Loading" value={metrics.loading} caption={metrics.loadingCaption} />
-          <MetricTile label="Issues" value={metrics.issues} caption={metrics.issuesCaption} />
-          <MetricTile label="Ready" value={metrics.ready} caption={metrics.readyCaption} />
+          <MetricTile label="Runs" value={summary.runs} caption={`At ${summary.dock} today`} />
+          <MetricTile label="Loading" value={summary.loading.count} caption={summary.loading.loaders.join(", ")} />
+          <MetricTile label="Issues" value={summary.issues.count} caption={summary.issues.label} />
+          <MetricTile label="Ready" value={summary.ready.count} caption={summary.ready.run_codes.join(", ")} />
         </div>
 
-        <section aria-labelledby="queue-heading" className="flex flex-col gap-3">
-          <div className="flex items-baseline justify-between">
-            <h2 id="queue-heading" className="text-base font-semibold text-primary">
-              {heading}
-            </h2>
-            <span className="text-xs text-muted-foreground">{shown.length} runs</span>
-          </div>
-          {shown.length ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              {shown.map((run) => (
-                <RunCard key={run.run_code} run={run} alert={runAlert(run, issues)} />
-              ))}
-            </div>
-          ) : (
-            <p className="rounded-xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
-              No {heading} runs at {dockName} today.
-            </p>
-          )}
-        </section>
+        {shown.length ? (
+          shown.map((group) => (
+            <section key={group.label} aria-label={group.label} className="flex flex-col gap-3">
+              <div className="flex items-baseline justify-between">
+                <h2 className="text-base font-semibold text-primary">{group.label}</h2>
+                <span className="text-xs text-muted-foreground">{group.runs.length} runs</span>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {group.runs.map((run) => (
+                  <RunCard key={run.code} run={run} />
+                ))}
+              </div>
+            </section>
+          ))
+        ) : (
+          <p className="rounded-xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
+            No runs at {summary.dock} for this filter today.
+          </p>
+        )}
 
         <p className="text-xs text-muted-foreground">
           Once a driver leaves the gate the run drops off this list and shows as In Transit on the
