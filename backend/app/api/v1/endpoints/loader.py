@@ -117,8 +117,22 @@ def recheck_order(
 
 
 # ---------------------------------------------------------------------------
-# L7 writes - acknowledge a plan change
+# L7 writes - acknowledge a plan change, unload a take-off order
 # ---------------------------------------------------------------------------
+
+
+@router.post(f"{ORDER_PATH}/unload", response_model=schemas.RunDetailRead)
+def unload_order(
+    code: str,
+    order_number: str,
+    payload: schemas.OrderActionRequest,
+    db: Session = Depends(deps.get_db),
+):
+    """The loader took a plan-removed order back off the truck (take_off -> moved).
+
+    Same body, replay and stale-plan rules as check.
+    """
+    return _order_action(db, code, order_number, CheckAction.UNLOAD, payload)
 
 
 @router.post("/runs/{code}/plan/{version}/acknowledge", response_model=schemas.RunDetailRead)

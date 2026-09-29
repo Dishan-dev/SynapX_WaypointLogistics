@@ -3,14 +3,16 @@ import uuid
 
 from sqlalchemy import select
 
-from app.models.delivery_run import RunStatus
-from app.models.loader_activity import LoaderActivity
+from app.models.delivery_run import RunOrderState, RunStatus, RunStop, RunStopOrder
+from app.models.loader_activity import CheckAction, LoaderActivity, LoadingCheck
 from app.models.loader_user import LoaderSession
+from app.models.order import Order
 from app.models.plan_revision import PlanRevision
 from app.models.reference import DockTablet
-from app.schemas.loader import SimulatedPlanChangeRequest
+from app.schemas.loader import AcknowledgePlanRequest, SimulatedPlanChangeRequest
 from app.services.loader_service import LoaderService
 from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
+    at,
     build_run_021,
     loader_client,
     make_loader,
@@ -56,6 +58,64 @@ def activity(db, run, event_type):
     return db.execute(
         select(LoaderActivity).filter_by(run_id=run.id, event_type=event_type)
     ).scalars().all()
+
+
+def row_for(db, run, number):
+    return db.execute(
+        select(RunStopOrder)
+        .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+        .join(Order, RunStopOrder.order_id == Order.id)
+        .where(
+            RunStop.run_id == run.id,
+            RunStop.plan_version == run.current_plan_version,
+            Order.order_number == number,
+        )
+    ).scalars().one()
+
+
+def put_on_truck(db, run, number):
+    """Load an order at v2 without going through the API.
+
+    The fixture (like the seed) has ORD0092308 still in staging at v2, while
+    the design has it loaded deepest when v3 asks for it back.
+    """
+    row = row_for(db, run, number)
+    row.state = RunOrderState.LOADED
+    row.checked_at = at("02:12")
+    LoaderService.recalculate_capacity(db, run)
+    db.flush()
+
+
+def figma_v3(db, run, acknowledged=True):
+    """The design's v2 -> v3 change, with ORD0092308 aboard first."""
+    put_on_truck(db, run, "ORD0092308")
+    publish(
+        db, run,
+        unload_order_numbers=["ORD0092308"],
+        dont_load_order_numbers=["ORD0092304"],
+        load_new_order_numbers=["ORD0092319"],
+    )
+    if acknowledged:
+        LoaderService.acknowledge_plan(
+            db, RUN, 3,
+            AcknowledgePlanRequest(client_action_id=uuid.uuid4(), plan_version=3),
+        )
+        db.flush()
+
+
+def unload(client, number, action_id=None, plan_version=3):
+    return client.post(
+        f"{BASE}/runs/{RUN}/orders/{number}/unload",
+        json={"client_action_id": action_id or str(uuid.uuid4()), "plan_version": plan_version},
+    )
+
+
+def order_in(response, number):
+    for stop in response.json()["stops"]:
+        for order in stop["orders"]:
+            if order["order_number"] == number:
+                return order
+    raise AssertionError(f"{number} not in response")
 
 
 # --- acknowledge -------------------------------------------------------------
@@ -209,3 +269,102 @@ def test_acknowledge_requires_client_action_id(loader_client, db_session):
     )
 
     assert response.status_code == 422
+
+
+# --- unload ------------------------------------------------------------------
+
+
+def test_unload_takes_the_order_off_the_run(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    session = open_session(db_session, run, make_loader(db_session))
+    figma_v3(db_session, run)
+
+    response = loader_client.post(
+        f"{BASE}/runs/{RUN}/orders/ORD0092308/unload",
+        json={
+            "client_action_id": str(uuid.uuid4()),
+            "plan_version": 3,
+            "loader_session_id": session.id,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert order_in(response, "ORD0092308")["state"] == "moved"
+    [check] = db_session.execute(
+        select(LoadingCheck).filter_by(action=CheckAction.UNLOAD)
+    ).scalars().all()
+    assert check.actor_id == session.loader_user_id
+    assert check.plan_version == 3
+    [entry] = activity(db_session, run, "order_unloaded")
+    assert entry.message == "ORD0092308 off truck, back in chiller"
+
+
+def test_an_ambient_order_goes_back_to_staging(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    publish(db_session, run, unload_order_numbers=["ORD0092307"])
+    acknowledge(loader_client, 3)
+
+    assert unload(loader_client, "ORD0092307").status_code == 200
+
+    [entry] = activity(db_session, run, "order_unloaded")
+    assert entry.message == "ORD0092307 off truck, back in staging"
+
+
+def test_unload_keeps_the_stop_and_the_totals_right(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+    before = loader_client.get(f"{BASE}/runs/{RUN}").json()
+
+    after = unload(loader_client, "ORD0092308").json()
+
+    # An order being taken off was already out of the plan and the counts.
+    assert after["orders_total"] == before["orders_total"]
+    assert after["capacity"] == before["capacity"]
+    out027 = next(s for s in after["stops"] if s["outlet"]["code"] == "OUT027")
+    assert [o["state"] for o in out027["orders"]] == ["re_check", "moved"]
+
+
+def test_an_unload_replay_returns_200_and_applies_once(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+    action_id = str(uuid.uuid4())
+
+    first = unload(loader_client, "ORD0092308", action_id=action_id)
+    replay = unload(loader_client, "ORD0092308", action_id=action_id)
+
+    assert (first.status_code, replay.status_code) == (200, 200)
+    assert len(activity(db_session, run, "order_unloaded")) == 1
+
+
+def test_unloading_an_unloaded_order_is_a_quiet_no_op(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+    unload(loader_client, "ORD0092308")
+
+    second = unload(loader_client, "ORD0092308")
+
+    assert second.status_code == 200, second.text
+    assert len(activity(db_session, run, "order_unloaded")) == 1
+
+
+def test_unload_refuses_an_order_the_plan_did_not_take_off(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+
+    response = unload(loader_client, "ORD0092302")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "INVALID_STATE_TRANSITION"
+    assert (detail["current_state"], detail["target_state"]) == ("to_load", "moved")
+
+
+def test_an_unload_against_an_old_plan_is_409(loader_client, db_session):
+    run, _ = build_run_021(db_session)
+    figma_v3(db_session, run)
+
+    response = unload(loader_client, "ORD0092308", plan_version=2)
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PLAN_VERSION_STALE"
+    assert row_for(db_session, run, "ORD0092308").state == RunOrderState.TAKE_OFF

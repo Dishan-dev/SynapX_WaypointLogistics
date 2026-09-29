@@ -23,7 +23,7 @@ from app.models.loader_issue import IssueStatus, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderSession, LoaderUser
 from app.models.order import Order
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
-from app.models.reference import Dock
+from app.models.reference import Dock, TemperatureClass
 from app.schemas import loader as schemas
 
 # States that mean the order is physically aboard, for the capacity rollup.
@@ -52,6 +52,9 @@ ORDER_ACTIONS = {
     CheckAction.CHECK: {RunOrderState.TO_LOAD, RunOrderState.NEW, RunOrderState.RE_CHECK},
     CheckAction.RECHECK: {RunOrderState.RE_CHECK},
     CheckAction.UNCHECK: {RunOrderState.LOADED},
+    # take_off -> moved: the order is off the truck and off this run. There is
+    # no separate "unloaded" state; the loading_checks row records the unload.
+    CheckAction.UNLOAD: {RunOrderState.TAKE_OFF},
 }
 
 # Rows already where the action would put them. These are a 200 no-op, not an
@@ -61,12 +64,14 @@ ALREADY_DONE = {
     CheckAction.CHECK: {RunOrderState.LOADED},
     CheckAction.RECHECK: {RunOrderState.LOADED},
     CheckAction.UNCHECK: {RunOrderState.TO_LOAD, RunOrderState.NEW},
+    CheckAction.UNLOAD: {RunOrderState.MOVED},
 }
 
 ACTION_EVENTS = {
     CheckAction.CHECK: ("order_checked", "loaded"),
     CheckAction.RECHECK: ("order_rechecked", "re-checked"),
     CheckAction.UNCHECK: ("order_unchecked", "unchecked"),
+    CheckAction.UNLOAD: ("order_unloaded", "off truck"),
 }
 
 
@@ -439,10 +444,13 @@ class LoaderService:
                 # which is what a replay is matched against.
                 logged_as = CheckAction.RECHECK if was_re_check else action
                 event_type, verb = ACTION_EVENTS[logged_as]
+                message = f"{order_number} {verb}"
+                if action == CheckAction.UNLOAD:
+                    message += f", back in {LoaderService.return_area(row.order)}"
                 LoaderService.log(
                     db, run, at=now, actor_kind=ActorKind.LOADER,
                     event_type=event_type, actor_id=actor.id if actor else None,
-                    order_id=row.order_id, message=f"{order_number} {verb}",
+                    order_id=row.order_id, message=message,
                 )
                 db.flush()
         except IntegrityError:
@@ -502,6 +510,8 @@ class LoaderService:
     def _target_state(
         db: Session, run: DeliveryRun, row: RunStopOrder, action: CheckAction
     ) -> RunOrderState:
+        if action == CheckAction.UNLOAD:
+            return RunOrderState.MOVED
         if action != CheckAction.UNCHECK:
             return RunOrderState.LOADED
         # Unchecking returns the row to how the plan introduced it: an order the
@@ -620,6 +630,11 @@ class LoaderService:
             raise
 
         return run
+
+    @staticmethod
+    def return_area(order: Order) -> str:
+        """Where an unloaded order goes back to: chilled to the chiller dock."""
+        return "chiller" if order.temperature_class == TemperatureClass.CHILLED else "staging"
 
     @staticmethod
     def refresh_stop_status(stop: RunStop) -> None:

@@ -368,6 +368,7 @@ def test_dev_endpoints_are_not_mounted_in_production(monkeypatch):
             "/runs/{code}/orders/{order_number}/check",
             "/runs/{code}/orders/{order_number}/recheck",
             "/runs/{code}/plan/{version}/acknowledge",
+            "/runs/{code}/orders/{order_number}/unload",
         }
     finally:
         # Restore the module for the rest of the session.
