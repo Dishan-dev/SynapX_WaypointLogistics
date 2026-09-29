@@ -44,12 +44,12 @@ const statusPill: Record<RunStatus, { tone: LoaderPillTone; label: string }> = {
 
 const BRAND_LABELS = { fresh: "Fresh", style: "Style", tech: "Tech" } as const;
 
-// What tapping a row's check tile sends. re_check is left out for now: the
-// outbox sends check for it, which the API refuses (it confirms re_check with
-// POST .../recheck). Other states are not toggleable.
+// What tapping a row's check tile sends. A check on a re_check row confirms it
+// (the API takes it to loaded, as recheck does). Other states are not toggleable.
 const toggleAction: Partial<Record<OrderState, QueuedActionType>> = {
   to_load: "check",
   new: "check",
+  re_check: "check",
   loaded: "uncheck",
 };
 
