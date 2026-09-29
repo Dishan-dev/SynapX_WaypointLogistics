@@ -3,12 +3,21 @@
 Agreed shapes for the `/loader` endpoints, so L1–L9 can be built against the same
 responses. Base path: `/api/v1/loader`.
 
-Two halves:
+What is built now (merged into `loader`):
 
-- **Built (L0, L4)** — implemented and tested on `loader-sachintha`. Live now.
-- **Proposed** — Sanduni's features (L2, L3, L5, L6). **Written here for review,
-  not implemented.** Nothing on `loader-sachintha` creates these routes, schemas
-  or handlers. Change anything you disagree with before building.
+- **Built — backend endpoints, tested.** The run read (L4 checklist, with the L7
+  plan diff and release lock, `released_at` / `released_by` and `loaded_units`);
+  check · uncheck · recheck (L4); acknowledge · unload (L7); the issue read (L8);
+  both activity feeds (L9); the dev simulation endpoints.
+- **Built — service helpers for Sanduni's endpoints**, tested, no routes of
+  their own: `release_blockers` / `check_release_allowed` (409 `RELEASE_LOCKED`),
+  `check_undo_allowed` (409 `UNDO_WINDOW_EXPIRED`), `release_fields`,
+  `plan_updated_at` / `dock_plan_updated_at` — all on `LoaderService`. Each
+  proposed endpoint below names the helper it should call.
+- **Proposed — Sanduni's endpoints (L2, L3, L5, L6).** Her screens are built
+  against these shapes (the frontend's mock transport stands in for them), but
+  **no backend route exists yet**: users, session, queue, summary, flag,
+  issue list, release-summary, release, undo.
 
 All enum values are the wire values, lowercase with underscores.
 
@@ -40,6 +49,24 @@ The one exception is an outlet's delivery window (`window_start`,
 | `issue_status` | `sent` · `seen` · `decided` · `default_applied` |
 | `change_kind` | `unload_from_truck` · `dont_load` · `load_new` · `resequence` |
 | `actor_kind` | `loader` · `dispatcher` · `system` |
+| `wave` | `night` · `day` |
+| `stop_status` | `pending` · `loading` · `complete` |
+
+**`wave`** — Fresh runs on the night wave, Style and Tech on the day wave
+("Fresh · night wave", "Style & Tech · day wave" in Figma). The code agrees:
+the seed writes `night` / `day` and the frontend's `Wave` type is `"night" |
+"day"`. The column (`delivery_runs.wave`) is still free text, not a database
+enum; tightening it would need a migration.
+
+**`stop_status`** (`stops[].status`) — `pending` until something at the stop is
+aboard or resolved, `loading` once it is, `complete` when every active order
+there is `loaded` or `flagged`. The frontend types it as a plain `string` for
+now. **Figma does not use these words:** the stop header has no status, and
+the cab-to-door load map draws four segment states — a check (loaded),
+"loading", "NEW", and blank. `complete` is the check; "NEW" is not a status but
+`stops[].is_new` on a `pending` stop, and the load map derives its own
+`loaded · loading · new · pending` from the rows. Not changed; listed so the
+difference is decided on purpose.
 
 Two distinctions worth keeping:
 
@@ -196,7 +223,7 @@ checklist, with no `✕` and no tap-outside.
 
 ---
 
-## Built (L0) — live on `loader-sachintha`
+## Built — live on `loader`
 
 ### `GET /loader/runs/{code}` — L4 checklist
 
@@ -213,6 +240,8 @@ the truck from the cab outwards, which is the reverse of the driver's route:
   "wave": "night",
   "departs_at": "2026-05-27T22:00:00Z",    // 03:30 depot time
   "status": "loading",
+  "released_at": null,                   // see "Released" below
+  "released_by": null,                   // { "id": 1, "name": "Saman J." } once signed off
   "current_plan_version": 2,
   "dock": "Dock 3",
   "vehicle": {
@@ -265,7 +294,8 @@ the truck from the cab outwards, which is the reverse of the driver's route:
           "volume_m3": 3.2,
           "state": "loaded",
           "checked_at": "2026-05-27T20:11:00Z", // 01:41 depot time
-          "checked_by": "Saman J."
+          "checked_by": "Saman J.",
+          "loaded_units": 44                    // see "loaded_units" below
         }
       ]
     }
@@ -302,6 +332,24 @@ still to load — `orders_loaded` 3, `orders_checked` 4, `orders_total` 5.
   check and the loader must confirm it again.
 - `re_check` *does* count toward `capacity.loaded_*` — the goods are physically
   aboard, they just need re-confirming.
+
+**`loaded_units`** (int, on every order) — the units of that order actually on
+the truck ("53 of 56 units will be loaded"):
+
+| Row | `loaded_units` |
+| --- | --- |
+| `loaded`, `re_check`, `take_off` not yet unloaded | `units` — the goods are aboard |
+| `flagged` short · damaged · won't fit | `units − units_affected` of the order's latest issue (a flag without a count takes nothing off) |
+| `flagged` missing | `0` |
+| `to_load`, `new`, `moved` | `0` |
+
+**Released** — `released_at` (UTC, `Z`) and `released_by` (`{id, name}`, the
+loader's short name) say who signed the run off and when: "signed off by Saman
+J. 03:06". They are set **only while `status` is `ready_to_depart` or
+`gated_out`**, and `null` otherwise — before release, after an undo, and after
+a plan change reopens the run. The reopen time is kept for the takeover as
+`plan_change.was_ready_at`, not here. The queue card sends the same pair
+(`LoaderService.release_fields(run)` builds both).
 
 ### Plan diff — L7, on the same `GET /loader/runs/{code}`
 
@@ -604,6 +652,8 @@ Existing domain handlers, so the envelope matches the rest of the API:
 | 409 | `PLAN_NOT_ACKNOWLEDGED` | a row write while the current plan version is unread |
 | 409 | `CLIENT_ACTION_ID_REUSED` | a `client_action_id` sent again for a different action |
 | 422 | `PLAN_VERSION_MISMATCH` | acknowledge body `plan_version` ≠ `{version}` in the path |
+| 409 | `RELEASE_LOCKED` | `POST /release` while `release_blockers` is not empty — the list is in `detail` (L6, from `check_release_allowed`) |
+| 409 | `UNDO_WINDOW_EXPIRED` | `POST /release/undo` more than 10 s (+2 s grace) after `released_at` (L6, from `check_undo_allowed`) |
 
 ```jsonc
 { "detail": { "code": "NOT_FOUND", "message": "Run 'RUN-999' not found.",
@@ -612,11 +662,12 @@ Existing domain handlers, so the envelope matches the rest of the API:
 
 ---
 
-## Proposed — Sanduni's features (not implemented)
+## Proposed — Sanduni's endpoints (no backend route yet)
 
-> Sanduni: these are suggestions from the L0 data model, not decisions. The
-> fields all exist in the database, so anything here is buildable as written —
-> but change what does not suit the screens.
+> Sanduni's screens are built against these shapes through the mock transport;
+> the routes are hers to add. Every field exists in the database (no migration
+> needed), and where a rule is already coded the section names the
+> `LoaderService` helper to call rather than re-deriving it.
 
 ### `GET /loader/users` — L2 sign-in
 
@@ -658,9 +709,15 @@ it with `end_reason` of `idle_timeout`, `switch_user` or `sign_out`.
   "runs": 6,
   "loading": { "count": 2, "loaders": ["Saman", "Tharindu"] },
   "issues": { "count": 1, "label": "Awaiting decision" },
-  "ready": { "count": 1, "run_codes": ["RUN-022"] }
+  "ready": { "count": 1, "run_codes": ["RUN-022"] },
+  "plan_updated_at": "2026-05-27T20:44:00Z"   // latest plan publish across the dock
 }
 ```
+
+`plan_updated_at` (UTC, `Z`, nullable) drives "Plan from Dispatcher · updated
+02:14" on the queue: the latest publish time of any run's **current** plan at
+the dock — `LoaderService.dock_plan_updated_at(db, dock, run_ids)`, passing the
+ids of the runs the queue shows. `null` when none has a plan on record.
 
 ### `GET /loader/runs` — L3 queue
 
@@ -689,6 +746,10 @@ it with `end_reason` of `idle_timeout`, `switch_user` or `sign_out`.
           "orders_checked": 5,
           "orders_total": 8,
           "loader": "Saman J.",
+          "released_at": null,              // as on the run read: set only while ready_to_depart / gated_out
+          "released_by": null,              // { "id": 1, "name": "Saman J." }
+          "plan_updated_at": "2026-05-27T20:44:00Z",
+          "pre_stage_note": null,           // source TBD with dispatcher — always null for now
           "chips": ["Truck", "Reefer", "5,510 kg · 26.4 m³"],
           "alert": {
             "tone": "warning",
@@ -706,6 +767,15 @@ it with `end_reason` of `idle_timeout`, `switch_user` or `sign_out`.
 `alert` is nullable and drives the coloured row on the card. Suggested tones:
 `warning` for a plan change, `error` for a waiting issue, `success` for signed
 off, `neutral` for a pre-stage note.
+
+The per-card fields, and where each comes from:
+
+| Field | Source |
+| --- | --- |
+| `released_at`, `released_by` | `LoaderService.release_fields(run)` — the same rule as the run read |
+| `plan_updated_at` | `LoaderService.plan_updated_at(db, run)` — the current plan's publish time (UTC, `Z`); `null` if the run has none |
+| `pre_stage_note` | `string \| null`. **Source TBD with dispatcher** — no table holds it yet, so it is always `null` for now |
+| plan-change alert "Plan updated 02:14 · v2 → v3" | `plan_updated_at`, `acknowledged_plan_version` and `current_plan_version` (all on the run read) |
 
 ### `POST /loader/issues` — L5 flag
 
@@ -736,15 +806,38 @@ Release is **locked** while the run read's `release_blockers` lists anything
 (`release_locked: true`; see "Release lock" above). That covers the unread plan,
 waiting issues and open orders, plus the two plan-change tasks the older
 `orders_checked < orders_total` rule missed: an order still to take off
-(`take_off` is outside `orders_total`) and re-checks. `POST /release` should call
-`LoaderService.release_blockers(db, run)` and refuse (suggested: `409
-RELEASE_LOCKED` with the list) before writing anything.
+(`take_off` is outside `orders_total`) and re-checks.
 
-`POST /release` sets `released_at` / `released_by` and moves the run to
-`ready_to_depart`; `POST /release/undo` reverses it within the 10 s window, and
-should refuse once `gated_out_at` is set — after the gate it is the driver's job.
-It should also refuse unless the run is still `ready_to_depart`: a plan published
-inside the 10 s window has already reopened the run to `loading`.
+**`GET /release-summary`** should carry `release_blockers` in the same
+`[{code, count}]` shape (`LoaderService.release_blockers(db, run)`), so the
+screen and the 409 below agree.
+
+**`POST /release`** — call `LoaderService.check_release_allowed(db, run)`
+before writing anything. It raises `409 RELEASE_LOCKED` with the blockers inside
+`detail`:
+
+```jsonc
+→ 409 { "detail": { "code": "RELEASE_LOCKED",
+                    "message": "RUN-021 cannot be released yet.",
+                    "entity": "DeliveryRun", "entity_id": "RUN-021",
+                    "release_blockers": [ { "code": "unload_pending", "count": 1 },
+                                          { "code": "re_check_pending", "count": 2 } ] } }
+```
+
+Allowed: set `released_at` / `released_by_id` and move the run to
+`ready_to_depart`. The reads then send `released_at` / `released_by` (see
+"Released").
+
+**`POST /release/undo`** — call `LoaderService.check_undo_allowed(run)`. Undo is
+allowed only while **`status` is `ready_to_depart`** and **within 10 s of
+`released_at`** — the server allows **2 s grace** (12 s in all) so a tap in the
+last second over a slow link still lands.
+
+| Case | Response |
+| --- | --- |
+| inside the window | allowed — back to `loaded`, and clear `released_at` / `released_by_id` (the reads show `null` again) |
+| after 12 s | `409 UNDO_WINDOW_EXPIRED`, `detail` carries `released_at` (UTC `Z`) and `window_seconds: 10` |
+| any other status | `409 INVALID_STATE_TRANSITION` — a plan published inside the window has already reopened the run to `loading`, and after `gated_out` it is the Driver's |
 
 Both write a row to `run_release_actions` carrying the `client_action_id`. That
 table is append-only precisely because this pair repeats: release → undo →
@@ -763,3 +856,8 @@ release again is normal, and each is its own action with its own id.
 - **Issues tab, Log tab, More tab, bell notifications** are not designed yet.
 - **`resequence`** exists as a `change_kind` but nothing emits it yet; the
   dispatcher may need it when stop order changes without orders moving.
+- **`pre_stage_note`** on the queue card — where it comes from is TBD with the
+  dispatcher team; `null` until then.
+- **Stop status vs Figma** — see `stop_status` under Shared enums: the API's
+  `pending · loading · complete` against the load map's check / loading / NEW /
+  blank. Not changed yet.
