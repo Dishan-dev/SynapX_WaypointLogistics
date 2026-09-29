@@ -1,175 +1,51 @@
-// Loads one run for the checklist and turns GET /loader/runs/{code}
-// (RunDetailRead, docs/loader/API_CONTRACT.md) into the Run shape the loader
-// components and offline outbox work with. Vehicle limits keep their API names
-// (max_weight_kg, max_volume_m3), so the page does not change when the vehicles
-// table is merged with the dispatcher's.
+// Loads one run for the checklist through the loader transport, so reads use
+// the same switch (mock or API) and base URL as the offline outbox's writes.
+// Runs come back in the API shape (RunDetailRead, lib/loader/types.ts): no
+// adapting here.
 
-import { findMockRun } from "@/lib/loader/mock-data";
 import { getCachedRun } from "@/lib/loader/offline/db";
-import type {
-  Brand,
-  DockType,
-  LoadState,
-  Run,
-  RunStatus,
-  TemperatureClass,
-  VehicleType,
-} from "@/lib/loader/types";
-
-// Same switch and base URL as the outbox transport, so reads and writes always
-// go to the same place.
-const USE_API = process.env.NEXT_PUBLIC_LOADER_TRANSPORT === "api";
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
-
-
-interface RunDetailRead {
-  code: string;
-  trip_number: number;
-  brand: Brand;
-  district: string;
-  departs_at: string;
-  status: RunStatus;
-  current_plan_version: number;
-  vehicle: {
-    code: string;
-    vehicle_type: VehicleType;
-    temp_capability: "reefer" | "ambient";
-    max_weight_kg: number;
-    max_volume_m3: number;
-  };
-  plan: {
-    version: number;
-    published_at: string;
-    acknowledged_at: string | null;
-    acknowledged_by: string | null;
-  } | null;
-  stops: {
-    stop_sequence: number;
-    load_position: number;
-    eta: string | null;
-    outlet: {
-      code: string;
-      brand: Brand;
-      dock_type: DockType;
-      van_only: boolean;
-      window_start: string | null;
-      window_end: string | null;
-    };
-    orders: {
-      order_number: string;
-      temperature_class: TemperatureClass | null;
-      units: number | null;
-      weight_kg: number | null;
-      volume_m3: number | null;
-      state: LoadState;
-      checked_at: string | null;
-      checked_by: string | null;
-    }[];
-  }[];
-}
+import { NetworkError, type Transport } from "@/lib/loader/offline/transport";
+import type { Run } from "@/lib/loader/types";
 
 export type LoadResult =
-  | { kind: "ok"; run: Run; offline: boolean }
+  | { kind: "ok"; run: Run }
   | { kind: "not_found" }
   | { kind: "unavailable" };
 
 /**
- * The API sends UTC with a Z ("2026-05-27T22:00:00Z"); the loader formatters
- * show it in depot time (Asia/Colombo). A time without an offset is UTC by the
- * same convention, so it is marked as such rather than left for the browser
- * to read as its own local time.
+ * The run from the server, or this tablet's cached copy when the server
+ * cannot be reached. useOfflineRun takes it from there (server copy vs local
+ * copy with pending actions).
  */
-function utcTime(iso: string): string;
-function utcTime(iso: string | null): string | undefined;
-function utcTime(iso: string | null): string | undefined {
-  if (!iso) return undefined;
-  return /(Z|[+-]\d\d:\d\d)$/.test(iso) ? iso : `${iso}Z`;
-}
-
-/** "05:00:00" -> "05:00" */
-function hhmm(time: string | null): string {
-  return time ? time.slice(0, 5) : "";
-}
-
-export function runFromApi(detail: RunDetailRead): Run {
-  const plan = detail.plan;
-  const acknowledged = plan?.acknowledged_at ? plan : undefined;
-  return {
-    run_code: detail.code,
-    trip_number: detail.trip_number,
-    vehicle: {
-      vehicle_code: detail.vehicle.code,
-      vehicle_type: detail.vehicle.vehicle_type,
-      is_reefer: detail.vehicle.temp_capability === "reefer",
-      max_weight_kg: detail.vehicle.max_weight_kg,
-      max_volume_m3: detail.vehicle.max_volume_m3,
-    },
-    brand: detail.brand,
-    area: detail.district,
-    departs_at: utcTime(detail.departs_at),
-    status: detail.status,
-    plan_version: detail.current_plan_version,
-    plan_updated_at: utcTime(plan?.published_at ?? detail.departs_at),
-    acknowledged_plan_version: acknowledged?.version,
-    acknowledged_by: acknowledged?.acknowledged_by ?? undefined,
-    acknowledged_at: utcTime(acknowledged?.acknowledged_at ?? null),
-    stops: detail.stops.map((stop) => ({
-      stop_sequence: stop.stop_sequence,
-      load_position: stop.load_position,
-      // A stop a plan change added has no ETA yet; the view shows it without one.
-      eta: utcTime(stop.eta) ?? "",
-      outlet: {
-        outlet_code: stop.outlet.code,
-        brand: stop.outlet.brand,
-        dock_type: stop.outlet.dock_type,
-        window_start: hhmm(stop.outlet.window_start),
-        window_end: hhmm(stop.outlet.window_end),
-        van_only: stop.outlet.van_only,
-      },
-      orders: stop.orders.map((order) => ({
-        order_number: order.order_number,
-        outlet_code: stop.outlet.code,
-        temperature_class: order.temperature_class ?? "ambient",
-        units: order.units ?? 0,
-        weight_kg: order.weight_kg ?? 0,
-        volume_m3: order.volume_m3 ?? 0,
-        load_state: order.state,
-        checked_at: utcTime(order.checked_at),
-        checked_by: order.checked_by ?? undefined,
-      })),
-    })),
-  };
-}
-
-async function cachedRun(code: string): Promise<LoadResult> {
+export async function loadRun(code: string, transport: Transport): Promise<LoadResult> {
   try {
-    const run = await getCachedRun(code);
-    return run ? { kind: "ok", run, offline: true } : { kind: "unavailable" };
-  } catch {
-    return { kind: "unavailable" };
+    const run = await transport.fetchRun(code);
+    return run ? { kind: "ok", run } : { kind: "not_found" };
+  } catch (err) {
+    if (!(err instanceof NetworkError)) throw err;
   }
+  try {
+    const cached = await getCachedRun(code);
+    if (cached) return { kind: "ok", run: cached };
+  } catch {
+    // No IndexedDB: nothing cached.
+  }
+  return { kind: "unavailable" };
 }
 
 /**
- * The run from the API, falling back to this tablet's cached copy when the
- * server cannot be reached. Uses mock data when the outbox is on the mock
- * transport, so reads and writes stay on the same side.
+ * orders_loaded: "loaded" orders only (not flagged, not re_check), out of the
+ * active orders - the contract's rule. The API sends it, but lib/loader's Run
+ * type does not have the field yet and the outbox's local recompute does not
+ * maintain it, so it is counted from the rows; that is the same rule, and it
+ * follows taps made before they sync.
  */
-export async function loadRun(code: string): Promise<LoadResult> {
-  if (!USE_API) {
-    const run = findMockRun(code);
-    return run ? { kind: "ok", run, offline: false } : { kind: "not_found" };
+export function ordersLoaded(run: Run): number {
+  let loaded = 0;
+  for (const stop of run.stops) {
+    for (const order of stop.orders) {
+      if (order.state === "loaded") loaded += 1;
+    }
   }
-
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/api/v1/loader/runs/${encodeURIComponent(code)}`, {
-      cache: "no-store",
-    });
-  } catch {
-    return cachedRun(code);
-  }
-  if (res.status === 404) return { kind: "not_found" };
-  if (!res.ok) return cachedRun(code);
-  return { kind: "ok", run: runFromApi((await res.json()) as RunDetailRead), offline: false };
+  return loaded;
 }

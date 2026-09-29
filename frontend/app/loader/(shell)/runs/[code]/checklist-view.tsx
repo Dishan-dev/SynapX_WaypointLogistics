@@ -12,10 +12,11 @@ import { LoaderCard } from "@/components/loader/loader-card";
 import { LoaderPill, type LoaderPillTone } from "@/components/loader/loader-pill";
 import { LoaderScreen } from "@/components/loader/loader-screen";
 import { useLoaderShell } from "@/components/loader/loader-shell";
-import { useOfflineRun } from "@/components/loader/loader-sync-provider";
+import { useLoaderSync, useOfflineRun } from "@/components/loader/loader-sync-provider";
 import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import {
+  formatClock,
   formatKg,
   formatM3,
   formatTime,
@@ -24,14 +25,11 @@ import {
   loadOrderLabel,
   planSource,
   runCapacity,
-  runSummary,
-  runTotals,
   stopsInLoadOrder,
   stopTitle,
-  type RunTotals,
 } from "@/lib/loader/format";
-import type { LoadState, QueuedActionType, Run, RunStatus, RunStop } from "@/lib/loader/types";
-import { loadRun, type LoadResult } from "./checklist-data";
+import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus, RunStop } from "@/lib/loader/types";
+import { loadRun, ordersLoaded, type LoadResult } from "./checklist-data";
 import { reviewHref } from "./routes";
 
 // Same labels and tones as the queue's run card.
@@ -44,12 +42,15 @@ const statusPill: Record<RunStatus, { tone: LoaderPillTone; label: string }> = {
   gated_out: { tone: "neutral", label: "Gated out" },
 };
 
-// What tapping a row's check tile sends. Other states are not toggleable.
-const toggleAction: Partial<Record<LoadState, QueuedActionType>> = {
+const BRAND_LABELS = { fresh: "Fresh", style: "Style", tech: "Tech" } as const;
+
+// What tapping a row's check tile sends. re_check is left out for now: the
+// outbox sends check for it, which the API refuses (it confirms re_check with
+// POST .../recheck). Other states are not toggleable.
+const toggleAction: Partial<Record<OrderState, QueuedActionType>> = {
   to_load: "check",
   new: "check",
   loaded: "uncheck",
-  re_check: "recheck",
 };
 
 // Once signed off or through the gate the checklist is read-only; reopening
@@ -57,17 +58,18 @@ const toggleAction: Partial<Record<LoadState, QueuedActionType>> = {
 const CLOSED: RunStatus[] = ["ready_to_depart", "gated_out"];
 
 export function ChecklistView({ code }: { code: string }) {
+  const { transport } = useLoaderSync();
   const [result, setResult] = React.useState<LoadResult>();
 
   React.useEffect(() => {
     let cancelled = false;
-    void loadRun(code).then((loaded) => {
+    void loadRun(code, transport).then((loaded) => {
       if (!cancelled) setResult(loaded);
     });
     return () => {
       cancelled = true;
     };
-  }, [code]);
+  }, [code, transport]);
 
   if (!result) {
     return (
@@ -102,26 +104,27 @@ export function ChecklistView({ code }: { code: string }) {
 
 function Checklist({ initial }: { initial: Run }) {
   const router = useRouter();
-  const { user, dockLabel } = useLoaderShell();
+  const { user } = useLoaderShell();
   const { run, act } = useOfflineRun(initial, user.shortName);
 
-  const summary = runSummary(run);
-  const totals = runTotals(run);
   const capacity = runCapacity(run);
   const stops = stopsInLoadOrder(run.stops);
   const slots = loadMapSlots(run);
   const status = statusPill[run.status];
   const closed = CLOSED.includes(run.status);
-  const reviewUnlocked = totals.orders > 0 && totals.resolved === totals.orders && !closed;
-  const dockName = dockLabel.split(" · ").pop() ?? dockLabel;
-  const href = reviewHref(run.run_code);
+  const loaded = ordersLoaded(run);
+  const { orders_checked: checked, orders_total: total } = run;
+  const reviewUnlocked = total > 0 && checked === total && !closed;
+  const vehicleLabel = run.vehicle.vehicle_type === "van" ? "Van" : "Truck";
+  const reefer = run.vehicle.temp_capability === "reefer";
+  const href = reviewHref(run.code);
 
   React.useEffect(() => {
     if (reviewUnlocked) router.prefetch(href);
   }, [reviewUnlocked, router, href]);
 
-  const onToggle = (order: { order_number: string; load_state: LoadState }) => {
-    const action = toggleAction[order.load_state];
+  const onToggle = (order: RunOrder) => {
+    const action = toggleAction[order.state];
     if (action) void act(action, { order_number: order.order_number });
   };
 
@@ -132,16 +135,16 @@ function Checklist({ initial }: { initial: Run }) {
         disabled={!reviewUnlocked}
         onClick={() => router.push(href)}
       >
-        Review &amp; confirm · {totals.resolved} of {totals.orders}
+        Review &amp; confirm · {checked} of {total}
       </LoaderButton>
-      <p className="text-xs leading-[17px] text-muted-foreground">{footerHint(run, totals)}</p>
+      <p className="text-xs leading-[17px] text-muted-foreground">{footerHint(run)}</p>
     </div>
   );
 
   return (
     <LoaderScreen
       title="Loading checklist"
-      subtitle={`${run.run_code} · ${dockName} · ${user.shortName}`}
+      subtitle={`${run.code} · ${run.dock} · ${user.shortName}`}
       plan={planSource(run)}
       footer={footer}
     >
@@ -159,16 +162,16 @@ function Checklist({ initial }: { initial: Run }) {
               href="/loader"
               className="w-fit rounded-sm text-xs leading-[17px] font-medium text-muted-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
             >
-              Queue / {run.run_code}
+              Queue / {run.code}
             </Link>
             <h1 className="text-xl leading-[26px] font-semibold text-primary">
-              {run.vehicle.vehicle_code} · Trip {run.trip_number}
+              {run.vehicle.code} · Trip {run.trip_number}
               <span className="hidden md:inline"> · Loading checklist</span>
             </h1>
             <div className="flex flex-wrap items-center gap-1.5">
               <LoaderPill tone={status.tone}>{status.label}</LoaderPill>
-              <InfoChip icon={<Truck />}>{summary.vehicleLabel}</InfoChip>
-              {summary.reefer && (
+              <InfoChip icon={<Truck />}>{vehicleLabel}</InfoChip>
+              {reefer && (
                 <InfoChip tone="info" icon={<Snowflake />}>
                   Reefer
                 </InfoChip>
@@ -178,9 +181,10 @@ function Checklist({ initial }: { initial: Run }) {
               </InfoChip>
             </div>
             <p className="text-xs leading-[17px] text-muted-foreground">
-              {summary.subtitle} · departs {summary.departs}
+              {BRAND_LABELS[run.brand]} · {run.district} · {run.stops.length} stops · departs{" "}
+              {formatTime(run.departs_at)}
               <span className="hidden md:inline">
-                {" "}· {totals.loaded} of {totals.orders} orders in
+                {" "}· {loaded} of {total} orders in
               </span>
             </p>
           </header>
@@ -188,8 +192,8 @@ function Checklist({ initial }: { initial: Run }) {
           <div className="flex flex-col gap-4 md:hidden">
             <CapacityCard {...capacity} />
             <LoaderCard
-              title={`${summary.vehicleLabel}, cab to door`}
-              description={`${totals.loaded} of ${totals.orders} orders in · ${loadMapHint(run, totals)}`}
+              title={`${vehicleLabel}, cab to door`}
+              description={`${loaded} of ${total} orders in · ${loadMapHint(run, loaded)}`}
             >
               <LoadMap slots={slots} spareM3={capacity.spareM3} orientation="horizontal" />
             </LoaderCard>
@@ -198,7 +202,7 @@ function Checklist({ initial }: { initial: Run }) {
           {stops.map((stop) => (
             <section
               key={stop.stop_sequence}
-              aria-label={`Stop ${stop.stop_sequence}, ${stop.outlet.outlet_code}`}
+              aria-label={`Stop ${stop.stop_sequence}, ${stop.outlet.code}`}
               className="flex flex-col gap-2"
             >
               {stop.eta ? (
@@ -210,7 +214,7 @@ function Checklist({ initial }: { initial: Run }) {
                 <OrderRow
                   key={order.order_number}
                   order={order}
-                  onToggle={closed ? undefined : onToggle}
+                  onToggle={closed || !toggleAction[order.state] ? undefined : onToggle}
                   // Flag stays disabled until Sanduni's flag sheet (L5) lands; then pass onFlag.
                 />
               ))}
@@ -223,11 +227,15 @@ function Checklist({ initial }: { initial: Run }) {
 }
 
 /**
- * StopHeader for a stop a plan change just added, which has no ETA yet.
- * StopHeader formats stop.eta unconditionally, and an empty one throws.
+ * StopHeader for a stop a plan change just added, which has no ETA yet. The
+ * API sends eta: null there, and StopHeader formats the ETA unconditionally.
  */
 function StopHeaderWithoutEta({ stop, stopCount }: { stop: RunStop; stopCount: number }) {
-  const details = [stop.outlet.dock_type, `${stop.outlet.window_start}–${stop.outlet.window_end}`, "ETA pending"];
+  const details = [
+    stop.outlet.dock_type,
+    `${formatClock(stop.outlet.window_start)}–${formatClock(stop.outlet.window_end)}`,
+    "ETA pending",
+  ];
   if (stop.note) details.push(stop.note);
   return (
     <div className="flex flex-col gap-1 pt-1">
@@ -242,43 +250,37 @@ function StopHeaderWithoutEta({ stop, stopCount }: { stop: RunStop; stopCount: n
   );
 }
 
-/** Stops whose active orders still need the loader, in load order. */
-function openStops(run: Run): RunStop[] {
-  return stopsInLoadOrder(run.stops).filter((stop) =>
-    stop.orders.some((o) => isActiveOrder(o) && o.load_state !== "loaded" && o.load_state !== "flagged"),
-  );
+/** Active orders that still need the loader (not loaded, not flagged). */
+function openOrders(run: Run): RunOrder[] {
+  return run.stops
+    .flatMap((s) => s.orders)
+    .filter((o) => isActiveOrder(o) && o.state !== "loaded" && o.state !== "flagged");
 }
 
 function onlyNewOrdersLeft(run: Run): boolean {
-  const open = run.stops.flatMap((s) => s.orders).filter(
-    (o) => isActiveOrder(o) && o.load_state !== "loaded" && o.load_state !== "flagged",
-  );
-  return open.length > 0 && open.every((o) => o.load_state === "new");
+  const open = openOrders(run);
+  return open.length > 0 && open.every((o) => o.state === "new");
 }
 
 /** Second line of the cab-to-door card (Figma 1c, 1c.1, 9, 10). */
-function loadMapHint(run: Run, totals: RunTotals): string {
-  if (totals.orders > 0 && totals.resolved === totals.orders) return "close the door";
+function loadMapHint(run: Run, loaded: number): string {
+  if (run.orders_total > 0 && run.orders_checked === run.orders_total) return "close the door";
   if (onlyNewOrdersLeft(run)) return "new order goes by the door";
-  const next = openStops(run)[0];
+  const next = stopsInLoadOrder(run.stops).find((stop) =>
+    stop.orders.some((o) => isActiveOrder(o) && o.state !== "loaded" && o.state !== "flagged"),
+  );
   if (!next) return "nothing to load";
-  return totals.loaded === 0
-    ? `start at the cab with Stop ${next.stop_sequence}`
-    : `next: Stop ${next.stop_sequence}`;
+  return loaded === 0 ? `start at the cab with Stop ${next.stop_sequence}` : `next: Stop ${next.stop_sequence}`;
 }
 
 /** Line under the review button (Figma 1c, 1c.1, 9, 10, 16). */
-function footerHint(run: Run, totals: RunTotals): string {
-  if (CLOSED.includes(run.status)) {
-    return run.signed_off_by && run.signed_off_at
-      ? `Signed off by ${run.signed_off_by} at ${formatTime(run.signed_off_at)}. The checklist is closed.`
-      : "Signed off. The checklist is closed.";
-  }
-  if (totals.orders > 0 && totals.resolved === totals.orders) {
-    const flagged = totals.resolved - totals.loaded;
-    const done = flagged ? "checked or flagged" : "checked";
-    return `All ${totals.orders} orders ${done}. Review once, then release.`;
+function footerHint(run: Run): string {
+  if (CLOSED.includes(run.status)) return `${statusPill[run.status].label}. The checklist is closed.`;
+  const { orders_checked: checked, orders_total: total } = run;
+  if (total > 0 && checked === total) {
+    const done = checked > ordersLoaded(run) ? "checked or flagged" : "checked";
+    return `All ${total} orders ${done}. Review once, then release.`;
   }
   if (onlyNewOrdersLeft(run)) return "Load the new order by the door to unlock.";
-  return `Unlocks when all ${totals.orders} orders are checked or flagged.`;
+  return `Unlocks when all ${total} orders are checked or flagged.`;
 }
