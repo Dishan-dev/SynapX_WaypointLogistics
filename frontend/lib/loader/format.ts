@@ -139,12 +139,12 @@ export function stopTitle(stop: RunStop): string {
   return `Stop ${stop.stop_sequence} · ${stop.outlet.code}${stop.is_new ? " · NEW STOP" : ""}`;
 }
 
-/** "rear_dock · 03:00–08:00 · ETA 05:20 · 1 dry + 1 chilled" */
+/** "rear_dock · 03:00–08:00 · ETA 05:20 · 1 dry + 1 chilled" ("ETA pending" without one) */
 export function formatStopDetails(stop: RunStop): string {
   const parts = [
     stop.outlet.dock_type,
     `${formatClock(stop.outlet.window_start)}–${formatClock(stop.outlet.window_end)}`,
-    `ETA ${formatTime(stop.eta)}`,
+    stop.eta ? `ETA ${formatTime(stop.eta)}` : "ETA pending",
   ];
   if (stop.note) parts.push(stop.note);
   return parts.join(" · ");

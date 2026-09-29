@@ -97,7 +97,8 @@ export interface RunStop {
   stop_sequence: number;
   /** Load order: 1 is loaded first (deepest, by the cab). */
   load_position: number;
-  eta: string;
+  /** Null for a stop a plan change just added, until it is routed. */
+  eta: string | null;
   handling_minutes: number;
   /** Values are not listed in the contract ("pending" in the example). */
   status: string;
