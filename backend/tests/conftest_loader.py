@@ -252,3 +252,31 @@ def build_run_021(db):
     make_revision(db, run, version=2, acknowledged_by=loader)
     db.flush()
     return run, orders
+
+
+def put_on_truck(db, run, number, checked_at="02:12"):
+    """Load an order on the run's current plan without going through the API.
+
+    build_run_021 (like the seed, which matches the design's 1c capacity bars)
+    has ORD0092308 still in staging at v2, while the plan-change frames have it
+    loaded deepest when v3 asks for it back.
+    """
+    from sqlalchemy import select
+
+    from app.services.loader_service import LoaderService
+
+    row = db.execute(
+        select(RunStopOrder)
+        .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+        .join(Order, RunStopOrder.order_id == Order.id)
+        .where(
+            RunStop.run_id == run.id,
+            RunStop.plan_version == run.current_plan_version,
+            Order.order_number == number,
+        )
+    ).scalars().one()
+    row.state = RunOrderState.LOADED
+    row.checked_at = at(checked_at)
+    LoaderService.recalculate_capacity(db, run)
+    db.flush()
+    return row
