@@ -89,7 +89,8 @@ export function requestFor(action: QueuedAction): ActionRequest {
 
 // ---- Optimistic apply --------------------------------------------------
 
-// uncheck goes back to to_load here; the server sends a new order back to
+// check confirms a re_check row too (the checklist sends check for every
+// tap); recheck is the explicit form. uncheck goes back to to_load here; the server sends a new order back to
 // new, and its copy replaces this one after the sync.
 const ORDER_STATE_AFTER: Partial<Record<QueuedActionType, OrderState>> = {
   check: "loaded",

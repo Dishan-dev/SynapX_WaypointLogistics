@@ -57,6 +57,8 @@ export function KitView() {
   const [query, setQuery] = useState("");
   const [pin, setPin] = useState("");
   const [picked, setPicked] = useState(false);
+  // re_check rows: the checklist sends check; recheck is the explicit write.
+  const [recheckVerb, setRecheckVerb] = useState<"check" | "recheck">("check");
   const { user } = useLoaderShell();
   const { sync, flush } = useLoaderSync();
   const offline = useOfflineRun(initialRun, user.shortName);
@@ -81,7 +83,7 @@ export function KitView() {
               order={o}
               onToggle={(order) =>
                 void offline.act(
-                  order.state === "loaded" ? "uncheck" : order.state === "re_check" ? "recheck" : "check",
+                  order.state === "loaded" ? "uncheck" : order.state === "re_check" ? recheckVerb : "check",
                   { order_number: order.order_number },
                 )
               }
@@ -90,6 +92,15 @@ export function KitView() {
           )),
         )}
         <div className="flex flex-wrap items-center gap-3">
+          <label className="flex min-h-12 items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              className="size-5 accent-primary"
+              checked={recheckVerb === "recheck"}
+              onChange={(e) => setRecheckVerb(e.target.checked ? "recheck" : "check")}
+            />
+            Send recheck for re_check rows
+          </label>
           {MOCK_TRANSPORT && (
             <LoaderButton
               variant="secondary"

@@ -150,11 +150,12 @@ function errorResponse(status: number, code: string, message: string, extra: obj
 }
 
 // Row states each L4 write starts from (API_CONTRACT.md "Check · uncheck ·
-// recheck"). A row already where the write would put it is a no-op.
+// recheck"). check also confirms a re_check row, as recheck does. A row
+// already where the write would put it is a no-op.
 const ORDER_WRITES: Partial<Record<QueuedActionType, { from: OrderState[]; noop: OrderState[] }>> = {
-  check: { from: ["to_load", "new"], noop: ["loaded"] },
+  check: { from: ["to_load", "new", "re_check"], noop: ["loaded"] },
   uncheck: { from: ["loaded"], noop: ["to_load", "new"] },
-  recheck: { from: ["re_check"], noop: [] },
+  recheck: { from: ["re_check"], noop: ["loaded"] },
 };
 
 /** How the mock server answers an order write: an error, a no-op, or undefined to apply it. */
