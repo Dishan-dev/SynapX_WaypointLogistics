@@ -25,6 +25,8 @@ from app.models.delivery_run import (
     StopStatus,
 )
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
+from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
+from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck
 
 __all__ = [
     "User",
@@ -61,4 +63,14 @@ __all__ = [
     "PlanChangeKind",
     "PlanRevision",
     "PlanRevisionChange",
+    # Loader issues and decisions
+    "IssueStatus",
+    "IssueType",
+    "LoaderIssue",
+    "LoaderIssueOption",
+    # Loader audit trail
+    "ActorKind",
+    "CheckAction",
+    "LoaderActivity",
+    "LoadingCheck",
 ]
