@@ -297,6 +297,17 @@ export function mockTransport(latencyMs = 300): Transport {
         );
       }
 
+      // L7: row writes wait for the acknowledgement (a replay already answered above).
+      if (ORDER_WRITES[action.action_type] || action.action_type === "unload") {
+        if (run.unacknowledged_plan_version !== null) {
+          return errorResponse(409, "PLAN_NOT_ACKNOWLEDGED", `Plan v${run.unacknowledged_plan_version} has not been acknowledged.`, {
+            entity: "DeliveryRun",
+            entity_id: run.code,
+            unacknowledged_plan_version: run.unacknowledged_plan_version,
+          });
+        }
+      }
+
       const outcome = orderWriteOutcome(run, action);
       if (outcome === "noop") return ok(run);
       if (outcome) return outcome;

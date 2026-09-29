@@ -1,7 +1,7 @@
 // Sends the outbox in order. Stops at the first network or server error so
 // later actions never overtake earlier ones.
 
-import type { ConflictCode, QueuedAction, QueuedActionPayload } from "../types";
+import { isPlanConflict, type ConflictCode, type QueuedAction, type QueuedActionPayload } from "../types";
 import { deleteOutboxAction, listOutbox, putOutboxAction } from "./db";
 import { requestFor } from "./outbox";
 import { NetworkError, type Transport, type TransportResponse } from "./transport";
@@ -10,7 +10,7 @@ export interface FlushResult {
   sent: number;
   /** Stopped because the server could not be reached. */
   offline: boolean;
-  /** Runs with a write refused as PLAN_VERSION_STALE during this flush. */
+  /** Runs with a write refused because the plan moved on during this flush. */
   staleRuns: string[];
 }
 
@@ -28,7 +28,12 @@ function detail(body: unknown, fallback: string): string {
   return fallback;
 }
 
-const CONFLICT_CODES: ConflictCode[] = ["PLAN_VERSION_STALE", "CLIENT_ACTION_ID_REUSED", "INVALID_STATE_TRANSITION"];
+const CONFLICT_CODES: ConflictCode[] = [
+  "PLAN_VERSION_STALE",
+  "PLAN_NOT_ACKNOWLEDGED",
+  "CLIENT_ACTION_ID_REUSED",
+  "INVALID_STATE_TRANSITION",
+];
 
 function conflictCode(d: Record<string, unknown> | undefined): ConflictCode {
   const code = d?.code as ConflictCode | undefined;
@@ -86,7 +91,8 @@ export async function flushOutbox(transport: Transport): Promise<FlushResult> {
       // 200 as a replay, since the replay check runs before the plan check.
       const d = errorDetail(res.body);
       const code = conflictCode(d);
-      if (code === "PLAN_VERSION_STALE") staleRuns.add(action.run_code);
+      // PLAN_NOT_ACKNOWLEDGED (L7) is the same story: a plan this tap never saw.
+      if (isPlanConflict(code)) staleRuns.add(action.run_code);
       if (code === "CLIENT_ACTION_ID_REUSED") console.error("Loader outbox reused a client_action_id", action);
       await putOutboxAction({
         ...action,
