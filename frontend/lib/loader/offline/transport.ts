@@ -2,7 +2,6 @@
 // /loader write endpoints exist; set NEXT_PUBLIC_LOADER_TRANSPORT=api to use
 // the real API at NEXT_PUBLIC_API_URL.
 
-import { findMockRun } from "../mock-data";
 import type { ActionRequest } from "./outbox";
 
 export interface TransportResponse {
@@ -69,9 +68,8 @@ function safeJson(text: string): unknown {
 }
 
 /**
- * Behaves like the agreed API: needs a reachable server, answers a replayed
- * client_action_id with the original result, and returns 409 when the action
- * was made against an older plan version than the run now has.
+ * Behaves like the write contract: needs a reachable server, and answers a
+ * replayed client_action_id with the original result and 200.
  */
 export function mockTransport(latencyMs = 300): Transport {
   const seen = new Map<string, TransportResponse>();
@@ -84,11 +82,7 @@ export function mockTransport(latencyMs = 300): Transport {
       const replay = seen.get(id);
       if (replay) return replay;
 
-      const run = findMockRun(String(body.run_code));
-      const response: TransportResponse =
-        run && Number(body.plan_version) < run.plan_version
-          ? { status: 409, body: { detail: `Plan changed to v${run.plan_version}` } }
-          : { status: 200, body: { client_action_id: id } };
+      const response: TransportResponse = { status: 200, body: { client_action_id: id } };
       seen.set(id, response);
       return response;
     },

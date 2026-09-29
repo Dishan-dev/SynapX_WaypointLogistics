@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Ellipsis, History, List, TriangleAlert, Truck } from "lucide-react";
 import { cn } from "cn";
 
-export type LoaderTab = "queue" | "loading" | "issues" | "log";
+export type LoaderTab = "queue" | "loading" | "issues" | "log" | "more";
 
 interface LoaderBottomNavProps {
   active?: LoaderTab;
@@ -11,7 +11,6 @@ interface LoaderBottomNavProps {
   loadingHref?: string;
   /** Open issues, shown as a count on the Issues tab. */
   issueCount?: number;
-  onMore: () => void;
   className?: string;
 }
 
@@ -23,7 +22,6 @@ export function LoaderBottomNav({
   active,
   loadingHref = "/loader",
   issueCount = 0,
-  onMore,
   className,
 }: LoaderBottomNavProps) {
   const tabs: { id: LoaderTab; label: string; href: string; icon: React.ReactNode }[] = [
@@ -31,6 +29,7 @@ export function LoaderBottomNav({
     { id: "loading", label: "Loading", href: loadingHref, icon: <Truck className="size-5" aria-hidden /> },
     { id: "issues", label: "Issues", href: "/loader/issues", icon: <TriangleAlert className="size-5" aria-hidden /> },
     { id: "log", label: "Log", href: "/loader/log", icon: <History className="size-5" aria-hidden /> },
+    { id: "more", label: "More", href: "/loader/more", icon: <Ellipsis className="size-5" aria-hidden /> },
   ];
 
   return (
@@ -58,14 +57,6 @@ export function LoaderBottomNav({
           </Link>
         );
       })}
-      <button
-        type="button"
-        onClick={onMore}
-        className={cn(tabClass, "text-muted-foreground hover:text-foreground")}
-      >
-        <Ellipsis className="size-5" aria-hidden />
-        More
-      </button>
     </nav>
   );
 }

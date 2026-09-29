@@ -1,30 +1,97 @@
-import type { IssueType, LoaderIssue, LoaderUser, Run, RunOrder, RunStop } from "./types";
+// Display helpers for loader screens. Components read API shapes only through
+// these functions, so a contract rename stays in lib/loader.
+
+import type {
+  LoaderSession,
+  LoaderUser,
+  Run,
+  RunOrder,
+  RunStop,
+  RunSummary,
+} from "./types";
+
+// ---- Time ------------------------------------------------------------------
 
 const TIME_ZONE = "Asia/Colombo";
 
-const timeFormat = new Intl.DateTimeFormat("en-GB", {
+const zonedParts = new Intl.DateTimeFormat("en-GB", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
   hour: "2-digit",
   minute: "2-digit",
   hourCycle: "h23",
   timeZone: TIME_ZONE,
 });
 
-const dayFormat = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  timeZone: TIME_ZONE,
-});
+interface LocalDateTime {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+}
 
-/** "03:30" in depot time. */
+/**
+ * Wall-clock parts of an API timestamp. The API sends depot local time without
+ * an offset ("2026-05-28T03:30:00"), which is read as-is so the tablet's own
+ * timezone never shifts it. Timestamps with an offset are converted to depot time.
+ */
+export function parseLocalDateTime(iso: string): LocalDateTime {
+  const naive = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
+  if (naive && !/(Z|[+-]\d{2}:?\d{2})$/.test(iso)) {
+    const [, y, mo, d, h, mi] = naive.map(Number);
+    return { year: y, month: mo, day: d, hour: h, minute: mi };
+  }
+  const parts = Object.fromEntries(
+    zonedParts.formatToParts(new Date(iso)).map((p) => [p.type, p.value]),
+  );
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+  };
+}
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** "03:30" */
 export function formatTime(iso: string): string {
-  return timeFormat.format(new Date(iso));
+  const t = parseLocalDateTime(iso);
+  return `${pad(t.hour)}:${pad(t.minute)}`;
 }
 
-/** "Thu 28 May" in depot time. */
+/** "Thu 28 May" */
 export function formatDay(iso: string): string {
-  return dayFormat.format(new Date(iso)).replace(",", "");
+  const t = parseLocalDateTime(iso);
+  const date = new Date(Date.UTC(t.year, t.month - 1, t.day));
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  })
+    .format(date)
+    .replace(",", "");
 }
+
+/** Delivery window time "05:00:00" → "05:00". */
+export function formatClock(hms: string): string {
+  return hms.slice(0, 5);
+}
+
+/** "Good night" / "Good morning" / … for a depot-time timestamp. */
+export function greeting(iso: string): string {
+  const { hour } = parseLocalDateTime(iso);
+  if (hour < 5 || hour >= 22) return "Good night";
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+// ---- Quantities -------------------------------------------------------------
 
 export function formatKg(kg: number): string {
   return `${kg.toLocaleString("en-US")} kg`;
@@ -40,6 +107,13 @@ export function formatOrderSize(
 ): string {
   return `${order.units} units · ${formatKg(order.weight_kg)} · ${formatM3(order.volume_m3)}`;
 }
+
+/** Whole-number percentage of a limit, e.g. 85. */
+export function percentOf(value: number, max: number): number {
+  return max > 0 ? Math.round((value / max) * 100) : 0;
+}
+
+// ---- Stops and orders ---------------------------------------------------------
 
 function ordinal(n: number): string {
   const tens = n % 100;
@@ -62,81 +136,97 @@ export function stopsInLoadOrder(stops: RunStop[]): RunStop[] {
   return [...stops].sort((a, b) => a.load_position - b.load_position);
 }
 
-/**
- * Status line under an order: the order's note when it has one, otherwise
- * "Loaded 01:41 · Saman J." (or "Re-checked …" after a plan change).
- */
-export function orderStatusLine(order: RunOrder): string | undefined {
-  if (order.note) return order.note;
-  if (order.load_state !== "loaded" || !order.checked_at) return undefined;
-  const verb = order.changed_in_version ? "Re-checked" : "Loaded";
-  const by = order.checked_by ? ` · ${order.checked_by}` : "";
-  return `${verb} ${formatTime(order.checked_at)}${by}`;
+/** "Stop 1 · OUT028 · NEW STOP" */
+export function stopTitle(stop: RunStop): string {
+  return `Stop ${stop.stop_sequence} · ${stop.outlet.code}${stop.is_new ? " · NEW STOP" : ""}`;
 }
 
 /** "rear_dock · 03:00–08:00 · ETA 05:20 · 1 dry + 1 chilled" */
 export function formatStopDetails(stop: RunStop): string {
   const parts = [
     stop.outlet.dock_type,
-    `${stop.outlet.window_start}–${stop.outlet.window_end}`,
+    `${formatClock(stop.outlet.window_start)}–${formatClock(stop.outlet.window_end)}`,
     `ETA ${formatTime(stop.eta)}`,
   ];
   if (stop.note) parts.push(stop.note);
   return parts.join(" · ");
 }
 
-/** Orders that are part of the current plan and must be resolved before release. */
+/**
+ * Status line under an order: its note, where it moved to, or
+ * "Loaded 01:41 · Saman J." ("Re-checked …" after a plan change).
+ */
+export function orderStatusLine(order: RunOrder): string | undefined {
+  if (order.note) return order.note;
+  if (order.moved_to) return `Moved to ${order.moved_to}`;
+  if (order.state !== "loaded" || !order.checked_at) return undefined;
+  const verb = order.changed_in_version ? "Re-checked" : "Loaded";
+  const by = order.checked_by ? ` · ${order.checked_by}` : "";
+  return `${verb} ${formatTime(order.checked_at)}${by}`;
+}
+
+/** Still an order to load: take_off and moved are excluded (contract counting rules). */
 export function isActiveOrder(order: RunOrder): boolean {
-  return order.load_state !== "moved" && order.load_state !== "take_off";
+  return order.state !== "moved" && order.state !== "take_off";
 }
 
-export interface RunTotals {
-  /** Active orders on the plan. */
-  orders: number;
-  /** Active orders checked onto the vehicle. */
-  loaded: number;
-  /** Active orders loaded or flagged, i.e. no longer blocking review. */
-  resolved: number;
-  loadedKg: number;
-  loadedM3: number;
-  plannedKg: number;
-  plannedM3: number;
-}
+// ---- Counts and capacity ----------------------------------------------------------
 
-export function runTotals(run: Run): RunTotals {
-  const totals: RunTotals = {
-    orders: 0,
-    loaded: 0,
-    resolved: 0,
-    loadedKg: 0,
-    loadedM3: 0,
-    plannedKg: 0,
-    plannedM3: 0,
-  };
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+/**
+ * Recompute a run's counts and capacity from its orders, following the
+ * contract's counting rules. The server's values are used as sent; this is
+ * only for runs changed locally by offline actions.
+ *
+ * - orders_total excludes take_off and moved
+ * - orders_checked counts loaded and flagged (not re_check)
+ * - loaded capacity counts loaded and re_check (goods are aboard)
+ */
+export function withRecomputedCounts(run: Run): Run {
+  let total = 0;
+  let checked = 0;
+  let loadedKg = 0;
+  let loadedM3 = 0;
+  let plannedKg = 0;
+  let plannedM3 = 0;
   for (const stop of run.stops) {
     for (const order of stop.orders) {
       if (!isActiveOrder(order)) continue;
-      totals.orders += 1;
-      totals.plannedKg += order.weight_kg;
-      totals.plannedM3 += order.volume_m3;
-      if (order.load_state === "loaded") {
-        totals.loaded += 1;
-        totals.loadedKg += order.weight_kg;
-        totals.loadedM3 += order.volume_m3;
-      }
-      if (order.load_state === "loaded" || order.load_state === "flagged") {
-        totals.resolved += 1;
+      total += 1;
+      plannedKg += order.weight_kg;
+      plannedM3 += order.volume_m3;
+      if (order.state === "loaded" || order.state === "flagged") checked += 1;
+      if (order.state === "loaded" || order.state === "re_check") {
+        loadedKg += order.weight_kg;
+        loadedM3 += order.volume_m3;
       }
     }
   }
-  totals.loadedM3 = Math.round(totals.loadedM3 * 10) / 10;
-  totals.plannedM3 = Math.round(totals.plannedM3 * 10) / 10;
-  return totals;
+  return {
+    ...run,
+    orders_total: total,
+    orders_checked: checked,
+    capacity: {
+      ...run.capacity,
+      loaded_weight_kg: loadedKg,
+      loaded_volume_m3: round1(loadedM3),
+      planned_weight_kg: plannedKg,
+      planned_volume_m3: round1(plannedM3),
+    },
+  };
 }
 
-/** Whole-number percentage of a limit, e.g. 85. */
-export function percentOf(value: number, max: number): number {
-  return max > 0 ? Math.round((value / max) * 100) : 0;
+/** Capacity card props, from the run's server capacity. */
+export function runCapacity(run: Run) {
+  const c = run.capacity;
+  return {
+    vehicleCode: run.vehicle.code,
+    planVersion: run.current_plan_version,
+    weight: { loaded: c.loaded_weight_kg, planned: c.planned_weight_kg, max: c.max_weight_kg },
+    volume: { loaded: c.loaded_volume_m3, planned: c.planned_volume_m3, max: c.max_volume_m3 },
+    spareM3: Math.max(0, round1(c.max_volume_m3 - c.planned_volume_m3)),
+  };
 }
 
 export type LoadMapSlotState = "loaded" | "loading" | "new" | "pending";
@@ -153,169 +243,102 @@ export interface LoadMapSlot {
 export function loadMapSlots(run: Run): LoadMapSlot[] {
   return stopsInLoadOrder(run.stops).map((stop) => {
     const active = stop.orders.filter(isActiveOrder);
-    const loaded = active.filter((o) => o.load_state === "loaded").length;
+    const done = active.filter((o) => o.state === "loaded" || o.state === "flagged").length;
+    const started = active.some((o) => o.state !== "to_load" && o.state !== "new");
     let state: LoadMapSlotState = "pending";
-    if (active.length > 0 && loaded === active.length) state = "loaded";
-    else if (loaded > 0) state = "loading";
+    if (active.length > 0 && done === active.length) state = "loaded";
+    else if (started) state = "loading";
     else if (stop.is_new) state = "new";
-    const volume = active.reduce((sum, o) => sum + o.volume_m3, 0);
     return {
       stopSequence: stop.stop_sequence,
-      outletCode: stop.outlet.outlet_code,
-      volumeM3: Math.round(volume * 10) / 10,
+      outletCode: stop.outlet.code,
+      volumeM3: round1(active.reduce((sum, o) => sum + o.volume_m3, 0)),
       state,
     };
   });
 }
 
-/** Vehicle limits and run totals in the shape the capacity card takes. */
-export function runCapacity(run: Run) {
-  const totals = runTotals(run);
-  return {
-    vehicleCode: run.vehicle.vehicle_code,
-    planVersion: run.plan_version,
-    weight: { loaded: totals.loadedKg, planned: totals.plannedKg, max: run.vehicle.max_weight_kg },
-    volume: { loaded: totals.loadedM3, planned: totals.plannedM3, max: run.vehicle.max_volume_m3 },
-    spareM3: Math.max(0, Math.round((run.vehicle.max_volume_m3 - totals.plannedM3) * 10) / 10),
-  };
-}
-
-/** "Stop 1 · OUT028 · NEW STOP" */
-export function stopTitle(stop: RunStop): string {
-  return `Stop ${stop.stop_sequence} · ${stop.outlet.outlet_code}${stop.is_new ? " · NEW STOP" : ""}`;
-}
+// ---- Plan source strip ------------------------------------------------------------
 
 export interface PlanSource {
+  /** Who published the plan, e.g. "Dispatcher". */
+  source?: string;
   version?: number;
-  updatedAt: string;
+  updatedAt?: string;
   acknowledgedBy?: string;
   acknowledgedAt?: string;
 }
 
-/** Plan details for the source strip, from a run's plan fields. */
+/** Plan details for the source strip, from a run's plan. */
 export function planSource(run: Run): PlanSource {
-  const acknowledged = run.acknowledged_plan_version === run.plan_version;
+  const { plan } = run;
   return {
-    version: run.plan_version,
-    updatedAt: run.plan_updated_at,
-    acknowledgedBy: acknowledged ? run.acknowledged_by : undefined,
-    acknowledgedAt: acknowledged ? run.acknowledged_at : undefined,
+    source: plan.source,
+    version: plan.version,
+    updatedAt: plan.published_at,
+    acknowledgedBy: plan.acknowledged_by ?? undefined,
+    acknowledgedAt: plan.acknowledged_at ?? undefined,
   };
 }
+
+/**
+ * Dock-wide strip for the queue: latest plan publish across known runs.
+ * The queue and summary responses carry no plan time yet (contract gap).
+ */
+export function dockPlanSource(runs: Run[]): PlanSource {
+  const latest = runs.map((r) => r.plan.published_at).sort().at(-1);
+  return { source: "Dispatcher", updatedAt: latest };
+}
+
+// ---- Queue cards ---------------------------------------------------------------------
 
 const BRAND_LABELS = { fresh: "Fresh", style: "Style", tech: "Tech" } as const;
 
-/** Display fields for a run card, so components never read raw API fields. */
-export function runSummary(run: Run) {
-  const totals = runTotals(run);
-  const ready = run.status === "ready_to_depart";
-  let progressNote = `${totals.loaded} of ${totals.orders} loaded`;
-  if (ready && run.signed_off_by) {
-    progressNote += ` · signed off by ${run.signed_off_by}`;
-    if (run.signed_off_at) progressNote += ` ${formatTime(run.signed_off_at)}`;
-  } else if (run.loading_by?.length) {
-    progressNote += ` · ${run.loading_by.join(", ")}`;
-  }
+export type RunChipKind = "vehicle" | "reefer" | "access" | "plain";
+
+/** How a queue chip string is drawn. The API sends display text only. */
+export function runChipKind(label: string): RunChipKind {
+  if (label === "Truck" || label === "Van") return "vehicle";
+  if (label === "Reefer") return "reefer";
+  if (label === "van_only") return "access";
+  return "plain";
+}
+
+/** Display fields for a queue run card. */
+export function runCardView(run: RunSummary) {
+  const progress = run.orders_total ? Math.round((run.orders_checked / run.orders_total) * 100) : 0;
+  const note = `${run.orders_checked} of ${run.orders_total} loaded`;
   return {
-    runCode: run.run_code,
+    code: run.code,
     status: run.status,
-    title: `${run.run_code} · ${run.vehicle.vehicle_code} · Trip ${run.trip_number}`,
-    subtitle: `${BRAND_LABELS[run.brand]} · ${run.area} · ${run.stops.length} stops`,
+    title: `${run.code} · ${run.vehicle_code} · Trip ${run.trip_number}`,
+    subtitle: `${BRAND_LABELS[run.brand]} · ${run.district} · ${run.stop_count} stops`,
     departs: formatTime(run.departs_at),
-    vehicleLabel: run.vehicle.vehicle_type === "van" ? "Van" : "Truck",
-    reefer: run.vehicle.is_reefer,
-    vanOnly: run.stops.some((s) => s.outlet.van_only),
-    capacityLabel: `${formatKg(run.vehicle.max_weight_kg)} · ${formatM3(run.vehicle.max_volume_m3)}`,
-    progress: totals.orders ? Math.round((totals.loaded / totals.orders) * 100) : 0,
-    progressNote,
+    chips: run.chips.map((label) => ({ label, kind: runChipKind(label) })),
+    progress,
+    progressNote: run.loader ? `${note} · ${run.loader}` : note,
+    alert: run.alert
+      ? {
+          tone: run.alert.tone,
+          message: run.alert.message,
+          actionLabel: run.alert.action,
+          actionHref: run.alert.href,
+        }
+      : undefined,
   };
 }
 
-/** "Saman J." plus initials, for the app bar, menu and tiles. */
+// ---- People and place -----------------------------------------------------------------
+
+/** Name, short name and initials for the shell, tiles and menu. */
 export function userLabel(user: LoaderUser) {
-  const [first, ...rest] = user.full_name.split(" ");
-  const last = rest.at(-1);
-  return {
-    name: user.full_name,
-    shortName: last ? `${first} ${last[0]}.` : first,
-    initials: user.initials,
-  };
+  const words = user.full_name.trim().split(/\s+/);
+  const initials = (words[0][0] + (words.length > 1 ? words.at(-1)![0] : "")).toUpperCase();
+  return { name: user.full_name, shortName: user.short_name, initials };
 }
 
-/** "Good night" / "Good morning" / … for a depot-time ISO timestamp. */
-export function greeting(iso: string): string {
-  const hour = Number(timeFormat.format(new Date(iso)).slice(0, 2));
-  if (hour < 5 || hour >= 22) return "Good night";
-  if (hour < 12) return "Good morning";
-  if (hour < 17) return "Good afternoon";
-  return "Good evening";
-}
-
-const ISSUE_LABELS: Record<IssueType, string> = {
-  missing: "missing",
-  short: "short",
-  damaged: "damaged",
-  wont_fit: "won't fit",
-};
-
-export interface RunAlert {
-  tone: "error" | "warning" | "success";
-  message: string;
-  actionLabel: string;
-  actionHref: string;
-}
-
-/** The one alert a run card shows, most urgent first. */
-export function runAlert(run: Run, issues: LoaderIssue[]): RunAlert | undefined {
-  const open = issues.find(
-    (i) => i.run_code === run.run_code && (i.status === "sent" || i.status === "seen"),
-  );
-  if (open) {
-    return {
-      tone: "error",
-      message: `${open.order_number} ${ISSUE_LABELS[open.issue_type]} · waiting`,
-      actionLabel: "Open",
-      actionHref: `/loader/issues/${open.issue_id}`,
-    };
-  }
-  const acknowledged = run.acknowledged_plan_version;
-  if (acknowledged !== undefined && run.plan_version > acknowledged) {
-    return {
-      tone: "warning",
-      message: `Plan updated ${formatTime(run.plan_updated_at)} · v${acknowledged} → v${run.plan_version}`,
-      actionLabel: "Review",
-      actionHref: `/loader/runs/${run.run_code}`,
-    };
-  }
-  if (run.status === "ready_to_depart") {
-    return {
-      tone: "success",
-      message: "Signed off · driver can collect",
-      actionLabel: "View",
-      actionHref: `/loader/runs/${run.run_code}/release`,
-    };
-  }
-  return undefined;
-}
-
-/** Queue metric tiles: Runs · Loading · Issues · Ready. */
-export function queueMetrics(runs: Run[], issues: LoaderIssue[]) {
-  const loading = runs.filter((r) => r.status === "loading" || r.status === "issue_flagged");
-  const loaders = [...new Set(loading.flatMap((r) => r.loading_by ?? []))];
-  const openIssues = issues.filter((i) => i.status === "sent" || i.status === "seen");
-  const ready = runs.filter((r) => r.status === "ready_to_depart");
-  return {
-    runs: runs.length,
-    loading: loading.length,
-    loadingCaption: loaders.map((name) => name.split(" ")[0]).join(", "),
-    issues: openIssues.length,
-    issuesCaption: openIssues.length ? "Awaiting decision" : "None open",
-    ready: ready.length,
-    readyCaption: ready.map((r) => r.run_code).join(", "),
-  };
-}
-
-/** Dock-wide plan strip for the queue: the latest plan update across runs. */
-export function dockPlanSource(runs: Run[], fallback: string): PlanSource {
-  return { updatedAt: runs.map((r) => r.plan_updated_at).sort().at(-1) ?? fallback };
+/** "Peliyagoda DC · Dock 3" from a session's depot slug and dock. */
+export function dockLabel(session: Pick<LoaderSession, "depot" | "dock">): string {
+  const depot = session.depot.charAt(0).toUpperCase() + session.depot.slice(1);
+  return `${depot} DC · ${session.dock}`;
 }

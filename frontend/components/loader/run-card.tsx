@@ -1,10 +1,11 @@
+import * as React from "react";
 import Link from "next/link";
 import { Snowflake, Truck } from "lucide-react";
 import { cn } from "cn";
-import { runSummary, type RunAlert } from "@/lib/loader/format";
-import type { Run, RunStatus } from "@/lib/loader/types";
+import { runCardView, type RunChipKind } from "@/lib/loader/format";
+import type { RunStatus, RunSummary } from "@/lib/loader/types";
 import { AlertRow } from "./alert-row";
-import { InfoChip } from "./info-chip";
+import { InfoChip, type InfoChipTone } from "./info-chip";
 import { LoaderPill, type LoaderPillTone } from "./loader-pill";
 
 const statusPill: Record<RunStatus, { tone: LoaderPillTone; label: string }> = {
@@ -16,23 +17,30 @@ const statusPill: Record<RunStatus, { tone: LoaderPillTone; label: string }> = {
   gated_out: { tone: "neutral", label: "Gated out" },
 };
 
+const chipStyle: Record<RunChipKind, { tone: InfoChipTone; icon?: React.ReactNode }> = {
+  vehicle: { tone: "neutral", icon: <Truck /> },
+  reefer: { tone: "info", icon: <Snowflake /> },
+  access: { tone: "warning" },
+  plain: { tone: "neutral" },
+};
+
 interface RunCardProps {
-  run: Run;
-  alert?: RunAlert;
+  /** One run from GET /loader/runs; chips and alert come from the data. */
+  run: RunSummary;
   className?: string;
 }
 
 /** Run on the loading queue: departure, status, vehicle, progress and its alert. */
-export function RunCard({ run, alert, className }: RunCardProps) {
-  const summary = runSummary(run);
-  const status = statusPill[summary.status];
-  const ready = summary.status === "ready_to_depart";
+export function RunCard({ run, className }: RunCardProps) {
+  const view = runCardView(run);
+  const status = statusPill[view.status];
+  const ready = view.status === "ready_to_depart";
 
   return (
     <article className={cn("flex flex-col gap-3 rounded-xl border border-border bg-card p-4", className)}>
       <div className="flex items-start justify-between gap-2">
         <p className="flex items-baseline gap-1.5">
-          <span className="text-2xl font-bold text-primary">{summary.departs}</span>
+          <span className="text-2xl font-bold text-primary">{view.departs}</span>
           <span className="text-sm text-muted-foreground">departs</span>
         </p>
         <LoaderPill tone={status.tone}>{status.label}</LoaderPill>
@@ -41,52 +49,48 @@ export function RunCard({ run, alert, className }: RunCardProps) {
       <div className="flex flex-col gap-0.5">
         <h3 className="text-base font-semibold text-foreground">
           <Link
-            href={`/loader/runs/${summary.runCode}`}
+            href={`/loader/runs/${view.code}`}
             className="rounded-sm outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
           >
-            {summary.title}
+            {view.title}
           </Link>
         </h3>
-        <p className="text-sm text-muted-foreground">{summary.subtitle}</p>
+        <p className="text-sm text-muted-foreground">{view.subtitle}</p>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
-        <InfoChip icon={<Truck />}>{summary.vehicleLabel}</InfoChip>
-        {summary.reefer && (
-          <InfoChip tone="info" icon={<Snowflake />}>
-            Reefer
-          </InfoChip>
-        )}
-        {summary.vanOnly ? (
-          <InfoChip tone="warning">van_only</InfoChip>
-        ) : (
-          <InfoChip>{summary.capacityLabel}</InfoChip>
-        )}
-      </div>
+      {view.chips.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {view.chips.map((chip) => (
+            <InfoChip key={chip.label} tone={chipStyle[chip.kind].tone} icon={chipStyle[chip.kind].icon}>
+              {chip.label}
+            </InfoChip>
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <div
           role="progressbar"
-          aria-label={`${summary.runCode} loading progress`}
+          aria-label={`${view.code} loading progress`}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-valuenow={summary.progress}
+          aria-valuenow={view.progress}
           className="h-1 overflow-hidden rounded-full bg-border"
         >
           <div
             className={cn("h-full", ready ? "bg-success" : "bg-primary")}
-            style={{ width: `${summary.progress}%` }}
+            style={{ width: `${view.progress}%` }}
           />
         </div>
-        <p className="text-sm text-muted-foreground">{summary.progressNote}</p>
+        <p className="text-sm text-muted-foreground">{view.progressNote}</p>
       </div>
 
-      {alert && (
+      {view.alert && (
         <AlertRow
-          tone={alert.tone}
-          message={alert.message}
-          actionLabel={alert.actionLabel}
-          actionHref={alert.actionHref}
+          tone={view.alert.tone}
+          message={view.alert.message}
+          actionLabel={view.alert.actionLabel}
+          actionHref={view.alert.actionHref}
         />
       )}
     </article>

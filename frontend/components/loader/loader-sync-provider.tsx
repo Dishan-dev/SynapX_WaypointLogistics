@@ -132,10 +132,10 @@ export function useOfflineRun(initial: Run, actorName?: string) {
 
   React.useEffect(() => {
     let cancelled = false;
-    getCachedRun(initial.run_code)
+    getCachedRun(initial.code)
       .then((cached) => {
         if (cancelled) return;
-        if (cached && cached.plan_version >= initial.plan_version) {
+        if (cached && cached.current_plan_version >= initial.current_plan_version) {
           runRef.current = cached;
           setRun(cached);
         } else {
@@ -155,8 +155,8 @@ export function useOfflineRun(initial: Run, actorName?: string) {
       const current = runRef.current;
       const action = await enqueueAction({
         action_type: actionType,
-        run_code: current.run_code,
-        plan_version: current.plan_version,
+        run_code: current.code,
+        plan_version: current.current_plan_version,
         payload,
       });
       const next = applyAction(current, action, actorName);

@@ -1,16 +1,15 @@
-import { dockPlanSource, userLabel } from "@/lib/loader/format";
-import { mockCurrentUser, mockDock, mockIssues, mockNow, mockRuns } from "@/lib/loader/mock-data";
+import { dockPlanSource } from "@/lib/loader/format";
+import { mockCurrentUser, mockNow, mockQueue, mockRunDetails, mockSummary } from "@/lib/loader/mock-data";
 import { QueueView } from "./queue-view";
 
 export default function LoaderQueuePage() {
   return (
     <QueueView
-      runs={mockRuns}
-      issues={mockIssues}
-      firstName={userLabel(mockCurrentUser).shortName.split(" ")[0]}
-      dockName={mockDock.name}
+      queue={mockQueue}
+      summary={mockSummary}
+      firstName={mockCurrentUser.full_name.split(" ")[0]}
       now={mockNow}
-      plan={dockPlanSource(mockRuns, mockNow)}
+      plan={dockPlanSource(mockRunDetails)}
     />
   );
 }

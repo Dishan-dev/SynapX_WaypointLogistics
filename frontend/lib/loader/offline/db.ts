@@ -4,7 +4,8 @@
 import type { QueuedAction, Run } from "../types";
 
 const DB_NAME = "waypoint-loader";
-const DB_VERSION = 1;
+// v2: runs keyed by "code" (API contract shapes); v1 data is dropped.
+const DB_VERSION = 2;
 const RUNS = "runs";
 const OUTBOX = "outbox";
 
@@ -25,13 +26,13 @@ function openDb(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(RUNS)) {
-        db.createObjectStore(RUNS, { keyPath: "run_code" });
+      // Pre-contract shapes cannot be read by this version: start clean.
+      for (const name of [RUNS, OUTBOX]) {
+        if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
       }
-      if (!db.objectStoreNames.contains(OUTBOX)) {
-        const outbox = db.createObjectStore(OUTBOX, { keyPath: "client_action_id" });
-        outbox.createIndex("created_at", "created_at");
-      }
+      db.createObjectStore(RUNS, { keyPath: "code" });
+      const outbox = db.createObjectStore(OUTBOX, { keyPath: "client_action_id" });
+      outbox.createIndex("created_at", "created_at");
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => {
@@ -49,8 +50,8 @@ async function store(name: string, mode: IDBTransactionMode): Promise<IDBObjectS
 
 // ---- Runs --------------------------------------------------------------
 
-export async function getCachedRun(runCode: string): Promise<Run | undefined> {
-  return request((await store(RUNS, "readonly")).get(runCode));
+export async function getCachedRun(code: string): Promise<Run | undefined> {
+  return request((await store(RUNS, "readonly")).get(code));
 }
 
 export async function putCachedRun(run: Run): Promise<void> {
