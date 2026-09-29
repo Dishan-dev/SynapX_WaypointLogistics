@@ -45,7 +45,7 @@ export default function AllocationsPage() {
   const fetchAllocations = useCallback(async () => {
     setFetchError(false);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001"}/api/v1/allocations/`);
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000"}/api/v1/allocations/`);
       if (response.ok) {
         const data = await response.json();
         setAllocations(data);

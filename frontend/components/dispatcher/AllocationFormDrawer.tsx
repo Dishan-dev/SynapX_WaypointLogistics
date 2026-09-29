@@ -35,7 +35,7 @@ interface DriverOption {
   user: { full_name: string } | null;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
 export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: AllocationFormDrawerProps) {
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);

@@ -10,8 +10,9 @@ from app.models.user import User, UserRole
 from app.models.fleet import Vehicle, DriverProfile, VehicleStatus
 from app.models.allocation import Allocation, AllocationStatus
 
-load_dotenv()
-url = os.environ["DATABASE_URL_UNPOOLED"].replace("postgresql://", "postgresql+psycopg://", 1)
+from app.core.config import settings
+
+url = settings.DATABASE_URL_UNPOOLED or settings.DATABASE_URL
 engine = sa.create_engine(url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

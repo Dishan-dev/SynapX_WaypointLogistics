@@ -14,7 +14,7 @@ import { StatusBadge, StatusVariant } from "./StatusBadge";
 import { toast } from "sonner";
 import { type Allocation } from "./AllocationTable";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
 
 interface AllocationDetailDrawerProps {
   open: boolean;
