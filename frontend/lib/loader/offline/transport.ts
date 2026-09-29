@@ -233,8 +233,17 @@ export function mockTransport(latencyMs = 300): Transport {
       if (outcome === "noop") return ok(run);
       if (outcome) return outcome;
 
-      // The server records who checked from the session; the mock knows one.
-      const by = request.body.loader_session_id === mockSession.session_id ? mockSession.loader.short_name : undefined;
+      // The server records who checked from the session. Null (no sign-in
+      // until L2) leaves checked_by empty; the mock knows one session id and
+      // answers any other with 404, as the API does.
+      const sessionId = request.body.loader_session_id ?? null;
+      if (sessionId !== null && sessionId !== mockSession.session_id) {
+        return errorResponse(404, "NOT_FOUND", `Loader session ${String(sessionId)} not found.`, {
+          entity: "LoaderSession",
+          entity_id: sessionId,
+        });
+      }
+      const by = sessionId === mockSession.session_id ? mockSession.loader.short_name : undefined;
       state[run.code] = applyAction(run, action, by);
       ids[id] = signature;
       saveMockState(state);

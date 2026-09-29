@@ -310,11 +310,12 @@ export type QueuedActionStatus = "pending" | "conflict" | "failed";
 export type ConflictCode = "PLAN_VERSION_STALE" | "CLIENT_ACTION_ID_REUSED" | "INVALID_STATE_TRANSITION";
 
 /**
- * Every write carries the loader session (optional on the server until L2
- * sign-in exists, then required).
+ * Every write carries the loader session. Null until L2 sign-in exists: the
+ * server applies the write and leaves checked_by empty. An id the server does
+ * not know is a 404.
  */
 export interface SessionPayload {
-  loader_session_id: number;
+  loader_session_id: number | null;
 }
 
 /** check / uncheck / recheck / unload. */

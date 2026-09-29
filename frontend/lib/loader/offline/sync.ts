@@ -1,10 +1,10 @@
 // Sends the outbox in order. Stops at the first network or server error so
 // later actions never overtake earlier ones.
 
-import type { ConflictCode } from "../types";
+import type { ConflictCode, QueuedAction, QueuedActionPayload } from "../types";
 import { deleteOutboxAction, listOutbox, putOutboxAction } from "./db";
 import { requestFor } from "./outbox";
-import { NetworkError, type Transport } from "./transport";
+import { NetworkError, type Transport, type TransportResponse } from "./transport";
 
 export interface FlushResult {
   sent: number;
@@ -35,19 +35,43 @@ function conflictCode(d: Record<string, unknown> | undefined): ConflictCode {
   return code && CONFLICT_CODES.includes(code) ? code : "INVALID_STATE_TRANSITION";
 }
 
+/** A 404 for the loader_session_id rather than for the run or order. */
+function isUnknownSession(res: TransportResponse): boolean {
+  return res.status === 404 && errorDetail(res.body)?.entity === "LoaderSession";
+}
+
+async function send(transport: Transport, action: QueuedAction): Promise<TransportResponse | NetworkError> {
+  try {
+    return await transport.send(requestFor(action));
+  } catch (err) {
+    if (err instanceof NetworkError) return err;
+    throw err;
+  }
+}
+
 export async function flushOutbox(transport: Transport): Promise<FlushResult> {
   const pending = (await listOutbox()).filter((a) => a.status === "pending");
   let sent = 0;
   const staleRuns = new Set<string>();
   const result = (offline: boolean): FlushResult => ({ sent, offline, staleRuns: [...staleRuns] });
 
-  for (const action of pending) {
-    let res;
-    try {
-      res = await transport.send(requestFor(action));
-    } catch (err) {
-      if (!(err instanceof NetworkError)) throw err;
-      await putOutboxAction({ ...action, attempts: action.attempts + 1, last_error: err.message });
+  for (const queued of pending) {
+    let action = queued;
+    let res = await send(transport, action);
+
+    // loader_session_id is optional until L2, but an id the server does not
+    // know is a 404. A tap queued under one (an old mock id, a session removed
+    // on the server) is sent again once without it, so the tap is kept and
+    // only checked_by stays empty. The 404 stored nothing, so the same
+    // client_action_id is safe to reuse.
+    if (!(res instanceof NetworkError) && isUnknownSession(res) && action.payload.loader_session_id !== null) {
+      action = { ...action, payload: { ...action.payload, loader_session_id: null } as QueuedActionPayload };
+      await putOutboxAction(action);
+      res = await send(transport, action);
+    }
+
+    if (res instanceof NetworkError) {
+      await putOutboxAction({ ...action, attempts: action.attempts + 1, last_error: res.message });
       return result(true);
     }
 

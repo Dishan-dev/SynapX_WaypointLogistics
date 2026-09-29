@@ -27,8 +27,8 @@ interface LoaderSyncValue {
   dismissActions: (clientActionIds: string[]) => Promise<void>;
   /** Used to refetch runs after a sync. */
   transport: Transport;
-  /** Sent as loader_session_id on every write. */
-  sessionId: number;
+  /** Sent as loader_session_id on every write; null until L2 sign-in. */
+  sessionId: number | null;
 }
 
 const LoaderSyncContext = React.createContext<LoaderSyncValue | null>(null);
@@ -47,7 +47,7 @@ export function LoaderSyncProvider({
   sessionId,
   children,
 }: {
-  sessionId: number;
+  sessionId: number | null;
   children: React.ReactNode;
 }) {
   const transport = React.useMemo(() => createTransport(), []);
