@@ -293,9 +293,21 @@ export interface QueuedAction {
   /** Client-only: pending until sent; conflict (409) and failed are not retried. */
   status: QueuedActionStatus;
   last_error?: string;
+  /** Set with status conflict: the 409's detail.code. */
+  conflict_code?: ConflictCode;
+  /** PLAN_VERSION_STALE only: the run's plan version when the write was refused. */
+  current_plan_version?: number;
 }
 
 export type QueuedActionStatus = "pending" | "conflict" | "failed";
+
+/**
+ * detail.code of a 409 (API_CONTRACT.md "Errors"). None is retried:
+ * - PLAN_VERSION_STALE: made on a plan that is no longer current.
+ * - CLIENT_ACTION_ID_REUSED: the id was already used for another action (a client bug).
+ * - INVALID_STATE_TRANSITION: the row or run no longer allows it.
+ */
+export type ConflictCode = "PLAN_VERSION_STALE" | "CLIENT_ACTION_ID_REUSED" | "INVALID_STATE_TRANSITION";
 
 /**
  * Every write carries the loader session (optional on the server until L2
@@ -333,6 +345,9 @@ export interface SyncState {
   online: boolean;
   pending: number;
   syncing: boolean;
+  /** Writes refused because the plan changed since the tap (PLAN_VERSION_STALE). */
+  stale: number;
+  /** Other writes that were refused or failed and will not be retried. */
   failed: number;
   lastSyncedAt?: string;
 }

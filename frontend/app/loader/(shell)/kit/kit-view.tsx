@@ -66,7 +66,7 @@ export function KitView() {
           Offline test · {run.code}
         </h2>
         <p className="text-xs text-muted-foreground" data-testid="sync-summary">
-          online={String(sync.online)} · pending={sync.pending} · failed={sync.failed} · syncing={String(sync.syncing)} ·
+          online={String(sync.online)} · pending={sync.pending} · stale={sync.stale} · failed={sync.failed} · syncing={String(sync.syncing)} ·
           loaded={run.orders_loaded} · checked={run.orders_checked}/{run.orders_total} · source={offline.source}
         </p>
         {stopsInLoadOrder(run.stops).map((stop) =>
@@ -87,10 +87,11 @@ export function KitView() {
       </section>
       <section className="overflow-hidden rounded-lg border border-border">
         <LoaderAppBar title="Loading checklist" subtitle="RUN-021 · Dock tablet 3 · Saman J." hasUnread />
-        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, failed: 0 }} />
-        <PlanSourceStrip plan={planSource(run)} sync={{ online: false, pending: 3, syncing: false, failed: 0 }} />
-        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 3, syncing: true, failed: 0 }} />
-        <PlanSourceStrip plan={dockPlanSource([run])} sync={{ online: true, pending: 0, syncing: false, failed: 1 }} />
+        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, stale: 0, failed: 0 }} />
+        <PlanSourceStrip plan={planSource(run)} sync={{ online: false, pending: 3, syncing: false, stale: 0, failed: 0 }} />
+        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 3, syncing: true, stale: 0, failed: 0 }} />
+        <PlanSourceStrip plan={dockPlanSource([run])} sync={{ online: true, pending: 0, syncing: false, stale: 0, failed: 1 }} />
+        <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, stale: 2, failed: 0 }} />
         <div className="h-4" />
         <LoaderBottomNav active="loading" loadingHref="/loader/runs/RUN-021" issueCount={1} />
       </section>

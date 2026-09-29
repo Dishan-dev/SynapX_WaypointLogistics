@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { listOutbox, putCachedRun } from "@/lib/loader/offline/db";
+import { deleteOutboxAction, listOutbox, putCachedRun } from "@/lib/loader/offline/db";
 import { applyAction, enqueue, type NewAction } from "@/lib/loader/offline/outbox";
-import { resolveRun, type RunSource } from "@/lib/loader/offline/run-cache";
+import { rejectedActions, resolveRun, type RunSource } from "@/lib/loader/offline/run-cache";
 import { flushOutbox } from "@/lib/loader/offline/sync";
 import { createTransport, probeConnectivity, type Transport } from "@/lib/loader/offline/transport";
 import type {
@@ -23,6 +23,8 @@ interface LoaderSyncValue {
   /** Queue a write; it is sent now if online, otherwise on reconnect. */
   enqueueAction: (input: NewAction) => Promise<QueuedAction>;
   flush: () => Promise<void>;
+  /** Remove refused or failed actions once the loader has seen them. */
+  dismissActions: (clientActionIds: string[]) => Promise<void>;
   /** Used to refetch runs after a sync. */
   transport: Transport;
   /** Sent as loader_session_id on every write. */
@@ -51,16 +53,18 @@ export function LoaderSyncProvider({
   const transport = React.useMemo(() => createTransport(), []);
   const [online, setOnline] = React.useState(true);
   const [syncing, setSyncing] = React.useState(false);
-  const [counts, setCounts] = React.useState({ pending: 0, failed: 0 });
+  const [counts, setCounts] = React.useState({ pending: 0, stale: 0, failed: 0 });
   const [lastSyncedAt, setLastSyncedAt] = React.useState<string>();
   const flushing = React.useRef(false);
 
   const refreshCounts = React.useCallback(async () => {
     try {
       const outbox = await listOutbox();
+      const stale = (a: QueuedAction) => a.conflict_code === "PLAN_VERSION_STALE";
       setCounts({
         pending: outbox.filter((a) => a.status === "pending").length,
-        failed: outbox.filter((a) => a.status !== "pending").length,
+        stale: outbox.filter((a) => a.status === "conflict" && stale(a)).length,
+        failed: outbox.filter((a) => a.status !== "pending" && !stale(a)).length,
       });
     } catch {
       // IndexedDB unavailable (private mode): nothing queued to count.
@@ -74,6 +78,8 @@ export function LoaderSyncProvider({
     try {
       const result = await flushOutbox(transport);
       setOnline(!result.offline);
+      // A new lastSyncedAt makes every open run refetch; for a PLAN_VERSION_STALE
+      // run that brings in the new plan and its unacknowledged_plan_version.
       if (!result.offline) setLastSyncedAt(new Date().toISOString());
     } catch {
       // IndexedDB error: leave the outbox for the next attempt.
@@ -126,15 +132,27 @@ export function LoaderSyncProvider({
     [online, flush, refreshCounts],
   );
 
+  const dismissActions = React.useCallback(
+    async (clientActionIds: string[]) => {
+      try {
+        await Promise.all(clientActionIds.map((id) => deleteOutboxAction(id)));
+      } finally {
+        await refreshCounts();
+      }
+    },
+    [refreshCounts],
+  );
+
   const value = React.useMemo<LoaderSyncValue>(
     () => ({
-      sync: { online, syncing, pending: counts.pending, failed: counts.failed, lastSyncedAt },
+      sync: { online, syncing, ...counts, lastSyncedAt },
       enqueueAction,
       flush,
+      dismissActions,
       transport,
       sessionId,
     }),
-    [online, syncing, counts, lastSyncedAt, enqueueAction, flush, transport, sessionId],
+    [online, syncing, counts, lastSyncedAt, enqueueAction, flush, dismissActions, transport, sessionId],
   );
 
   return <LoaderSyncContext.Provider value={value}>{children}</LoaderSyncContext.Provider>;
@@ -145,11 +163,16 @@ export function LoaderSyncProvider({
  * nothing is pending for the run; while actions are pending the local copy is
  * kept, and after each sync the run is resolved again (see run-cache.ts).
  * Each action is applied locally as soon as it is queued.
+ *
+ * While a new plan waits to be acknowledged (unacknowledged_plan_version),
+ * only acknowledge is accepted: the plan-change takeover (L7) blocks the
+ * checklist until then.
  */
 export function useOfflineRun(initial: Run, actorName?: string) {
-  const { enqueueAction, transport, sync, sessionId } = useLoaderSync();
+  const { enqueueAction, dismissActions, transport, sync, sessionId } = useLoaderSync();
   const [run, setRun] = React.useState(initial);
   const [source, setSource] = React.useState<RunSource>("initial");
+  const [rejected, setRejected] = React.useState<QueuedAction[]>([]);
   const runRef = React.useRef(initial);
   // Bumped on every local action, so a slower resolve cannot overwrite it.
   const actSeq = React.useRef(0);
@@ -167,15 +190,19 @@ export function useOfflineRun(initial: Run, actorName?: string) {
       .catch(() => {
         // Unexpected storage error: keep showing what we have.
       });
+    void rejectedActions(initial.code).then((actions) => {
+      if (!cancelled) setRejected(actions);
+    });
     return () => {
       cancelled = true;
     };
   }, [initial, transport, sync.lastSyncedAt]);
 
   const act = React.useCallback(
-    async (actionType: QueuedActionType, input: ActionInput = {}) => {
-      actSeq.current += 1;
+    async (actionType: QueuedActionType, input: ActionInput = {}): Promise<QueuedAction | undefined> => {
       const current = runRef.current;
+      if (current.unacknowledged_plan_version !== null && actionType !== "acknowledge") return undefined;
+      actSeq.current += 1;
       const action = await enqueueAction({
         action_type: actionType,
         run_code: current.code,
@@ -192,6 +219,17 @@ export function useOfflineRun(initial: Run, actorName?: string) {
     [enqueueAction, actorName, sessionId],
   );
 
-  /** source: where the shown run came from (server, local, cache or initial). */
-  return { run, source, act };
+  /** Remove this run's refused actions once the loader has seen them. */
+  const dismissRejected = React.useCallback(async () => {
+    const ids = rejected.map((a) => a.client_action_id);
+    setRejected([]);
+    await dismissActions(ids);
+  }, [rejected, dismissActions]);
+
+  /**
+   * source: where the shown run came from (server, local, cache or initial).
+   * rejected: this run's writes the server refused (conflict_code says why) or
+   * that failed; a PLAN_VERSION_STALE one has to be done again on the new plan.
+   */
+  return { run, source, act, rejected, dismissRejected };
 }

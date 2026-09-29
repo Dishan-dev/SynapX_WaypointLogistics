@@ -7,8 +7,11 @@
 //   refetches the server copy.
 // - Server unreachable and nothing pending: the cached copy, which is the last
 //   server copy this tablet saw.
+//
+// A write the server refused (409) is no longer pending, so the server copy
+// wins again and the refused change disappears from the screen by itself.
 
-import type { Run } from "../types";
+import type { QueuedAction, Run } from "../types";
 import { getCachedRun, listOutbox, putCachedRun } from "./db";
 import { NetworkError, type Transport } from "./transport";
 
@@ -26,6 +29,16 @@ export async function pendingCount(runCode: string): Promise<number> {
     return outbox.filter((a) => a.run_code === runCode && a.status === "pending").length;
   } catch {
     return 0; // No IndexedDB: nothing can be queued.
+  }
+}
+
+/** This run's writes the server refused or that failed, oldest first. */
+export async function rejectedActions(runCode: string): Promise<QueuedAction[]> {
+  try {
+    const outbox = await listOutbox();
+    return outbox.filter((a) => a.run_code === runCode && a.status !== "pending");
+  } catch {
+    return [];
   }
 }
 
