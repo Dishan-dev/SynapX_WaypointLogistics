@@ -379,6 +379,36 @@ class LoaderService:
         }
 
     @staticmethod
+    def plan_updated_at(db: Session, run: DeliveryRun) -> Optional[datetime]:
+        """When the run's current plan was published - plan_updated_at on a queue
+        card (L3). None for a run with no revision on record."""
+        revision = LoaderService.get_revision(db, run, run.current_plan_version)
+        return revision.published_at if revision else None
+
+    @staticmethod
+    def dock_plan_updated_at(
+        db: Session, dock: Dock, run_ids: Optional[List[int]] = None
+    ) -> Optional[datetime]:
+        """The latest plan publish across a dock - plan_updated_at on the summary
+        (L3), "Plan from Dispatcher · updated 02:14" on the queue strip.
+
+        Only each run's current version counts. run_ids narrows it to the runs
+        the queue actually shows (for example, today's); None means every run
+        at the dock.
+        """
+        query = (
+            select(func.max(PlanRevision.published_at))
+            .join(DeliveryRun, PlanRevision.run_id == DeliveryRun.id)
+            .where(
+                DeliveryRun.dock_id == dock.id,
+                PlanRevision.version == DeliveryRun.current_plan_version,
+            )
+        )
+        if run_ids is not None:
+            query = query.where(DeliveryRun.id.in_(run_ids))
+        return db.execute(query).scalar()
+
+    @staticmethod
     def check_release_allowed(db: Session, run: DeliveryRun) -> None:
         """For POST /release (L6): raise 409 RELEASE_LOCKED, with the blockers
         in the detail, unless nothing blocks the release."""

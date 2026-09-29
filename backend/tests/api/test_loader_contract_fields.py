@@ -12,7 +12,10 @@ from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     build_run_021,
     loader_client,
     make_issue,
+    make_dock,
     make_loader,
+    make_revision,
+    make_run,
     put_on_truck,
 )
 
@@ -269,3 +272,42 @@ def test_undo_of_a_run_that_is_not_ready_is_an_invalid_transition(db_session):
             assert exc.code == "INVALID_STATE_TRANSITION", status
         else:
             raise AssertionError(f"{status.value}: undo was allowed")
+
+
+# --- plan_updated_at (helpers for L3) ----------------------------------------------
+
+
+def test_a_runs_plan_updated_at_is_its_current_plans_publish_time(db_session):
+    run, _ = build_run_021(db_session)
+
+    assert LoaderService.plan_updated_at(db_session, run) == at("21:40")
+
+    revision = LoaderService.simulate_plan_change(
+        db_session, run, SimulatedPlanChangeRequest(load_new_order_numbers=["ORD0092319"])
+    )
+    db_session.flush()
+
+    assert LoaderService.plan_updated_at(db_session, run) == revision.published_at
+
+
+def test_the_dock_plan_updated_at_is_the_latest_current_plan(db_session):
+    run, _ = build_run_021(db_session)
+    other = make_run(db_session, run.vehicle, run.dock, code="RUN-027", plan_version=1)
+    make_revision(db_session, other, version=1)
+    newest = make_revision(db_session, other, version=5)  # not other's current version
+    newest.published_at = at("23:59")
+    other_current = LoaderService.get_revision(db_session, other, 1)
+    other_current.published_at = at("22:30")
+    db_session.flush()
+
+    # A newer revision that is not a run's current plan does not count.
+    assert LoaderService.dock_plan_updated_at(db_session, run.dock) == at("22:30")
+    # Narrowed to the runs the queue shows.
+    assert LoaderService.dock_plan_updated_at(db_session, run.dock, run_ids=[run.id]) == at("21:40")
+
+
+def test_a_dock_with_no_plans_has_no_plan_updated_at(db_session):
+    build_run_021(db_session)
+    other_dock = make_dock(db_session, code="DOCK9", name="Dock 9")
+
+    assert LoaderService.dock_plan_updated_at(db_session, other_dock) is None
