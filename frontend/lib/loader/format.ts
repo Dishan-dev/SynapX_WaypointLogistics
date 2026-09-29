@@ -445,6 +445,72 @@ export function issueStatusLine(issue: LoaderIssue): string {
   }
 }
 
+// ---- Release (L6) ------------------------------------------------------------------------
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/** Footer wording for one blocker (Figma 2c #2, T2b), e.g. "2 re-checks". */
+export function releaseBlockerLabel(blocker: ReleaseBlocker, run: Run): string {
+  switch (blocker.code) {
+    case "plan_not_acknowledged":
+      return `acknowledge plan v${run.unacknowledged_plan_version ?? run.current_plan_version} first`;
+    case "unload_pending":
+      return "unload first";
+    case "re_check_pending":
+      return plural(blocker.count, "re-check", "re-checks");
+    case "orders_open":
+      return plural(blocker.count, "order to load", "orders to load");
+    case "issue_waiting":
+      return plural(blocker.count, "flag answer", "flag answers");
+  }
+}
+
+/**
+ * What stops release, from the run read's release_blockers (contract
+ * "Release lock"); for a run without them, the older rule (an unread plan or
+ * orders not yet checked). Empty when release is open.
+ */
+export function releaseBlockers(run: Run): ReleaseBlocker[] {
+  if (run.release_blockers) return run.release_blockers.filter((b) => b.count > 0);
+  const blockers: ReleaseBlocker[] = [];
+  if (run.unacknowledged_plan_version !== null) blockers.push({ code: "plan_not_acknowledged", count: 1 });
+  const open = run.orders_total - run.orders_checked;
+  if (open > 0) blockers.push({ code: "orders_open", count: open });
+  return blockers;
+}
+
+/** "Release locked · 2 re-checks · 1 flag answer", or undefined when release is open. */
+export function releaseLockLabel(run: Run): string | undefined {
+  const blockers = releaseBlockers(run);
+  if (!blockers.length) return undefined;
+  return blockers.map((b) => releaseBlockerLabel(b, run)).join(" · ");
+}
+
+/**
+ * Units that stay at the dock on answered shortfalls (short or damaged, part
+ * of the order): Figma "1 partial order", "3 damaged units stay at the dock".
+ * Worked out from the issues until the run read carries loaded_units.
+ */
+export function partialLoads(issues: LoaderIssue[]): { orders: number; unitsLeft: number; orderNumbers: string[] } {
+  const partial = issues.filter(
+    (i) =>
+      !isIssueWaiting(i) &&
+      (i.issue_type === "short" || i.issue_type === "damaged") &&
+      i.units_affected > 0 &&
+      i.units_affected < i.units_total,
+  );
+  return {
+    orders: partial.length,
+    unitsLeft: partial.reduce((n, i) => n + i.units_affected, 0),
+    orderNumbers: partial.map((i) => i.order_number),
+  };
+}
+
+/** Stops in the driver's order: stop_sequence 1 comes off first, by the door. */
+export function stopsInUnloadOrder(stops: RunStop[]): RunStop[] {
+  return [...stops].sort((a, b) => a.stop_sequence - b.stop_sequence);
+}
+
 // ---- People and place -----------------------------------------------------------------
 
 /** Name, short name and initials for the shell, tiles and menu. */
