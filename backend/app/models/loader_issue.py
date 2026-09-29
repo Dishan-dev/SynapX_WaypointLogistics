@@ -57,6 +57,13 @@ class LoaderIssue(Base):
     reported_by_id = Column(Integer, ForeignKey("loader_users.id"), nullable=False)
     reported_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
+    # Idempotency for the flag write, same contract as LoadingCheck: the tablet
+    # generates this UUID once per tap and replays it from the offline queue, so
+    # the unique constraint is what stops one flag becoming two issues.
+    # Nullable because issues raised server-side (or seeded) have no tablet tap
+    # behind them, and Postgres lets NULLs repeat under a unique index.
+    client_action_id = Column(String(64), unique=True, index=True, nullable=True)
+
     status = Column(Enum(IssueStatus), default=IssueStatus.SENT, nullable=False)
     seen_at = Column(DateTime, nullable=True)
     decide_by = Column(DateTime, nullable=True)

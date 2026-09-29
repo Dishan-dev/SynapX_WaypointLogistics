@@ -50,6 +50,12 @@ class PlanRevision(Base):
     acknowledged_at = Column(DateTime, nullable=True)
     acknowledged_by_id = Column(Integer, ForeignKey("loader_users.id"), nullable=True)
 
+    # Idempotency for the acknowledge write. A revision is acknowledged exactly
+    # once, so a single column is enough here - unlike release, which repeats.
+    # Nullable: the dispatcher publishes revisions, and only the loader's
+    # acknowledgement comes from a tablet.
+    client_action_id = Column(String(64), unique=True, index=True, nullable=True)
+
     run = relationship("DeliveryRun")
     acknowledged_by = relationship("LoaderUser")
     changes = relationship(

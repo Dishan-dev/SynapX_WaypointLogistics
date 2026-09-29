@@ -18,6 +18,11 @@ class ActorKind(str, enum.Enum):
     SYSTEM = "system"
 
 
+class ReleaseAction(str, enum.Enum):
+    RELEASE = "release"
+    UNDO = "undo"
+
+
 class LoadingCheck(Base):
     """Append-only record of every check, uncheck, unload and re-check.
 
@@ -42,6 +47,33 @@ class LoadingCheck(Base):
     plan_version = Column(Integer, nullable=True)
 
     run_stop_order = relationship("RunStopOrder")
+    actor = relationship("LoaderUser")
+
+
+class RunReleaseAction(Base):
+    """Append-only record of a run being released or the release being undone.
+
+    A table rather than a column on delivery_runs, because release is the one
+    write that REPEATS on the same row: mark ready -> undo within 10 s -> mark
+    ready again is a normal sequence. A single delivery_runs.client_action_id
+    would be overwritten each time, so the first release's id would be forgotten
+    and its offline replay would be applied a second time. It also could not tell
+    a replayed release from a replayed undo.
+
+    Same shape and the same reasoning as LoadingCheck, which is append-only for
+    exactly the same reason - checks repeat too.
+    """
+
+    __tablename__ = "run_release_actions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("delivery_runs.id"), nullable=False)
+    action = Column(Enum(ReleaseAction), nullable=False)
+    actor_id = Column(Integer, ForeignKey("loader_users.id"), nullable=True)
+    at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    client_action_id = Column(String(64), unique=True, index=True, nullable=True)
+
+    run = relationship("DeliveryRun")
     actor = relationship("LoaderUser")
 
 

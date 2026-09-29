@@ -26,7 +26,14 @@ from app.models.delivery_run import (
 )
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
-from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck
+from app.models.loader_activity import (
+    ActorKind,
+    CheckAction,
+    LoaderActivity,
+    LoadingCheck,
+    ReleaseAction,
+    RunReleaseAction,
+)
 
 __all__ = [
     "User",
@@ -73,4 +80,6 @@ __all__ = [
     "CheckAction",
     "LoaderActivity",
     "LoadingCheck",
+    "ReleaseAction",
+    "RunReleaseAction",
 ]
