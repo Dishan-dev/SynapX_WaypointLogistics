@@ -12,6 +12,41 @@ from app.models.order import Order, OrderItem
 router = APIRouter()
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _compute_sync_status(run: DispatchTrip) -> dict:
+    """
+    Derive driver sync health from the run's metadata.
+    A real implementation would use a websocket heartbeat table;
+    here we infer from the loading_events and updated_at timestamp.
+    """
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    updated = run.updated_at
+
+    # Make updated_at timezone-aware if it isn't
+    if updated and updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+
+    stale_threshold = timedelta(minutes=15)
+    conflict_threshold = timedelta(minutes=30)
+
+    if updated is None:
+        sync_status = "unknown"
+    elif now - updated > conflict_threshold:
+        sync_status = "conflict"
+    elif now - updated > stale_threshold:
+        sync_status = "degraded"
+    else:
+        sync_status = "ok"
+
+    last_update_mins = int((now - updated).total_seconds() / 60) if updated else None
+    return {
+        "sync_status": sync_status,
+        "last_update_mins": last_update_mins,
+    }
+
+
 @router.get("/", response_model=List[DeliveryRunResponse])
 def list_delivery_runs(
     status: Optional[str] = None,
@@ -26,6 +61,48 @@ def list_delivery_runs(
     if depot:
         query = query.filter(DispatchTrip.depot_name == depot)
     return query.offset(skip).limit(limit).all()
+
+
+@router.get("/live")
+def get_live_runs(db: Session = Depends(deps.get_db)):
+    """
+    Returns all actively moving runs (en_route) enriched with sync health status.
+    Used by the Live Tracking page to show real-time dispatcher visibility.
+    """
+    runs = (
+        db.query(DispatchTrip)
+        .filter(DispatchTrip.status.in_(["en_route", "scheduled", "ready"]))
+        .order_by(DispatchTrip.departure_time.asc())
+        .all()
+    )
+
+    result = []
+    for run in runs:
+        sync = _compute_sync_status(run)
+        result.append({
+            "id": run.id,
+            "trip_code": run.trip_code,
+            "vehicle_number": run.vehicle_number,
+            "driver_name": run.driver_name,
+            "depot_name": run.depot_name,
+            "origin": run.origin,
+            "destination": run.destination,
+            "status": run.status,
+            "departure_time": run.departure_time.isoformat() if run.departure_time else None,
+            "estimated_arrival": run.estimated_arrival.isoformat() if run.estimated_arrival else None,
+            "stop_count": run.stop_count,
+            "stops_completed": run.stops_completed,
+            "stop_sequence": run.stop_sequence or [],
+            "open_shortfalls": run.open_shortfalls,
+            "loading_events": run.loading_events or [],
+            "total_weight_kg": run.total_weight_kg,
+            "total_volume_m3": run.total_volume_m3,
+            "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+            # Enriched fields
+            "sync_status": sync["sync_status"],
+            "last_update_mins": sync["last_update_mins"],
+        })
+    return result
 
 
 @router.get("/{id}", response_model=DeliveryRunResponse)
@@ -258,3 +335,59 @@ def get_manifest(
         "total_volume_m3": run.total_volume_m3,
         "stop_sequence": run.stop_sequence or [],
     }
+
+
+@router.post("/{id}/mark-stop-complete", response_model=DeliveryRunResponse)
+def mark_stop_complete(
+    id: int,
+    db: Session = Depends(deps.get_db),
+):
+    """
+    Increment stops_completed by 1. Automatically marks the run as 'completed'
+    when all stops are done.
+    """
+    run = db.query(DispatchTrip).filter(DispatchTrip.id == id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if run.stops_completed < run.stop_count:
+        run.stops_completed += 1
+
+    # Auto-complete the run when all stops are done
+    if run.stop_count > 0 and run.stops_completed >= run.stop_count:
+        run.status = "completed"
+        run.actual_arrival = datetime.now(timezone.utc)
+
+    run.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+@router.post("/{id}/recall-run", response_model=DeliveryRunResponse)
+def recall_run(
+    id: int,
+    db: Session = Depends(deps.get_db),
+):
+    """
+    Dispatcher initiates a run recall — marks run status as 'recalled' and logs
+    a loading event. This is a high-severity action used in sync conflict resolution.
+    """
+    run = db.query(DispatchTrip).filter(DispatchTrip.id == id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    now_str = datetime.now(timezone.utc).strftime("%H:%M")
+    events = list(run.loading_events or [])
+    events.append({
+        "event": "Run recalled",
+        "time": now_str,
+        "note": "Dispatcher issued a recall due to sync conflict",
+        "status": "error"
+    })
+    run.loading_events = events
+    run.status = "recalled"
+    run.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(run)
+    return run
