@@ -5,11 +5,11 @@ from app.core.database import Base
 
 
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    DISPATCHER = "dispatcher"
-    WAREHOUSE_MANAGER = "warehouse_manager"
-    DRIVER = "driver"
-    CLIENT = "client"
+    ADMIN = "ADMIN"
+    DISPATCHER = "DISPATCHER"
+    WAREHOUSE_MANAGER = "WAREHOUSE_MANAGER"
+    DRIVER = "DRIVER"
+    CLIENT = "CLIENT"
 
 
 class User(Base):

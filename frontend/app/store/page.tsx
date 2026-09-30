@@ -1,73 +1,99 @@
-"use client";
-
-import React from "react";
 import Link from "next/link";
-import { Building2, ArrowLeft } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { StoreMetricCard } from "@/components/store/store-cards";
+import { formatTime, greeting } from "@/components/store/format";
+import { currentManager, mockIssues } from "@/components/store/mock-data";
+import { STORE_DATA_SOURCE, storeNow } from "@/components/store/api/config";
+import { getStoreOrders } from "@/components/store/api/store-data";
+import { getDashboardData } from "@/components/store/dashboard/dashboard-data";
+import { UpcomingDeliveries } from "@/components/store/dashboard/upcoming-deliveries";
+import { RecentRequests } from "@/components/store/dashboard/recent-requests";
+import { NeedsAttention } from "@/components/store/dashboard/needs-attention";
 
-export default function StoreManagerDashboard() {
+// Figma: Desktop / 01 Dashboard and Mobile / 01 Dashboard.
+export default async function StoreDashboardPage() {
+  const now = storeNow();
+  // Delivery issues belong to Dev B's receipts flow; there's no API for them yet.
+  const issues = STORE_DATA_SOURCE === "api" ? [] : mockIssues;
+  const data = getDashboardData(await getStoreOrders(), issues);
+  const next = data.nextDelivery;
+  const nextEta = next?.eta ? formatTime(next.eta) : null;
+  const issueCount = data.openIssues.length;
+
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans p-6 sm:p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <Button asChild variant="outline" size="sm" className="gap-2">
-            <Link href="/">
-              <ArrowLeft className="size-4" />
-              <span>Back to Portal</span>
+    // DOM order follows the mobile layout. From xl (tables) Needs Attention moves to the end; from 1400px
+    // it sits beside Recent Goods Requests as in the 1440 Figma frame (narrower screens can't fit both tables' columns).
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 md:gap-6 min-[1400px]:grid-cols-[minmax(0,1fr)_350px] min-[1400px]:gap-x-[30px]">
+      <div className="flex flex-col gap-4 min-[1400px]:col-span-2 xl:flex-row xl:items-end xl:justify-between">
+        <div className="flex min-w-0 flex-col gap-2">
+          <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
+            <span className="md:hidden">
+              {greeting(now)}, {currentManager.firstName}
+            </span>
+            <span className="hidden md:inline">Dashboard</span>
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            <span className="md:hidden">Here&apos;s what needs your attention today.</span>
+            <span className="hidden md:inline">
+              Overview of your requests, upcoming deliveries, and items that need your attention.
+            </span>
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col gap-3 pt-2 md:flex-row md:gap-4 md:pt-0">
+          <Button
+            asChild
+            variant="outline"
+            className="hidden h-10 border-2 border-primary px-4 text-base font-bold md:inline-flex"
+          >
+            <Link href="/store/deliveries">View All Deliveries</Link>
+          </Button>
+          <Button asChild className="h-11 px-4 text-base font-bold md:h-10">
+            <Link href="/store/requests/new">
+              <Plus aria-hidden="true" />
+              New Goods Request
             </Link>
           </Button>
-          <Badge variant="outline" className="text-accent border-accent/30 bg-accent/5">
-            Role: Store Manager &amp; Client
-          </Badge>
         </div>
-
-        <div className="border-b border-border pb-4 flex items-center justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
-              <Building2 className="size-6 text-primary" />
-              <span>Store Replenishment &amp; Inbound Receipt</span>
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Store #42 (Central Retail Hub) &bull; Delivery scheduling and delivery confirmation.
-            </p>
-          </div>
-          <Button size="sm" className="bg-primary text-primary-foreground">
-            + New Order Request
-          </Button>
-        </div>
-
-        <Card className="border-border">
-          <CardHeader>
-            <CardTitle className="text-sm font-semibold">Incoming Deliveries</CardTitle>
-            <CardDescription className="text-xs text-muted-foreground">
-              Shipments dispatched to this store location
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-xs">
-            <div className="p-3.5 rounded-lg border border-accent/30 bg-accent/5 flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <div className="font-semibold text-foreground">Order #ORD-9921 &bull; 42 Cartons</div>
-                <div className="text-muted-foreground mt-0.5">Assigned to Trip #TRK-104 (Driver: Marcus Vance)</div>
-                <div className="text-accent font-medium mt-1">Expected: Today at 10:45 AM</div>
-              </div>
-              <Button size="xs" className="bg-accent text-accent-foreground hover:bg-accent/90">
-                Confirm Receipt
-              </Button>
-            </div>
-
-            <div className="p-3.5 rounded-lg border border-border bg-card flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <div className="font-semibold text-foreground">Order #ORD-9918 &bull; 18 Cartons</div>
-                <div className="text-muted-foreground mt-0.5">Scheduled from North Chilled Depot</div>
-                <div className="text-muted-foreground mt-1">Expected: Today at 14:30 PM</div>
-              </div>
-              <Badge variant="outline" className="border-border">Scheduled</Badge>
-            </div>
-          </CardContent>
-        </Card>
       </div>
+
+      <section aria-label="Summary" className="grid grid-cols-2 gap-4 xl:grid-cols-4 xl:gap-[30px] min-[1400px]:col-span-2">
+        <StoreMetricCard
+          label="Active Requests"
+          value={data.active.length}
+          caption="Being processed by the depot"
+          mobileCaption="In progress"
+        />
+        <StoreMetricCard
+          label="Upcoming Deliveries"
+          value={data.inTransit.length}
+          caption={next && nextEta ? `Next: ${next.orderNumber} · ETA ${nextEta}` : "None scheduled"}
+          mobileCaption={nextEta ? `ETA ${nextEta}` : "None scheduled"}
+        />
+        <StoreMetricCard
+          label="Awaiting Confirmation"
+          value={data.awaitingConfirmation.length}
+          caption="Delivery has arrived"
+          mobileCaption="Has arrived"
+        />
+        <StoreMetricCard
+          label="Needs Attention"
+          value={issueCount}
+          caption={`${issueCount} delivery ${issueCount === 1 ? "issue" : "issues"} reported`}
+          mobileCaption={`${issueCount} ${issueCount === 1 ? "issue" : "issues"}`}
+        />
+      </section>
+
+      <NeedsAttention
+        items={data.attentionItems}
+        className="xl:order-last min-[1400px]:order-none min-[1400px]:col-start-2 min-[1400px]:row-start-4"
+      />
+
+      <div className="min-[1400px]:col-span-2 min-[1400px]:row-start-3">
+        <UpcomingDeliveries orders={data.upcomingDeliveries} now={now} />
+      </div>
+
+      <RecentRequests orders={data.recentRequests} className="min-[1400px]:col-start-1 min-[1400px]:row-start-4" />
     </div>
   );
 }

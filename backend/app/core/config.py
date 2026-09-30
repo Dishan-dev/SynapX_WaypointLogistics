@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     KEYCLOAK_AUDIENCE: str = "account"
     KEYCLOAK_DEV_MODE: bool = True  # Allows local / test bypass when Keycloak container is offline
 
+    # Loader module
+    # Mounts /loader/dev/* which simulates dispatcher actions while there is no
+    # dispatcher UI. Never mounted when ENVIRONMENT == "production".
+    LOADER_DEV_ENDPOINTS: bool = True
+
     # JWT / Fallback Secret for Dev and Testing
     SECRET_KEY: str = "change-this-in-production-super-secret-key-32chars"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
