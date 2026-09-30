@@ -166,7 +166,7 @@ export default function SOSPage() {
         className="fixed bottom-0 left-0 right-0 flex flex-col p-4 gap-3 bg-white"
         style={{ borderTop: "1px solid #E5E5E2" }}
       >
-        <Link href="/driver">
+        <Link href="/driver/sos/success">
           <button 
             className="w-full flex justify-center items-center py-3.5 rounded-md text-white font-bold text-[15px]"
             style={{ backgroundColor: "#AD3D3D" }}
