@@ -35,7 +35,10 @@ function savedFilter(): BrandFilter {
 }
 
 interface QueueViewProps {
-  /** Plan source for the strip. The queue responses carry no plan time yet (contract gap). */
+  /**
+   * Plan source for the strip, used until the summary sends plan_updated_at
+   * (the latest plan publish across the dock), which then sets the time.
+   */
   plan: PlanSource;
 }
 
@@ -48,6 +51,9 @@ export function QueueView({ plan }: QueueViewProps) {
   const firstName = useLoaderShell().user.name.split(" ")[0];
   const [now] = React.useState(() => (MOCK_TRANSPORT ? mockNow : new Date().toISOString()));
   const [filter, setFilterState] = React.useState<BrandFilter>(savedFilter);
+  // null from the server means no plan on record: the strip shows no time.
+  const planUpdatedAt = live.status === "ready" ? live.summary.plan_updated_at : undefined;
+  const stripPlan = planUpdatedAt === undefined ? plan : { ...plan, updatedAt: planUpdatedAt ?? undefined };
 
   const setFilter = (next: BrandFilter) => {
     setFilterState(next);
@@ -59,7 +65,7 @@ export function QueueView({ plan }: QueueViewProps) {
   };
 
   return (
-    <LoaderScreen title="Loading queue" plan={plan}>
+    <LoaderScreen title="Loading queue" plan={stripPlan}>
       <div className="mx-auto flex max-w-5xl flex-col gap-5">
         {live.status === "ready" ? (
           <QueueContent
