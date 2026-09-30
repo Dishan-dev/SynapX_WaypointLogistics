@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, use } from "react";
+import React, { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,24 +12,20 @@ import {
   Package,
   ThermometerSnowflake,
   ShieldCheck,
-  User,
   Minus,
   Plus,
   RefreshCw,
   WifiOff,
   Camera,
-  Upload,
   Trash2,
-  FileCheck2,
-  Clock,
-  ChevronRight,
-  Info,
   MapPin,
+  Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StorePill } from "@/components/store/status-pill";
 import { submitDeliveryReceipt, ReceiptCreatePayload } from "@/services/api";
 import { saveIssue } from "@/services/issues-store";
+import { mockOrders, StoreOrder } from "@/components/store/mock-data";
 
 interface ItemState {
   id: string;
@@ -45,69 +41,79 @@ interface ItemState {
   photoSize?: string;
 }
 
-const mockOrderDetails = {
-  orderNumber: "ORD0000001",
-  deliveryNumber: "DL-0000123",
-  brand: "Fresh",
-  outletName: "Fresh Colombo",
-  outletCode: "OUT005",
-  dock: "Rear dock",
-  deliveryWindow: "Today, 04:00 – 07:45",
-  actualArrival: "Today, 06:08 (Within delivery window)",
-  driverName: "Marcus Vance",
-  driverPhone: "(555) 0192-44",
-  vehicleId: "VEH001",
-  vehicleSpecs: "Truck • Reefer • 5,510 kg • 26.4 m³",
-  homeDepot: "Peliyagoda Depot",
-  bolNumber: "BOL-2026-0926",
-  sealNumber: "SL-884019",
-  tempReading: "+3.6°C",
-  tempLimit: "< +4.0°C (Chilled Cold Chain)",
-  totalDispatchedUnits: 33,
-  items: [
-    {
-      id: "item-1",
-      sku: "SKU-001",
-      name: "Bottled Water 500ml",
-      category: "Beverages",
-      sentUnits: 20,
-      receivedUnits: 20,
-      condition: "good" as const,
-      issueNote: "",
-    },
-    {
-      id: "item-2",
-      sku: "SKU-014",
-      name: "Soft Drinks 1L (12pk)",
-      category: "Beverages",
-      sentUnits: 8,
-      receivedUnits: 8,
-      condition: "good" as const,
-      issueNote: "",
-    },
-    {
-      id: "item-3",
-      sku: "SKU-032",
-      name: "Paper Cups 8oz (500ct)",
-      category: "Packaging & Consumables",
-      sentUnits: 5,
-      receivedUnits: 5,
-      condition: "good" as const,
-      issueNote: "",
-    },
-  ],
-};
-
 export default function DeliveryDetailsAndReceivingPage({
   params,
 }: {
   params: Promise<{ orderId: string }>;
 }) {
   const resolvedParams = use(params);
-  const orderId = resolvedParams.orderId || mockOrderDetails.orderNumber;
+  const rawOrderId = resolvedParams.orderId || "ORD0000001";
   const router = useRouter();
 
-  const [items, setItems] = useState<ItemState[]>(mockOrderDetails.items);
+  // Find matching order in mock data or construct intelligent defaults
+  const matchedOrder = mockOrders.find(
+    (o) => o.orderNumber.toLowerCase() === rawOrderId.toLowerCase()
+  );
+
+  const orderNumber = matchedOrder?.orderNumber || rawOrderId;
+  const vehicleId = matchedOrder?.vehicleCode || matchedOrder?.vehicle?.code || "VEH001";
+  const driverName = matchedOrder?.vehicle?.driverName || "Marcus Vance";
+  const driverPhone = "(555) 0192-44";
+  const vehicleSpecs = matchedOrder?.vehicle?.description || "Truck • Reefer • 5,510 kg • 26.4 m³";
+  const homeDepot = matchedOrder?.vehicle?.origin || "Peliyagoda Depot";
+  const bolNumber = matchedOrder?.vehicle?.manifestNumber ? `BOL-2026-${matchedOrder.vehicle.manifestNumber}` : "BOL-2026-0926";
+  const sealNumber = `SL-${Math.floor(100000 + Math.random() * 900000)}`;
+  const tempReading = matchedOrder?.temperatureClass === "chilled" ? "+3.6°C" : "Ambient";
+  const tempLimit = matchedOrder?.temperatureClass === "chilled" ? "< +4.0°C (Chilled Cold Chain)" : "Ambient (< 25.0°C)";
+  const deliveryWindow = "Today, 04:00 – 07:45";
+  const actualArrival = "Today, 06:08 (Within delivery window)";
+
+  // Initialize line items
+  const initialItems: ItemState[] = matchedOrder?.items && matchedOrder.items.length > 0
+    ? matchedOrder.items.map((it, idx) => ({
+        id: `item-${idx + 1}`,
+        sku: it.sku,
+        name: it.itemName,
+        category: it.category,
+        sentUnits: it.quantitySent ?? it.quantity,
+        receivedUnits: it.quantitySent ?? it.quantity,
+        condition: "good" as const,
+        issueNote: "",
+      }))
+    : [
+        {
+          id: "item-1",
+          sku: "SKU-001",
+          name: "Bottled Water 500ml",
+          category: "Beverages",
+          sentUnits: 20,
+          receivedUnits: 20,
+          condition: "good" as const,
+          issueNote: "",
+        },
+        {
+          id: "item-2",
+          sku: "SKU-014",
+          name: "Soft Drinks 1L (12pk)",
+          category: "Beverages",
+          sentUnits: 8,
+          receivedUnits: 8,
+          condition: "good" as const,
+          issueNote: "",
+        },
+        {
+          id: "item-3",
+          sku: "SKU-032",
+          name: "Paper Cups 8oz (500ct)",
+          category: "Packaging & Consumables",
+          sentUnits: 5,
+          receivedUnits: 5,
+          condition: "good" as const,
+          issueNote: "",
+        },
+      ];
+
+  const [items, setItems] = useState<ItemState[]>(initialItems);
   const [sealVerified, setSealVerified] = useState(true);
   const [tempVerified, setTempVerified] = useState(true);
   const [generalRemarks, setGeneralRemarks] = useState("");
@@ -213,7 +219,7 @@ export default function DeliveryDetailsAndReceivingPage({
         }
 
         saveIssue({
-          orderId: mockOrderDetails.orderNumber,
+          orderId: orderNumber,
           type: issueType,
           title: `${item.name} (${item.sku}) - ${item.condition.toUpperCase()}`,
           affectedItem: item.name,
@@ -226,15 +232,15 @@ export default function DeliveryDetailsAndReceivingPage({
           photoUrl: item.photoUrl,
           photoName: item.photoName,
           photoSize: item.photoSize,
-          driverName: mockOrderDetails.driverName,
-          vehicleId: mockOrderDetails.vehicleId,
+          driverName: driverName,
+          vehicleId: vehicleId,
         });
       }
     });
 
     const payload: ReceiptCreatePayload = {
       order_id: "a1b2c3d4-0000-0000-0000-000000000001",
-      outlet_id: mockOrderDetails.outletCode,
+      outlet_id: "OUT005",
       units_received: totalReceived,
       weight_received_kg: 80.0,
       has_issues: hasItemIssues,
@@ -284,7 +290,7 @@ export default function DeliveryDetailsAndReceivingPage({
     setIsSubmitting(true);
 
     saveIssue({
-      orderId: mockOrderDetails.orderNumber,
+      orderId: orderNumber,
       type: rejectReason === "temp_breach" ? "Temperature Breach" : "Wrong Consignment",
       title: `CONSIGNMENT REJECTED: ${rejectReason.replace("_", " ").toUpperCase()}`,
       affectedItem: "Entire Delivery Consignment",
@@ -295,13 +301,13 @@ export default function DeliveryDetailsAndReceivingPage({
       photoUrl: rejectPhoto?.url,
       photoName: rejectPhoto?.name,
       photoSize: rejectPhoto?.size,
-      driverName: mockOrderDetails.driverName,
-      vehicleId: mockOrderDetails.vehicleId,
+      driverName: driverName,
+      vehicleId: vehicleId,
     });
 
     const payload: ReceiptCreatePayload = {
       order_id: "a1b2c3d4-0000-0000-0000-000000000001",
-      outlet_id: mockOrderDetails.outletCode,
+      outlet_id: "OUT005",
       units_received: 0,
       has_issues: true,
       issue_type: "other",
@@ -329,14 +335,14 @@ export default function DeliveryDetailsAndReceivingPage({
   if (statusFeedback) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-card border border-border rounded-lg p-6 text-center shadow-lg space-y-4">
+        <div className="max-w-md w-full bg-card border border-border rounded-xl p-6 text-center shadow-lg space-y-4">
           <div className="w-14 h-14 rounded-full bg-primary/10 text-primary mx-auto flex items-center justify-center">
             {statusFeedback.isOffline ? <WifiOff className="size-8" /> : <CheckCircle2 className="size-8" />}
           </div>
           <h2 className="text-xl font-bold text-foreground">
             {statusFeedback.isOffline ? "Saved Offline" : "Receipt Processed"}
           </h2>
-          <p className="text-sm text-muted-foreground">{statusFeedback.message}</p>
+          <p className="text-xs text-muted-foreground">{statusFeedback.message}</p>
           <p className="text-xs text-muted-foreground animate-pulse">Redirecting to deliveries...</p>
         </div>
       </div>
@@ -354,23 +360,23 @@ export default function DeliveryDetailsAndReceivingPage({
           </Link>
         </Button>
         <span className="text-xs font-mono font-medium text-muted-foreground">
-          {mockOrderDetails.deliveryNumber} &bull; {mockOrderDetails.orderNumber}
+          {orderNumber} &bull; Fresh Colombo (OUT005)
         </span>
       </div>
 
       {/* Page Header (Figma 14:527 Header) */}
-      <div className="bg-card border border-border rounded-lg p-5 sm:p-6 shadow-xs space-y-4">
+      <div className="bg-card border border-border rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold text-foreground">
-                Delivery {mockOrderDetails.orderNumber}
+                Delivery {orderNumber}
               </h1>
               <StorePill tone="warning">At Dock</StorePill>
               <StorePill tone="brand">Fresh</StorePill>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Goods request placed 24 Sep 2026 &bull; Destination: <strong>{mockOrderDetails.outletName} ({mockOrderDetails.outletCode})</strong>
+              Goods request placed 24 Sep 2026 &bull; Destination: <strong>Fresh Colombo (OUT005)</strong>
             </p>
           </div>
 
@@ -380,7 +386,7 @@ export default function DeliveryDetailsAndReceivingPage({
               variant="outline"
               size="sm"
               onClick={() => setShowRejectModal(true)}
-              className="text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-semibold"
+              className="text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-semibold text-xs"
             >
               <XCircle className="size-4 mr-1.5" />
               <span>Reject Delivery</span>
@@ -400,7 +406,7 @@ export default function DeliveryDetailsAndReceivingPage({
             </div>
             <div className="p-2.5 rounded-md bg-muted/50 border border-border/50 space-y-0.5">
               <div className="font-bold text-foreground">2. Assigned</div>
-              <div className="text-[11px] text-muted-foreground">25 Sep • {mockOrderDetails.vehicleId}</div>
+              <div className="text-[11px] text-muted-foreground">25 Sep • {vehicleId}</div>
             </div>
             <div className="p-2.5 rounded-md bg-muted/50 border border-border/50 space-y-0.5">
               <div className="font-bold text-foreground">3. In Transit</div>
@@ -435,16 +441,16 @@ export default function DeliveryDetailsAndReceivingPage({
             <div className="space-y-1">
               <div>
                 <span className="text-muted-foreground">Vehicle: </span>
-                <strong className="text-foreground">{mockOrderDetails.vehicleId}</strong>
-                <p className="text-[11px] text-muted-foreground">{mockOrderDetails.vehicleSpecs}</p>
+                <strong className="text-foreground">{vehicleId}</strong>
+                <p className="text-[11px] text-muted-foreground">{vehicleSpecs}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Driver: </span>
-                <strong className="text-foreground">{mockOrderDetails.driverName}</strong>
-                <p className="text-[11px] text-muted-foreground">{mockOrderDetails.driverPhone}</p>
+                <strong className="text-foreground">{driverName}</strong>
+                <p className="text-[11px] text-muted-foreground">{driverPhone}</p>
               </div>
               <div className="text-[11px] text-muted-foreground pt-0.5">
-                Home depot: <strong className="text-foreground">{mockOrderDetails.homeDepot}</strong>
+                Home depot: <strong className="text-foreground">{homeDepot}</strong>
               </div>
             </div>
           </div>
@@ -458,16 +464,16 @@ export default function DeliveryDetailsAndReceivingPage({
             <div className="space-y-1">
               <div>
                 <span className="text-muted-foreground">Location: </span>
-                <strong className="text-foreground">{mockOrderDetails.outletCode} • {mockOrderDetails.dock}</strong>
-                <p className="text-[11px] text-muted-foreground">{mockOrderDetails.outletName}</p>
+                <strong className="text-foreground">OUT005 • Rear dock</strong>
+                <p className="text-[11px] text-muted-foreground">Fresh Colombo</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Delivery window: </span>
-                <strong className="text-foreground">{mockOrderDetails.deliveryWindow}</strong>
+                <strong className="text-foreground">{deliveryWindow}</strong>
               </div>
               <div>
                 <span className="text-muted-foreground">Actual arrival: </span>
-                <span className="text-success font-semibold">{mockOrderDetails.actualArrival}</span>
+                <span className="text-success font-semibold">{actualArrival}</span>
               </div>
             </div>
           </div>
@@ -481,11 +487,11 @@ export default function DeliveryDetailsAndReceivingPage({
             <div className="space-y-1.5">
               <div>
                 <span className="text-muted-foreground">Dispatched: </span>
-                <strong className="text-foreground">{mockOrderDetails.totalDispatchedUnits} units</strong> (3 lines)
-                <p className="text-[11px] text-muted-foreground">{mockOrderDetails.homeDepot} • {mockOrderDetails.bolNumber}</p>
+                <strong className="text-foreground">{totalSent} units</strong> ({items.length} lines)
+                <p className="text-[11px] text-muted-foreground">{homeDepot} • {bolNumber}</p>
               </div>
               <div className="flex items-center justify-between pt-1 border-t border-border/40">
-                <span className="text-muted-foreground">Seal {mockOrderDetails.sealNumber}:</span>
+                <span className="text-muted-foreground">Seal {sealNumber}:</span>
                 <label className="flex items-center gap-1 cursor-pointer">
                   <input
                     type="checkbox"
@@ -508,7 +514,7 @@ export default function DeliveryDetailsAndReceivingPage({
                     className="rounded border-border text-primary"
                   />
                   <span className={tempVerified ? "text-success font-semibold" : "text-destructive font-semibold"}>
-                    {tempVerified ? `${mockOrderDetails.tempReading} (OK)` : "Temp Exceeded"}
+                    {tempVerified ? `${tempReading} (OK)` : "Temp Exceeded"}
                   </span>
                 </label>
               </div>
@@ -518,7 +524,7 @@ export default function DeliveryDetailsAndReceivingPage({
       </div>
 
       {/* Item Intake Verification Section (Figma 14:706) */}
-      <section className="bg-card border border-border rounded-lg p-5 sm:p-6 shadow-xs space-y-4">
+      <section className="bg-card border border-border rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
           <div>
             <div className="flex items-center gap-2">
@@ -528,7 +534,7 @@ export default function DeliveryDetailsAndReceivingPage({
               </StorePill>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Count each item against {mockOrderDetails.orderNumber}, mark condition, and attach photo evidence for damages/shortages.
+              Count each item against {orderNumber}, mark condition, and attach photo evidence for damages/shortages.
             </p>
           </div>
           <div className="text-xs font-bold self-start sm:self-auto">
@@ -550,7 +556,7 @@ export default function DeliveryDetailsAndReceivingPage({
                     : "border-border bg-background/50"
                 }`}
               >
-                {/* Main Item Row (Figma: sent, received count, condition segmented choice) */}
+                {/* Main Item Row */}
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -599,7 +605,7 @@ export default function DeliveryDetailsAndReceivingPage({
                       </button>
                     </div>
 
-                    {/* Segmented Condition Selector (Figma: Good, Damaged, Missing, Incorrect) */}
+                    {/* Segmented Condition Selector */}
                     <div className="flex items-center bg-card border border-border rounded-lg p-1 gap-1 text-xs">
                       {[
                         { key: "good", label: "Good" },
@@ -633,7 +639,7 @@ export default function DeliveryDetailsAndReceivingPage({
                   </div>
                 </div>
 
-                {/* Inline Discrepancy & Photo Evidence Logger (Figma: "Issue reporting sits on the same page, with a photo") */}
+                {/* Inline Discrepancy & Photo Evidence Logger */}
                 {hasDiscrepancy && (
                   <div className="pt-3 border-t border-warning/40 space-y-3 bg-card/60 p-3.5 rounded-lg">
                     <div className="flex items-center justify-between gap-2">
@@ -677,7 +683,6 @@ export default function DeliveryDetailsAndReceivingPage({
                         {item.photoUrl ? (
                           <div className="flex items-center justify-between p-2 rounded-lg border border-border bg-muted/40 text-xs">
                             <div className="flex items-center gap-2.5">
-                              {/* Thumbnail preview */}
                               <img
                                 src={item.photoUrl}
                                 alt="Damage evidence preview"
@@ -743,7 +748,7 @@ export default function DeliveryDetailsAndReceivingPage({
           type="button"
           variant="outline"
           onClick={() => setShowRejectModal(true)}
-          className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-semibold"
+          className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-semibold text-xs"
         >
           <XCircle className="size-4 mr-1.5" />
           <span>Reject Consignment</span>
@@ -769,7 +774,7 @@ export default function DeliveryDetailsAndReceivingPage({
         </Button>
       </div>
 
-      {/* Reject Delivery Modal (Figma 74:2507 Desktop / 06b & Mobile / 06b) */}
+      {/* Reject Delivery Modal */}
       {showRejectModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="max-w-lg w-full bg-card border border-border rounded-xl p-6 space-y-5 shadow-2xl">
@@ -779,7 +784,7 @@ export default function DeliveryDetailsAndReceivingPage({
               </div>
               <div className="space-y-1">
                 <h3 className="text-lg font-bold text-foreground">
-                  Reject Delivery {mockOrderDetails.orderNumber}
+                  Reject Delivery {orderNumber}
                 </h3>
                 <p className="text-xs text-muted-foreground">
                   Rejecting a whole consignment returns all goods back to the depot and alerts Central Dispatch immediately.
@@ -787,14 +792,14 @@ export default function DeliveryDetailsAndReceivingPage({
               </div>
             </div>
 
-            {/* Temperature Limit Highlight Banner (Figma 100:2673 Rationale) */}
+            {/* Temperature Limit Highlight Banner */}
             <div className="p-3 rounded-lg bg-destructive-muted/30 border border-destructive/30 space-y-1 text-xs">
               <div className="font-bold text-destructive flex items-center gap-1.5">
                 <ThermometerSnowflake className="size-4" />
                 <span>Cold Chain Audit Flag</span>
               </div>
               <p className="text-muted-foreground text-[11px]">
-                Recorded telemetry: <strong className="text-foreground">{mockOrderDetails.tempReading}</strong> vs Limit: <strong className="text-foreground">{mockOrderDetails.tempLimit}</strong>.
+                Recorded telemetry: <strong className="text-foreground">{tempReading}</strong> vs Limit: <strong className="text-foreground">{tempLimit}</strong>.
               </p>
             </div>
 

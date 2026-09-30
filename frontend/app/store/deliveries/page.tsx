@@ -78,19 +78,20 @@ const mockDeliveries: DeliveryItem[] = [
   },
   {
     id: "del-003",
-    orderNumber: "ORD0000003",
-    brand: "Style",
-    tempRequirement: "ambient",
-    driverName: "Nimal Fernando",
+    orderNumber: "ORD0000004",
+    brand: "Fresh",
+    tempRequirement: "chilled",
+    driverName: "Carlos Mendes",
     driverPhone: "+94 76 555 1212",
-    vehicleId: "VEH012",
+    vehicleId: "VEH035",
     vehiclePlate: "WP-LY-7721",
     currentLocation: "Departed Peliyagoda Hub",
-    estimatedArrival: "10:30 AM",
-    window: "09:00 – 12:00",
+    estimatedArrival: "07:30 AM",
+    window: "04:00 – 07:45",
     status: "in_transit",
     totalUnits: 15,
     totalWeightKg: 45.0,
+    coldChainTemp: "+3.6°C (Cold Chain OK)",
     sealNumber: "SL-772014",
   },
 ];
@@ -112,23 +113,23 @@ export default function IncomingDeliveriesPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* Page Header */}
       <div className="flex flex-col gap-2">
         <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
           Incoming Deliveries
         </h1>
-        <p className="text-sm text-muted-foreground">
-          Real-time tracking of dispatch vehicles, cold-chain integrity, and active receiving dock status.
+        <p className="text-xs sm:text-sm text-muted-foreground">
+          Real-time tracking of dispatch vehicles, cold-chain integrity, and active receiving dock status for Fresh Colombo.
         </p>
       </div>
 
       {/* Metrics Row */}
-      <section aria-label="Deliveries Summary" className="grid grid-cols-2 gap-4 xl:grid-cols-3 xl:gap-[30px]">
+      <section aria-label="Deliveries Summary" className="grid grid-cols-2 gap-3.5 xl:grid-cols-3">
         <StoreMetricCard
           label="Active Vehicles En Route"
           value="2"
-          caption="1 arriving within 20 mins"
+          caption="1 arriving within 15 mins"
           mobileCaption="2 en route"
         />
         <StoreMetricCard
@@ -180,7 +181,7 @@ export default function IncomingDeliveriesPage() {
             placeholder="Search order or driver..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 text-xs h-9"
+            className="pl-9 text-xs h-9 bg-background"
           />
         </div>
       </div>
@@ -193,32 +194,32 @@ export default function IncomingDeliveriesPage() {
           return (
             <div
               key={del.id}
-              className={`bg-card border rounded-lg p-5 sm:p-6 shadow-xs transition-all hover:shadow-md ${
+              className={`bg-card border rounded-xl p-5 sm:p-6 shadow-xs transition-all hover:shadow-md ${
                 isAtDock
-                  ? "border-warning/60 bg-warning-muted/30 ring-1 ring-warning/30"
+                  ? "border-warning/60 bg-warning-muted/20 ring-1 ring-warning/30"
                   : "border-border"
               }`}
             >
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 {/* Left: Order Info & Status */}
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2.5 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-base font-bold text-foreground">
                       {del.orderNumber}
                     </span>
                     <span className="text-xs font-mono font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded">
                       {del.vehicleId} ({del.vehiclePlate})
                     </span>
-                    <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-accent text-accent-foreground">
+                    <StorePill tone="brand">
                       {del.brand}
-                    </span>
+                    </StorePill>
                     {del.tempRequirement === "chilled" ? (
-                      <StorePill tone="info" className="gap-1 text-xs">
+                      <StorePill tone="info" className="gap-1">
                         <ThermometerSnowflake className="size-3" />
                         Chilled
                       </StorePill>
                     ) : (
-                      <StorePill tone="warning" className="gap-1 text-xs">
+                      <StorePill tone="warning" className="gap-1">
                         <Sun className="size-3" />
                         Ambient
                       </StorePill>
@@ -259,10 +260,10 @@ export default function IncomingDeliveriesPage() {
                     </div>
                   </div>
 
-                  <Button asChild size="default" className="h-10 px-4 text-base font-bold bg-primary text-primary-foreground hover:bg-primary/90">
+                  <Button asChild size="default" className="h-9 px-4 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90">
                     <Link href={`/store/deliveries/${del.orderNumber}`}>
                       <span>{isAtDock ? "Receive & Verify Goods" : "View Tracking"}</span>
-                      <ArrowRight className="size-4 ml-1" />
+                      <ArrowRight className="size-3.5 ml-1" />
                     </Link>
                   </Button>
                 </div>
