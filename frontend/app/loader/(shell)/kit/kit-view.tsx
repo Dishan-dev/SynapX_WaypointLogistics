@@ -119,8 +119,8 @@ export function KitView() {
                 variant="secondary"
                 onClick={() => {
                   const issue = newestWaitingMockIssue();
-                  // The Dispatcher picks the second option when there is one.
-                  if (issue) decideMockIssue(issue.id, (issue.options[1] ?? issue.options[0])?.label);
+                  // The Dispatcher picks the default ("Send N of M" for short and damaged).
+                  if (issue) decideMockIssue(issue.id, (issue.options.find((o) => o.is_default) ?? issue.options[0])?.label);
                   void flush();
                 }}
               >

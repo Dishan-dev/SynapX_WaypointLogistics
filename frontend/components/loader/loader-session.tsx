@@ -60,6 +60,7 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
     <LoaderShell
       user={user}
       dockLabel={dockLabel(stored.session)}
+      dock={stored.session.dock}
       sessionId={stored.session.session_id}
       issueCount={issueCount}
     >

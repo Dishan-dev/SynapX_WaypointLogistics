@@ -1,8 +1,14 @@
 // Sends the outbox in order. Stops at the first network or server error so
 // later actions never overtake earlier ones.
 
-import { isPlanConflict, type ConflictCode, type QueuedAction, type QueuedActionPayload } from "../types";
-import { deleteOutboxAction, listOutbox, putOutboxAction } from "./db";
+import {
+  isPlanConflict,
+  type ConflictCode,
+  type QueuedAction,
+  type QueuedActionPayload,
+  type ReleaseBlocker,
+} from "../types";
+import { deleteOutboxAction, getCachedRun, listOutbox, putCachedRun, putOutboxAction } from "./db";
 import { requestFor } from "./outbox";
 import { NetworkError, type Transport, type TransportResponse } from "./transport";
 
@@ -31,6 +37,8 @@ function detail(body: unknown, fallback: string): string {
 const CONFLICT_CODES: ConflictCode[] = [
   "PLAN_VERSION_STALE",
   "PLAN_NOT_ACKNOWLEDGED",
+  "RELEASE_LOCKED",
+  "RELEASE_UNDO_EXPIRED",
   "CLIENT_ACTION_ID_REUSED",
   "INVALID_STATE_TRANSITION",
 ];
@@ -51,6 +59,15 @@ async function send(transport: Transport, action: QueuedAction): Promise<Transpo
   } catch (err) {
     if (err instanceof NetworkError) return err;
     throw err;
+  }
+}
+
+async function withReleaseBlockers(runCode: string, blockers: ReleaseBlocker[]): Promise<void> {
+  try {
+    const run = await getCachedRun(runCode);
+    if (run) await putCachedRun({ ...run, release_blockers: blockers, release_locked: blockers.length > 0 });
+  } catch {
+    // No IndexedDB: the refetch still brings them.
   }
 }
 
@@ -94,6 +111,10 @@ export async function flushOutbox(transport: Transport): Promise<FlushResult> {
       // PLAN_NOT_ACKNOWLEDGED (L7) is the same story: a plan this tap never saw.
       if (isPlanConflict(code)) staleRuns.add(action.run_code);
       if (code === "CLIENT_ACTION_ID_REUSED") console.error("Loader outbox reused a client_action_id", action);
+      // A refused release shows the server's blockers until the refetch replaces the run.
+      if (code === "RELEASE_LOCKED" && Array.isArray(d?.release_blockers)) {
+        await withReleaseBlockers(action.run_code, d.release_blockers as ReleaseBlocker[]);
+      }
       await putOutboxAction({
         ...action,
         status: "conflict",

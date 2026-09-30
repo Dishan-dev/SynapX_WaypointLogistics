@@ -179,6 +179,11 @@ export interface Run {
   release_locked?: boolean;
   /** What still stops release, in the order the footer names them. */
   release_blockers?: ReleaseBlocker[];
+  // L6. Not in the contract yet (Sachintha is adding them): optional.
+  /** When the run was marked ready to depart; kept after a plan change reopens it. */
+  released_at?: string | null;
+  /** Who marked it ready ("Saman J."). */
+  released_by?: string | null;
 }
 
 export interface PlanChange {
@@ -372,12 +377,17 @@ export type QueuedActionStatus = "pending" | "conflict" | "failed";
  * detail.code of a 409 (API_CONTRACT.md "Errors"). None is retried:
  * - PLAN_VERSION_STALE: made on a plan that is no longer current.
  * - PLAN_NOT_ACKNOWLEDGED: a row write while the current plan is unread (L7).
+ * - RELEASE_LOCKED: release refused while release_blockers lists anything (L6).
+ * - RELEASE_UNDO_EXPIRED: undo after the 10 s window (L6; placeholder code
+ *   until the backend names it).
  * - CLIENT_ACTION_ID_REUSED: the id was already used for another action (a client bug).
  * - INVALID_STATE_TRANSITION: the row or run no longer allows it.
  */
 export type ConflictCode =
   | "PLAN_VERSION_STALE"
   | "PLAN_NOT_ACKNOWLEDGED"
+  | "RELEASE_LOCKED"
+  | "RELEASE_UNDO_EXPIRED"
   | "CLIENT_ACTION_ID_REUSED"
   | "INVALID_STATE_TRANSITION";
 
