@@ -23,6 +23,7 @@ import {
   FileCheck2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { StorePill } from "@/components/store/status-pill";
 import { submitDeliveryReceipt, ReceiptCreatePayload } from "@/services/api";
 
 interface LineItem {
@@ -209,11 +210,11 @@ export default function DeliveryDetailsAndReceivingPage({
   if (statusFeedback) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-card border border-border rounded-2xl p-6 text-center shadow-lg space-y-4">
+        <div className="max-w-md w-full bg-card border border-border rounded-lg p-6 text-center shadow-lg space-y-4">
           <div className="w-14 h-14 rounded-full bg-primary/10 text-primary mx-auto flex items-center justify-center">
             {statusFeedback.isOffline ? <WifiOff className="size-8" /> : <CheckCircle2 className="size-8" />}
           </div>
-          <h2 className="text-xl font-bold">{statusFeedback.isOffline ? "Saved Offline" : "Receipt Confirmed"}</h2>
+          <h2 className="text-xl font-bold text-foreground">{statusFeedback.isOffline ? "Saved Offline" : "Receipt Confirmed"}</h2>
           <p className="text-sm text-muted-foreground">{statusFeedback.message}</p>
           <p className="text-xs text-muted-foreground animate-pulse">Redirecting back to deliveries...</p>
         </div>
@@ -223,9 +224,9 @@ export default function DeliveryDetailsAndReceivingPage({
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Top Header */}
+      {/* Top Navigation */}
       <div className="flex items-center justify-between gap-4">
-        <Button asChild variant="ghost" size="sm" className="gap-2">
+        <Button asChild variant="ghost" size="sm" className="gap-2 text-foreground/80 hover:text-primary">
           <Link href="/store/deliveries">
             <ArrowLeft className="size-4" />
             <span>Back to Deliveries</span>
@@ -237,36 +238,34 @@ export default function DeliveryDetailsAndReceivingPage({
       </div>
 
       {/* Main Delivery Title Card */}
-      <div className="bg-card border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+      <div className="bg-card border border-border rounded-lg p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-primary">
               Delivery Details &amp; Receiving
             </div>
-            <h1 className="text-2xl font-black text-foreground mt-1">
+            <h1 className="text-2xl font-bold text-foreground mt-1">
               {mockOrderDetails.orderNumber}
             </h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Target Outlet: <strong>{mockOrderDetails.outletName}</strong> &bull; Window: {mockOrderDetails.deliveryWindow}
+              Target Outlet: <strong className="text-foreground">{mockOrderDetails.outletName}</strong> &bull; Window: {mockOrderDetails.deliveryWindow}
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
-              At Dock (Awaiting Signoff)
-            </span>
+            <StorePill tone="warning">At Dock (Awaiting Signoff)</StorePill>
           </div>
         </div>
 
         {/* Vehicle, Driver & Cold-Chain Specs Card */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-border/60 text-xs">
-          <div className="p-3 bg-muted/50 rounded-xl space-y-1">
+          <div className="p-3 bg-muted/60 rounded-lg space-y-1">
             <div className="text-[10px] uppercase font-bold text-muted-foreground">Driver &amp; Vehicle</div>
             <div className="font-bold text-foreground">{mockOrderDetails.driverName}</div>
             <div className="text-muted-foreground">{mockOrderDetails.vehiclePlate} ({mockOrderDetails.vehicleId})</div>
           </div>
 
-          <div className="p-3 bg-muted/50 rounded-xl space-y-1">
+          <div className="p-3 bg-muted/60 rounded-lg space-y-1">
             <div className="text-[10px] uppercase font-bold text-muted-foreground">Container Seal #</div>
             <div className="font-mono font-bold text-foreground">{mockOrderDetails.sealNumber}</div>
             <label className="flex items-center gap-1.5 cursor-pointer pt-0.5">
@@ -276,15 +275,15 @@ export default function DeliveryDetailsAndReceivingPage({
                 onChange={(e) => setSealVerified(e.target.checked)}
                 className="rounded border-border text-primary focus:ring-primary"
               />
-              <span className={sealVerified ? "text-emerald-600 font-semibold" : "text-rose-600 font-semibold"}>
+              <span className={sealVerified ? "text-success font-semibold" : "text-destructive font-semibold"}>
                 {sealVerified ? "Seal Intact & Matched" : "Seal Broken / Mismatched"}
               </span>
             </label>
           </div>
 
-          <div className="p-3 bg-muted/50 rounded-xl space-y-1">
+          <div className="p-3 bg-muted/60 rounded-lg space-y-1">
             <div className="text-[10px] uppercase font-bold text-muted-foreground">Temperature Log</div>
-            <div className="font-bold text-emerald-600 dark:text-emerald-400">{mockOrderDetails.tempLog}</div>
+            <div className="font-bold text-success">{mockOrderDetails.tempLog}</div>
             <label className="flex items-center gap-1.5 cursor-pointer pt-0.5">
               <input
                 type="checkbox"
@@ -292,7 +291,7 @@ export default function DeliveryDetailsAndReceivingPage({
                 onChange={(e) => setTemperatureVerified(e.target.checked)}
                 className="rounded border-border text-primary focus:ring-primary"
               />
-              <span className={temperatureVerified ? "text-emerald-600 font-semibold" : "text-rose-600 font-semibold"}>
+              <span className={temperatureVerified ? "text-success font-semibold" : "text-destructive font-semibold"}>
                 {temperatureVerified ? "Cold-Chain Compliant" : "Temp Exceeded Limits"}
               </span>
             </label>
@@ -301,7 +300,7 @@ export default function DeliveryDetailsAndReceivingPage({
       </div>
 
       {/* Item-by-item Receiving Verification Table */}
-      <section className="bg-card border border-border rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+      <section className="bg-card border border-border rounded-lg p-5 sm:p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-bold text-foreground">Items Receiving Checklist</h2>
@@ -310,19 +309,16 @@ export default function DeliveryDetailsAndReceivingPage({
             </p>
           </div>
           <div className="text-xs font-bold">
-            Total: <span className={hasShortfall ? "text-amber-600" : "text-foreground"}>{totalReceived}</span> / {totalOrdered} units
+            Total: <span className={hasShortfall ? "text-warning" : "text-foreground"}>{totalReceived}</span> / {totalOrdered} units
           </div>
         </div>
 
         <div className="space-y-3">
           {items.map((item) => {
-            const isMatch = item.receivedUnits === item.orderedUnits;
-            const isShort = item.receivedUnits < item.orderedUnits;
-
             return (
               <div
                 key={item.id}
-                className="p-4 rounded-xl border border-border bg-background/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                className="p-4 rounded-lg border border-border bg-background/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
               >
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -332,7 +328,7 @@ export default function DeliveryDetailsAndReceivingPage({
                     </span>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    Category: {item.category} &bull; Ordered: <strong>{item.orderedUnits} units</strong>
+                    Category: {item.category} &bull; Ordered: <strong className="text-foreground">{item.orderedUnits} units</strong>
                   </div>
                 </div>
 
@@ -347,8 +343,8 @@ export default function DeliveryDetailsAndReceivingPage({
                         className={`px-2.5 py-1 rounded-md font-semibold transition-colors cursor-pointer ${
                           item.condition === cond
                             ? cond === "intact"
-                              ? "bg-emerald-600 text-white"
-                              : "bg-amber-600 text-white"
+                              ? "bg-success text-success-foreground"
+                              : "bg-warning text-warning-foreground"
                             : "bg-muted text-muted-foreground hover:bg-muted/80"
                         }`}
                       >
@@ -366,7 +362,7 @@ export default function DeliveryDetailsAndReceivingPage({
                     >
                       <Minus className="size-4" />
                     </button>
-                    <span className="w-8 text-center font-extrabold text-sm text-foreground">
+                    <span className="w-8 text-center font-bold text-sm text-foreground">
                       {item.receivedUnits}
                     </span>
                     <button
@@ -393,7 +389,7 @@ export default function DeliveryDetailsAndReceivingPage({
             value={generalNotes}
             onChange={(e) => setGeneralNotes(e.target.value)}
             placeholder="Add any additional remarks regarding delivery timing, driver assistance, or packaging condition..."
-            className="w-full text-xs p-3 rounded-xl border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+            className="w-full text-xs p-3 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
           />
         </div>
       </section>
@@ -404,7 +400,7 @@ export default function DeliveryDetailsAndReceivingPage({
           type="button"
           variant="outline"
           onClick={() => setShowRejectModal(true)}
-          className="w-full sm:w-auto text-rose-600 border-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+          className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-semibold"
         >
           <XCircle className="size-4 mr-1.5" />
           <span>Reject Consignment</span>
@@ -414,7 +410,7 @@ export default function DeliveryDetailsAndReceivingPage({
           type="button"
           onClick={handleConfirmReceipt}
           disabled={isSubmitting}
-          className="w-full sm:w-auto min-w-[220px] bg-primary text-primary-foreground font-bold"
+          className="w-full sm:w-auto min-w-[220px] bg-primary text-primary-foreground font-bold hover:bg-primary/90"
         >
           {isSubmitting ? (
             <>
@@ -433,10 +429,10 @@ export default function DeliveryDetailsAndReceivingPage({
       {/* Reject Delivery Modal (Figma 06b Reject Delivery Sheet) */}
       {showRejectModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-card border border-border rounded-2xl p-6 space-y-5 shadow-xl">
-            <div className="flex items-center gap-3 text-rose-600">
-              <div className="w-10 h-10 rounded-xl bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center shrink-0">
-                <AlertTriangle className="size-6" />
+          <div className="max-w-md w-full bg-card border border-border rounded-lg p-6 space-y-5 shadow-xl">
+            <div className="flex items-center gap-3 text-destructive">
+              <div className="w-10 h-10 rounded-lg bg-destructive-muted flex items-center justify-center shrink-0">
+                <AlertTriangle className="size-6 text-destructive" />
               </div>
               <div>
                 <h3 className="text-lg font-bold text-foreground">Reject Consignment</h3>
@@ -450,7 +446,7 @@ export default function DeliveryDetailsAndReceivingPage({
                 <select
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
-                  className="w-full text-xs p-2.5 rounded-xl border border-border bg-background focus:outline-none"
+                  className="w-full text-xs p-2.5 rounded-lg border border-border bg-background focus:outline-none"
                 >
                   <option value="seal_broken">Security Seal Broken / Missing</option>
                   <option value="temp_breach">Temperature / Cold Chain Breach</option>
@@ -468,7 +464,7 @@ export default function DeliveryDetailsAndReceivingPage({
                   value={rejectNotes}
                   onChange={(e) => setRejectNotes(e.target.value)}
                   placeholder="Describe why the vehicle was turned away..."
-                  className="w-full text-xs p-2.5 rounded-xl border border-border bg-background focus:outline-none resize-none"
+                  className="w-full text-xs p-2.5 rounded-lg border border-border bg-background focus:outline-none resize-none"
                 />
               </div>
 
@@ -476,7 +472,7 @@ export default function DeliveryDetailsAndReceivingPage({
                 <Button type="button" variant="outline" onClick={() => setShowRejectModal(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={isSubmitting || rejectNotes.trim().length < 5} className="bg-rose-600 hover:bg-rose-700 text-white font-bold">
+                <Button type="submit" disabled={isSubmitting || rejectNotes.trim().length < 5} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold">
                   Confirm Rejection
                 </Button>
               </div>

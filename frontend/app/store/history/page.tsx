@@ -16,6 +16,8 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { StorePill } from "@/components/store/status-pill";
 
 interface HistoryItem {
   orderNumber: string;
@@ -84,7 +86,11 @@ export default function DeliveryHistoryPage() {
 
   const filtered = mockHistory.filter((h) => {
     if (brandFilter !== "ALL" && h.brand.toLowerCase() !== brandFilter.toLowerCase()) return false;
-    if (search && !h.orderNumber.toLowerCase().includes(search.toLowerCase()) && !h.driverName.toLowerCase().includes(search.toLowerCase())) {
+    if (
+      search &&
+      !h.orderNumber.toLowerCase().includes(search.toLowerCase()) &&
+      !h.driverName.toLowerCase().includes(search.toLowerCase())
+    ) {
       return false;
     }
     return true;
@@ -93,17 +99,17 @@ export default function DeliveryHistoryPage() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
+      <div className="flex flex-col gap-2">
+        <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
           Delivery History
         </h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <p className="text-sm text-muted-foreground">
           Archive of received consignments, signed digital receipts, and audit trail.
         </p>
       </div>
 
       {/* Filter Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card p-3.5 rounded-xl border border-border shadow-xs">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card p-3.5 rounded-lg border border-border shadow-xs">
         <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
           <Filter className="size-4 text-muted-foreground shrink-0" />
           <div className="flex items-center gap-1.5">
@@ -126,17 +132,17 @@ export default function DeliveryHistoryPage() {
 
         <div className="relative w-full sm:w-64">
           <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <Input
             type="text"
             placeholder="Search order or driver..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full text-xs pl-9 pr-3 py-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+            className="pl-9 text-xs h-9"
           />
         </div>
       </div>
 
-      {/* History Table / Cards */}
+      {/* History Cards */}
       <div className="space-y-3">
         {filtered.map((item) => {
           const isClean = item.status === "completed_clean";
@@ -144,56 +150,48 @@ export default function DeliveryHistoryPage() {
           return (
             <div
               key={item.orderNumber}
-              className="bg-card border border-border rounded-2xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+              className="bg-card border border-border rounded-lg p-5 shadow-xs hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
             >
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2.5 flex-wrap">
-                  <span className="font-extrabold text-base text-foreground">
+                  <span className="font-bold text-base text-foreground">
                     {item.orderNumber}
                   </span>
-                  <span
-                    className={`px-2.5 py-0.5 rounded-md text-xs font-semibold border ${
-                      item.brand.toLowerCase() === "fresh"
-                        ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
-                        : item.brand.toLowerCase() === "style"
-                        ? "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800"
-                        : "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800"
-                    }`}
-                  >
+                  <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-accent text-accent-foreground">
                     {item.brand}
                   </span>
 
                   {isClean ? (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                    <StorePill tone="success" className="gap-1">
                       <CheckCircle2 className="size-3" />
                       Received in Full
-                    </span>
+                    </StorePill>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                    <StorePill tone="warning">
                       Discrepancy Logged
-                    </span>
+                    </StorePill>
                   )}
                 </div>
 
                 <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                  <span>Delivered: <strong>{item.deliveredDate}</strong></span>
+                  <span>Delivered: <strong className="text-foreground">{item.deliveredDate}</strong></span>
                   <span>&bull;</span>
-                  <span>Units: <strong>{item.units}</strong> ({item.weightKg} kg)</span>
+                  <span>Units: <strong className="text-foreground">{item.units}</strong> ({item.weightKg} kg)</span>
                   <span>&bull;</span>
-                  <span>Vehicle: <strong>{item.vehicleId}</strong></span>
+                  <span>Vehicle: <strong className="text-foreground">{item.vehicleId}</strong></span>
                   <span>&bull;</span>
-                  <span>Signed by: <strong>{item.signedBy}</strong></span>
+                  <span>Signed by: <strong className="text-foreground">{item.signedBy}</strong></span>
                 </div>
 
                 {item.issueNote && (
-                  <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                  <p className="text-xs text-warning-muted-foreground font-medium">
                     &bull; Note: {item.issueNote}
                   </p>
                 )}
               </div>
 
               <div className="shrink-0 self-end sm:self-auto">
-                <Button asChild variant="outline" size="sm" className="gap-1.5">
+                <Button asChild variant="outline" size="sm" className="gap-1.5 border-primary text-primary hover:bg-secondary">
                   <Link href={`/store/deliveries/${item.orderNumber}`}>
                     <Eye className="size-3.5" />
                     <span>View Receipt</span>

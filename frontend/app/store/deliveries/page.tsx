@@ -13,11 +13,11 @@ import {
   ArrowRight,
   Search,
   Filter,
-  ShieldCheck,
   User,
   Radio,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { StorePill } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
 
@@ -101,7 +101,11 @@ export default function IncomingDeliveriesPage() {
 
   const filtered = mockDeliveries.filter((d) => {
     if (filter !== "ALL" && d.status !== filter) return false;
-    if (search && !d.orderNumber.toLowerCase().includes(search.toLowerCase()) && !d.driverName.toLowerCase().includes(search.toLowerCase())) {
+    if (
+      search &&
+      !d.orderNumber.toLowerCase().includes(search.toLowerCase()) &&
+      !d.driverName.toLowerCase().includes(search.toLowerCase())
+    ) {
       return false;
     }
     return true;
@@ -110,53 +114,60 @@ export default function IncomingDeliveriesPage() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Incoming Deliveries
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Real-time tracking of dispatch vehicles, cold-chain integrity, and active receiving dock status.
-          </p>
-        </div>
+      <div className="flex flex-col gap-2">
+        <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
+          Incoming Deliveries
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          Real-time tracking of dispatch vehicles, cold-chain integrity, and active receiving dock status.
+        </p>
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <section aria-label="Deliveries Summary" className="grid grid-cols-2 gap-4 xl:grid-cols-3 xl:gap-[30px]">
         <StoreMetricCard
           label="Active Vehicles En Route"
           value="2"
           caption="1 arriving within 20 mins"
+          mobileCaption="2 en route"
         />
         <StoreMetricCard
           label="At Loading Dock"
           value="1"
           caption="ORD0000002 ready to receive"
+          mobileCaption="1 at dock"
         />
         <StoreMetricCard
           label="Cold-Chain Verified"
           value="100%"
           caption="All chilled containers in spec"
+          mobileCaption="100% compliant"
+          className="col-span-2 xl:col-span-1"
         />
-      </div>
+      </section>
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card p-3.5 rounded-xl border border-border shadow-xs">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card p-3.5 rounded-lg border border-border shadow-xs">
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <Filter className="size-4 text-muted-foreground shrink-0" />
           <div className="flex items-center gap-1.5 overflow-x-auto w-full">
-            {["ALL", "at_dock", "arriving_soon", "in_transit"].map((f) => (
+            {[
+              { key: "ALL", label: "All Deliveries" },
+              { key: "at_dock", label: "At Dock (Ready)" },
+              { key: "arriving_soon", label: "Arriving Soon" },
+              { key: "in_transit", label: "In Transit" },
+            ].map((f) => (
               <button
-                key={f}
+                key={f.key}
                 type="button"
-                onClick={() => setFilter(f)}
+                onClick={() => setFilter(f.key)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  filter === f
+                  filter === f.key
                     ? "bg-primary text-primary-foreground shadow-xs"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
                 }`}
               >
-                {f === "ALL" ? "All Deliveries" : f === "at_dock" ? "At Dock (Ready)" : f === "arriving_soon" ? "Arriving Soon" : "In Transit"}
+                {f.label}
               </button>
             ))}
           </div>
@@ -164,12 +175,12 @@ export default function IncomingDeliveriesPage() {
 
         <div className="relative w-full sm:w-64">
           <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <Input
             type="text"
             placeholder="Search order or driver..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full text-xs pl-9 pr-3 py-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+            className="pl-9 text-xs h-9"
           />
         </div>
       </div>
@@ -178,14 +189,13 @@ export default function IncomingDeliveriesPage() {
       <div className="space-y-4">
         {filtered.map((del) => {
           const isAtDock = del.status === "at_dock";
-          const isArriving = del.status === "arriving_soon";
 
           return (
             <div
               key={del.id}
-              className={`bg-card border rounded-2xl p-5 sm:p-6 shadow-xs transition-all hover:shadow-md ${
+              className={`bg-card border rounded-lg p-5 sm:p-6 shadow-xs transition-all hover:shadow-md ${
                 isAtDock
-                  ? "border-amber-400 dark:border-amber-700 bg-amber-50/15"
+                  ? "border-warning/60 bg-warning-muted/30 ring-1 ring-warning/30"
                   : "border-border"
               }`}
             >
@@ -193,46 +203,47 @@ export default function IncomingDeliveriesPage() {
                 {/* Left: Order Info & Status */}
                 <div className="space-y-2">
                   <div className="flex items-center gap-2.5 flex-wrap">
-                    <span className="text-base font-extrabold text-foreground">
+                    <span className="text-base font-bold text-foreground">
                       {del.orderNumber}
                     </span>
-                    <span className="text-xs font-mono font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md">
+                    <span className="text-xs font-mono font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded">
                       {del.vehicleId} ({del.vehiclePlate})
                     </span>
-                    <span
-                      className={`px-2.5 py-0.5 rounded-md text-xs font-semibold border ${
-                        del.brand.toLowerCase() === "fresh"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
-                          : "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800"
-                      }`}
-                    >
+                    <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-accent text-accent-foreground">
                       {del.brand}
                     </span>
                     {del.tempRequirement === "chilled" ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/50 px-2 py-0.5 rounded-md border border-sky-200 dark:border-sky-800">
+                      <StorePill tone="info" className="gap-1 text-xs">
                         <ThermometerSnowflake className="size-3" />
                         Chilled
-                      </span>
+                      </StorePill>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded-md border border-amber-200 dark:border-amber-800">
+                      <StorePill tone="warning" className="gap-1 text-xs">
                         <Sun className="size-3" />
                         Ambient
-                      </span>
+                      </StorePill>
+                    )}
+                    {isAtDock ? (
+                      <StorePill tone="warning">At Dock (Ready)</StorePill>
+                    ) : del.status === "arriving_soon" ? (
+                      <StorePill tone="brand">Arriving Soon</StorePill>
+                    ) : (
+                      <StorePill tone="neutral">In Transit</StorePill>
                     )}
                   </div>
 
                   <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                     <span className="flex items-center gap-1">
                       <Clock className="size-3.5" />
-                      Delivery Window: <strong>{del.window}</strong>
+                      Window: <strong className="text-foreground">{del.window}</strong>
                     </span>
                     <span className="flex items-center gap-1">
-                      <Radio className="size-3.5 text-teal-600 animate-pulse" />
-                      Location: <strong>{del.currentLocation}</strong>
+                      <Radio className="size-3.5 text-primary animate-pulse" />
+                      Location: <strong className="text-foreground">{del.currentLocation}</strong>
                     </span>
                     <span className="flex items-center gap-1">
                       <User className="size-3.5" />
-                      Driver: <strong>{del.driverName}</strong> ({del.driverPhone})
+                      Driver: <strong className="text-foreground">{del.driverName}</strong> ({del.driverPhone})
                     </span>
                   </div>
                 </div>
@@ -243,12 +254,12 @@ export default function IncomingDeliveriesPage() {
                     <div className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
                       Estimated Arrival
                     </div>
-                    <div className="text-sm font-black text-foreground">
+                    <div className="text-sm font-bold text-foreground">
                       {del.estimatedArrival}
                     </div>
                   </div>
 
-                  <Button asChild size="default" className={isAtDock ? "bg-amber-600 hover:bg-amber-700 text-white font-bold" : "bg-primary text-primary-foreground font-semibold"}>
+                  <Button asChild size="default" className="h-10 px-4 text-base font-bold bg-primary text-primary-foreground hover:bg-primary/90">
                     <Link href={`/store/deliveries/${del.orderNumber}`}>
                       <span>{isAtDock ? "Receive & Verify Goods" : "View Tracking"}</span>
                       <ArrowRight className="size-4 ml-1" />
@@ -273,7 +284,7 @@ export default function IncomingDeliveriesPage() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Temp Telemetry:</span>{" "}
-                  <strong className={del.coldChainTemp ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}>
+                  <strong className={del.coldChainTemp ? "text-success font-semibold" : "text-foreground"}>
                     {del.coldChainTemp || "Ambient"}
                   </strong>
                 </div>

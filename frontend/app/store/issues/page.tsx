@@ -15,6 +15,8 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { StorePill } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
 
 interface IssueItem {
@@ -85,7 +87,11 @@ export default function ExceptionsAndIssuesPage() {
 
   const filtered = mockIssues.filter((iss) => {
     if (filter !== "ALL" && iss.status !== filter) return false;
-    if (search && !iss.orderNumber.toLowerCase().includes(search.toLowerCase()) && !iss.title.toLowerCase().includes(search.toLowerCase())) {
+    if (
+      search &&
+      !iss.orderNumber.toLowerCase().includes(search.toLowerCase()) &&
+      !iss.title.toLowerCase().includes(search.toLowerCase())
+    ) {
       return false;
     }
     return true;
@@ -94,51 +100,60 @@ export default function ExceptionsAndIssuesPage() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
+      <div className="flex flex-col gap-2">
+        <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
           Exceptions &amp; Issues
         </h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <p className="text-sm text-muted-foreground">
           Discrepancy logs, shortage notices from warehouse loaders, and store receiving reports.
         </p>
       </div>
 
       {/* Metrics Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <section aria-label="Exceptions Summary" className="grid grid-cols-2 gap-4 xl:grid-cols-3 xl:gap-[30px]">
         <StoreMetricCard
           label="Open / Investigating"
           value="1"
           caption="Shortfall on ORD0000001"
+          mobileCaption="1 open"
         />
         <StoreMetricCard
           label="Credit Notes Issued"
           value="1"
           caption="LKR 1,850.00 credited"
+          mobileCaption="1 credited"
         />
         <StoreMetricCard
           label="Resolution Rate"
           value="67%"
           caption="2 of 3 issues closed"
+          mobileCaption="67% closed"
+          className="col-span-2 xl:col-span-1"
         />
-      </div>
+      </section>
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card p-3.5 rounded-xl border border-border shadow-xs">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card p-3.5 rounded-lg border border-border shadow-xs">
         <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto">
           <Filter className="size-4 text-muted-foreground shrink-0" />
           <div className="flex items-center gap-1.5">
-            {["ALL", "investigating", "credit_issued", "resolved"].map((f) => (
+            {[
+              { key: "ALL", label: "All Exceptions" },
+              { key: "investigating", label: "Under Investigation" },
+              { key: "credit_issued", label: "Credit Issued" },
+              { key: "resolved", label: "Resolved" },
+            ].map((f) => (
               <button
-                key={f}
+                key={f.key}
                 type="button"
-                onClick={() => setFilter(f)}
+                onClick={() => setFilter(f.key)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  filter === f
+                  filter === f.key
                     ? "bg-primary text-primary-foreground shadow-xs"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
                 }`}
               >
-                {f === "ALL" ? "All Exceptions" : f === "investigating" ? "Under Investigation" : f === "credit_issued" ? "Credit Issued" : "Resolved"}
+                {f.label}
               </button>
             ))}
           </div>
@@ -146,12 +161,12 @@ export default function ExceptionsAndIssuesPage() {
 
         <div className="relative w-full sm:w-64">
           <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <Input
             type="text"
             placeholder="Search order or issue..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full text-xs pl-9 pr-3 py-2 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+            className="pl-9 text-xs h-9"
           />
         </div>
       </div>
@@ -166,7 +181,7 @@ export default function ExceptionsAndIssuesPage() {
             <div
               key={issue.id}
               onClick={() => setSelectedIssue(issue)}
-              className="bg-card border border-border rounded-2xl p-5 sm:p-6 shadow-xs hover:shadow-md transition-all cursor-pointer space-y-3"
+              className="bg-card border border-border rounded-lg p-5 sm:p-6 shadow-xs hover:shadow-md transition-all cursor-pointer space-y-3"
             >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="space-y-1">
@@ -174,10 +189,10 @@ export default function ExceptionsAndIssuesPage() {
                     <span className="font-mono text-xs font-bold text-muted-foreground">
                       {issue.id}
                     </span>
-                    <span className="font-extrabold text-sm text-foreground">
+                    <span className="font-bold text-sm text-foreground">
                       {issue.title}
                     </span>
-                    <span className="font-mono text-xs text-primary bg-primary/10 px-2 py-0.5 rounded">
+                    <span className="font-mono text-xs text-primary bg-secondary px-2 py-0.5 rounded font-semibold">
                       {issue.orderNumber}
                     </span>
                   </div>
@@ -188,29 +203,29 @@ export default function ExceptionsAndIssuesPage() {
 
                 <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0">
                   {isInvestigating && (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                    <StorePill tone="warning" className="gap-1">
                       <Clock className="size-3" />
                       Investigating
-                    </span>
+                    </StorePill>
                   )}
                   {isCredit && (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                    <StorePill tone="success" className="gap-1">
                       <CheckCircle2 className="size-3" />
                       Credit Note Issued
-                    </span>
+                    </StorePill>
                   )}
                   {!isInvestigating && !isCredit && (
-                    <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-border">
+                    <StorePill tone="neutral" className="gap-1">
                       <CheckCircle2 className="size-3" />
                       Resolved
-                    </span>
+                    </StorePill>
                   )}
                 </div>
               </div>
 
               <div className="pt-3 border-t border-border/60 flex items-center justify-between gap-4 text-xs text-muted-foreground flex-wrap">
                 <div>Affected: <strong className="text-foreground">{issue.itemsAffected}</strong></div>
-                <div>Reported: <strong>{issue.reportedAt}</strong></div>
+                <div>Reported: <strong className="text-foreground">{issue.reportedAt}</strong></div>
               </div>
             </div>
           );
@@ -220,7 +235,7 @@ export default function ExceptionsAndIssuesPage() {
       {/* Issue Details Drawer / Modal (Figma 07b Issue Details) */}
       {selectedIssue && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="max-w-lg w-full bg-card border border-border rounded-2xl p-6 space-y-5 shadow-2xl">
+          <div className="max-w-lg w-full bg-card border border-border rounded-lg p-6 space-y-5 shadow-2xl">
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
                 <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
@@ -232,33 +247,33 @@ export default function ExceptionsAndIssuesPage() {
               <button
                 type="button"
                 onClick={() => setSelectedIssue(null)}
-                className="p-1 rounded-md hover:bg-muted text-muted-foreground"
+                className="p-1 rounded-md hover:bg-muted text-muted-foreground cursor-pointer"
               >
                 <X className="size-5" />
               </button>
             </div>
 
             <div className="space-y-3 text-xs">
-              <div className="p-3.5 rounded-xl bg-muted/50 space-y-1">
+              <div className="p-3.5 rounded-lg bg-muted/60 space-y-1">
                 <div className="font-bold text-foreground">Incident Summary</div>
                 <p className="text-muted-foreground">{selectedIssue.description}</p>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl border border-border space-y-1">
+                <div className="p-3 rounded-lg border border-border space-y-1">
                   <span className="text-muted-foreground text-[10px] uppercase font-bold">Reported By</span>
                   <div className="font-semibold text-foreground">{selectedIssue.reportedBy}</div>
                 </div>
-                <div className="p-3 rounded-xl border border-border space-y-1">
+                <div className="p-3 rounded-lg border border-border space-y-1">
                   <span className="text-muted-foreground text-[10px] uppercase font-bold">Vehicle &amp; Driver</span>
                   <div className="font-semibold text-foreground">{selectedIssue.vehicleId} &bull; {selectedIssue.driverName}</div>
                 </div>
               </div>
 
               {selectedIssue.resolutionNotes && (
-                <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200 space-y-1">
+                <div className="p-3.5 rounded-lg bg-success-muted text-success-muted-foreground border border-success/30 space-y-1">
                   <div className="font-bold flex items-center gap-1.5">
-                    <CheckCircle2 className="size-4 text-emerald-600" />
+                    <CheckCircle2 className="size-4 text-success" />
                     <span>Resolution &amp; Financial Settlement</span>
                   </div>
                   <p>{selectedIssue.resolutionNotes}</p>
@@ -270,7 +285,7 @@ export default function ExceptionsAndIssuesPage() {
             </div>
 
             <div className="pt-2 flex justify-end">
-              <Button type="button" onClick={() => setSelectedIssue(null)}>
+              <Button type="button" onClick={() => setSelectedIssue(null)} className="bg-primary text-primary-foreground font-bold hover:bg-primary/90">
                 Close Details
               </Button>
             </div>
