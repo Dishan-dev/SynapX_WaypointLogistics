@@ -34,26 +34,21 @@ function savedFilter(): BrandFilter {
   }
 }
 
-interface QueueViewProps {
-  /**
-   * Plan source for the strip, used until the summary sends plan_updated_at
-   * (the latest plan publish across the dock), which then sets the time.
-   */
-  plan: PlanSource;
-}
-
 /**
  * Loading queue (Figma 1b, 1b.1, 7, 13, 19 · tablet T1b): the signed-in
  * dock's runs by departure, metric cards, brand filter and each run's alert.
  */
-export function QueueView({ plan }: QueueViewProps) {
+export function QueueView() {
   const live = useLiveQueue();
   const firstName = useLoaderShell().user.name.split(" ")[0];
   const [now] = React.useState(() => (MOCK_TRANSPORT ? mockNow : new Date().toISOString()));
   const [filter, setFilterState] = React.useState<BrandFilter>(savedFilter);
-  // null from the server means no plan on record: the strip shows no time.
-  const planUpdatedAt = live.status === "ready" ? live.summary.plan_updated_at : undefined;
-  const stripPlan = planUpdatedAt === undefined ? plan : { ...plan, updatedAt: planUpdatedAt ?? undefined };
+  // The time is the summary's plan_updated_at (latest plan publish across the
+  // dock). None until the summary arrives, and none when it is null.
+  const stripPlan: PlanSource = {
+    source: "Dispatcher",
+    updatedAt: (live.status === "ready" && live.summary.plan_updated_at) || undefined,
+  };
 
   const setFilter = (next: BrandFilter) => {
     setFilterState(next);
