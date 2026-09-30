@@ -4,7 +4,14 @@ from app.api.v1.api import api_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 
-# Tables are created and changed only through Alembic migrations (alembic upgrade head).
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Schema is managed exclusively by Alembic migrations.
+    # Run `alembic upgrade head` before starting the server.
+    yield
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
