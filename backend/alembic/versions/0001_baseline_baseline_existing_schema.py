@@ -12,15 +12,10 @@ On a fresh local database, run it normally:
     . .\\scripts\\local_db.ps1
     alembic upgrade head
 
-The shared Neon database already HAS these tables, so running this against it would
-fail. Adopting Alembic there means stamping this revision first (writes a single
-alembic_version row, no DDL) and only then upgrading:
-
-    alembic stamp 0001_baseline
-    alembic upgrade head
-
-That touches the shared database, so it is a team decision - not something to run
-without asking (docs/loader/LOADER_FEATURES.md -> Rules for Claude Code).
+The shared Neon database already HAS these tables and is already past this revision
+(it is on the dev chain, see bbb8d4327f93 onwards), so never stamp or run this there.
+Only Devmith runs alembic on Neon (docs/loader/LOADER_FEATURES.md -> Rules for
+Claude Code).
 
 Revision ID: 0001_baseline
 Revises:

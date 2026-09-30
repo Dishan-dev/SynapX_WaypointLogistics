@@ -14,14 +14,24 @@ class Brand(str, enum.Enum):
     STYLE = "style"
     TECH = "tech"
 
+    @property
+    def label(self) -> str:
+        """How orders.brand (a plain string, Nisith's 0a80c3e0353c) spells it: "Fresh"."""
+        return self.value.title()
+
 
 class VehicleType(str, enum.Enum):
+    """Loader API vocabulary for fleet.Vehicle.vehicle_type (a plain string column)."""
+
     TRUCK = "truck"
     VAN = "van"
 
 
 class TempCapability(str, enum.Enum):
-    """What a vehicle can carry. Chilled orders may only ride on REEFER."""
+    """Loader API vocabulary for fleet.Vehicle.temperature_mode (a plain string column).
+
+    Chilled orders may only ride on REEFER.
+    """
 
     REEFER = "reefer"
     AMBIENT = "ambient"
@@ -54,21 +64,9 @@ class CalendarDay(Base):
     holiday_name = Column(String(100), nullable=True)
 
 
-class Vehicle(Base):
-    """A fleet vehicle. Seeded from vehicles.csv.
-
-    max_weight_kg / max_volume_m3 are the limits the loader's capacity bars fill up.
-    """
-
-    __tablename__ = "vehicles"
-
-    id = Column(Integer, primary_key=True, index=True)
-    code = Column(String(20), unique=True, index=True, nullable=False)
-    vehicle_type = Column(Enum(VehicleType), nullable=False)
-    temp_capability = Column(Enum(TempCapability), nullable=False)
-    max_weight_kg = Column(Float, nullable=False)
-    max_volume_m3 = Column(Float, nullable=False)
-    depot = Column(Enum(Depot), default=Depot.PELIYAGODA, nullable=False)
+# Vehicles are Thisaru's model, app.models.fleet.Vehicle (table `vehicles`). The loader
+# reads code, vehicle_type, capacity_kg, capacity_vol_m3, temperature_mode and depot_name
+# from it; see loader_service for how those map onto the loader API.
 
 
 class Outlet(Base):

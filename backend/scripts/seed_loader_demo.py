@@ -47,6 +47,7 @@ from app.models.delivery_run import (
     RunStopOrder,
     StopStatus,
 )
+from app.models.fleet import Vehicle
 from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck, RunReleaseAction
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderSession, LoaderUser
@@ -62,7 +63,6 @@ from app.models.reference import (
     Outlet,
     TempCapability,
     TemperatureClass,
-    Vehicle,
     VehicleType,
 )
 from app.services.loader_service import LoaderService
@@ -270,7 +270,10 @@ def reset(db: Session) -> None:
     scenario_orders = [row[0] for row in RUN_021_ORDERS + RUN_027_ORDERS]
     db.execute(delete(Order).where(Order.order_number.in_(scenario_orders)))
 
-    for model in (Outlet, Vehicle, CalendarDay):
+    # vehicles is Thisaru's fleet table, which allocations reference, so only
+    # the scenario's own vehicles go.
+    db.execute(delete(Vehicle).where(Vehicle.code.in_([row[0] for row in VEHICLES])))
+    for model in (Outlet, CalendarDay):
         db.execute(delete(model))
     db.flush()
 
@@ -296,11 +299,12 @@ def seed_reference(db: Session) -> dict:
             Vehicle,
             {"code": code},
             {
-                "vehicle_type": VehicleType(vtype),
-                "temp_capability": TempCapability(temp),
-                "max_weight_kg": max_kg,
-                "max_volume_m3": max_m3,
-                "depot": Depot.PELIYAGODA,
+                # fleet.Vehicle columns (plain strings), in the loader's vocabulary.
+                "vehicle_type": VehicleType(vtype).value,
+                "temperature_mode": TempCapability(temp).value,
+                "capacity_kg": max_kg,
+                "capacity_vol_m3": max_m3,
+                "depot_name": Depot.PELIYAGODA.value,
             },
         )
 
@@ -365,7 +369,7 @@ def seed_orders(db: Session, outlets: dict) -> dict:
                 "destination_address": f"{outlet.name}, {outlet.district}",
                 "status": OrderStatus.PROCESSING,
                 "outlet_id": outlet.id,
-                "brand": outlet.brand,
+                "brand": outlet.brand.label,
                 "temperature_class": TemperatureClass(temperature),
                 "units": units,
                 "weight_kg": weight,

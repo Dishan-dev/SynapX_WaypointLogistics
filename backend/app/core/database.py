@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import StaticPool, NullPool
 from app.core.config import settings
 
 connect_args = {}
@@ -34,6 +34,5 @@ def get_db():
         db.close()
 
 
-def create_tables():
-    """Utility to create tables without failing on import if DB is initializing."""
-    Base.metadata.create_all(bind=engine)
+# NOTE: Do NOT call Base.metadata.create_all() anywhere.
+# All schema changes must go through Alembic migrations. See docs/Alembic.

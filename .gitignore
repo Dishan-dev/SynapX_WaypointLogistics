@@ -35,6 +35,7 @@ eggs/
 .eggs/
 /lib/
 lib64/
+!frontend/lib/
 parts/
 sdist/
 var/
@@ -63,3 +64,16 @@ Thumbs.db
 
 # Graphify
 graphify-out/
+
+# Antigravity Agents
+.agents/mcp_config.json
+
+# Scratch scripts
+analyze.py
+render*.py
+backend/add_enums.py
+backend/check_enum.py
+backend/grant.py
+backend/reset_db.py
+backend/seed_orders_to_allocations.py
+backend/seed_trips.py

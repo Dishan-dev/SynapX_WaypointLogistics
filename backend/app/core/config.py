@@ -26,11 +26,21 @@ class Settings(BaseSettings):
     @classmethod
     def assemble_db_connection(cls, v: Optional[str]) -> Optional[str]:
         if isinstance(v, str) and v.strip():
-            # SQLAlchemy 2.0 with psycopg2 requires postgresql+psycopg2://
+            # Check which driver is available: psycopg (v3) or psycopg2 (v2)
+            try:
+                import psycopg  # noqa: F401
+                preferred = "postgresql+psycopg://"
+            except ImportError:
+                preferred = "postgresql+psycopg2://"
+
+            if v.startswith("postgresql+psycopg://") and preferred == "postgresql+psycopg2://":
+                return v.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
+            if v.startswith("postgresql+psycopg2://"):
+                return v
             if v.startswith("postgresql://"):
-                return v.replace("postgresql://", "postgresql+psycopg2://", 1)
+                return v.replace("postgresql://", preferred, 1)
             if v.startswith("postgres://"):
-                return v.replace("postgres://", "postgresql+psycopg2://", 1)
+                return v.replace("postgres://", preferred, 1)
         return v
 
     # Keycloak Configuration

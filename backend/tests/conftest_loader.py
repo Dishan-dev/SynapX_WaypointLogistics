@@ -16,6 +16,7 @@ from app.models.delivery_run import (
     RunStop,
     RunStopOrder,
 )
+from app.models.fleet import Vehicle
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderUser
 from app.models.order import Order, OrderStatus
@@ -28,7 +29,6 @@ from app.models.reference import (
     Outlet,
     TempCapability,
     TemperatureClass,
-    Vehicle,
     VehicleType,
 )
 
@@ -67,8 +67,8 @@ def at(hhmm: str) -> datetime:
 def make_vehicle(db, code="VEH001", vtype=VehicleType.TRUCK, temp=TempCapability.REEFER,
                  max_kg=5510.0, max_m3=26.4) -> Vehicle:
     vehicle = Vehicle(
-        code=code, vehicle_type=vtype, temp_capability=temp,
-        max_weight_kg=max_kg, max_volume_m3=max_m3, depot=Depot.PELIYAGODA,
+        code=code, vehicle_type=vtype.value, temperature_mode=temp.value,
+        capacity_kg=max_kg, capacity_vol_m3=max_m3, depot_name=Depot.PELIYAGODA.value,
     )
     db.add(vehicle)
     db.flush()
@@ -109,7 +109,7 @@ def make_order(db, number, outlet, temperature=TemperatureClass.AMBIENT,
     order = Order(
         order_number=number, client_name=outlet.name,
         destination_address=f"{outlet.name}, {outlet.district}",
-        status=OrderStatus.PROCESSING, outlet_id=outlet.id, brand=outlet.brand,
+        status=OrderStatus.PROCESSING, outlet_id=outlet.id, brand=outlet.brand.label,
         temperature_class=temperature, units=units, weight_kg=kg, volume_m3=m3,
     )
     db.add(order)

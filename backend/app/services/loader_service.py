@@ -427,6 +427,7 @@ class LoaderService:
             if revision.acknowledged_at is None:
                 unacknowledged = revision.version
 
+        vehicle = schemas.VehicleRead.model_validate(run.vehicle)
         return schemas.RunDetailRead(
             code=run.code,
             trip_number=run.trip_number,
@@ -438,14 +439,14 @@ class LoaderService:
             **LoaderService.release_fields(run),
             current_plan_version=run.current_plan_version,
             dock=run.dock.name,
-            vehicle=schemas.VehicleRead.model_validate(run.vehicle),
+            vehicle=vehicle,
             capacity=schemas.CapacityRead(
                 loaded_weight_kg=run.loaded_weight_kg,
                 planned_weight_kg=run.planned_weight_kg,
-                max_weight_kg=run.vehicle.max_weight_kg,
+                max_weight_kg=vehicle.max_weight_kg,
                 loaded_volume_m3=run.loaded_volume_m3,
                 planned_volume_m3=run.planned_volume_m3,
-                max_volume_m3=run.vehicle.max_volume_m3,
+                max_volume_m3=vehicle.max_volume_m3,
             ),
             plan=plan_read,
             unacknowledged_plan_version=unacknowledged,
@@ -990,9 +991,9 @@ class LoaderService:
         detail = LoaderService.build_run_detail(db, run)
         return schemas.RunSummaryRead(
             code=run.code,
-            vehicle_code=run.vehicle.code,
-            vehicle_type=run.vehicle.vehicle_type,
-            temp_capability=run.vehicle.temp_capability,
+            vehicle_code=detail.vehicle.code,
+            vehicle_type=detail.vehicle.vehicle_type,
+            temp_capability=detail.vehicle.temp_capability,
             trip_number=run.trip_number,
             brand=run.brand,
             district=run.district,
@@ -1040,7 +1041,7 @@ class LoaderService:
     def _run_chips(db: Session, run: DeliveryRun) -> List[str]:
         """["Truck", "Reefer", third]: the third is the one thing the loader
         most needs to know - van-only access, a reload trip, or capacity."""
-        vehicle = run.vehicle
+        vehicle = schemas.VehicleRead.model_validate(run.vehicle)
         chips = [
             "Van" if vehicle.vehicle_type == VehicleType.VAN else "Truck",
             "Reefer" if vehicle.temp_capability == TempCapability.REEFER else "Ambient",

@@ -45,7 +45,9 @@ class LoaderIssue(Base):
     id = Column(Integer, primary_key=True, index=True)
     run_id = Column(Integer, ForeignKey("delivery_runs.id"), nullable=False)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
-    issue_type = Column(Enum(IssueType), nullable=False)
+    # Postgres type named loaderissuetype: the driver team's issue_reports already
+    # owns "issuetype" (and "issuestatus") on the shared database.
+    issue_type = Column(Enum(IssueType, name="loaderissuetype"), nullable=False)
 
     units_affected = Column(Integer, nullable=True)
     units_total = Column(Integer, nullable=True)
@@ -64,7 +66,7 @@ class LoaderIssue(Base):
     # behind them, and Postgres lets NULLs repeat under a unique index.
     client_action_id = Column(String(64), unique=True, index=True, nullable=True)
 
-    status = Column(Enum(IssueStatus), default=IssueStatus.SENT, nullable=False)
+    status = Column(Enum(IssueStatus, name="loaderissuestatus"), default=IssueStatus.SENT, nullable=False)
     seen_at = Column(DateTime, nullable=True)
     decide_by = Column(DateTime, nullable=True)
     decided_at = Column(DateTime, nullable=True)

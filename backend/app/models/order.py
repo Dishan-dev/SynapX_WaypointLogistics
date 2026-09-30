@@ -1,18 +1,30 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum, Boolean, Text
 from sqlalchemy.orm import relationship
 from app.core.database import Base
-from app.models.reference import Brand, TemperatureClass
+from app.models.reference import TemperatureClass
 
 
 class OrderStatus(str, enum.Enum):
-    DRAFT = "draft"
-    CONFIRMED = "confirmed"
-    PROCESSING = "processing"
-    DISPATCHED = "dispatched"
-    DELIVERED = "delivered"
-    CANCELLED = "cancelled"
+    """Order lifecycle (docs/store-manager-contract.md §1).
+
+    DRAFT…CANCELLED are in Neon (Nisith's migration 0a80c3e0353c). SUBMITTED, READY_FOR_DISPATCH and
+    COMPLETED are the Store Manager additions and still need adding to the Postgres enum by the
+    Store Manager migration.
+    """
+
+    DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
+    CONFIRMED = "CONFIRMED"
+    PROCESSING = "PROCESSING"
+    ALLOCATED = "ALLOCATED"
+    READY_FOR_DISPATCH = "READY_FOR_DISPATCH"
+    DEFERRED = "DEFERRED"
+    DISPATCHED = "DISPATCHED"
+    DELIVERED = "DELIVERED"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 
 class Order(Base):
@@ -24,30 +36,37 @@ class Order(Base):
     destination_address = Column(String(500), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.DRAFT, nullable=False)
     total_amount = Column(Float, default=0.0)
+    brand = Column(String(100), nullable=True)
+    district = Column(String(100), nullable=True)
+    temperature_zone = Column(String(50), default="Ambient", nullable=False)
+    delivery_window = Column(String(50), nullable=True)
+    weight_kg = Column(Float, default=0.0, nullable=False)
+    is_priority = Column(Boolean, default=False, nullable=False)
+    allocation_id = Column(Integer, ForeignKey("allocations.id"), nullable=True)
+    is_late = Column(Boolean, default=False, nullable=False)
+    # Requested delivery date as YYYY-MM-DD (Store Manager uses this as the delivery date).
+    operating_date = Column(String(50), nullable=True)
+    deferral_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
-    # --- Loader module fields -------------------------------------------------
-    # Added for the loader's stop-sequence checklist. All nullable and additive:
-    # existing rows and existing callers are unaffected.
-    #
-    # These are order-level facts, not loader-only ones - the dispatcher needs
-    # temperature_class to keep chilled orders on reefers, and weight/volume to
-    # allocate against vehicle limits. Coordinated with the dispatcher and driver
-    # teams before merge, per docs/loader/GITHUB_WORKFLOW.md.
-    #
-    # Deliberately order-level aggregates rather than per-OrderItem columns: the
-    # loader screens only ever show a whole-order figure ("44 units - 650 kg -
-    # 3.2 m3"), never a line-item breakdown, so OrderItem needs no change.
+    # Loader order fields (Sachintha, migration 0003_order_loader_fields).
+    # brand and weight_kg above are Nisith's (0a80c3e0353c); the loader reads those.
     outlet_id = Column(Integer, ForeignKey("outlets.id"), nullable=True)
-    brand = Column(Enum(Brand), nullable=True)
     temperature_class = Column(Enum(TemperatureClass), nullable=True)
     units = Column(Integer, nullable=True)
-    weight_kg = Column(Float, nullable=True)
     volume_m3 = Column(Float, nullable=True)
+
+    # Store Manager fields (Dev A migration, not yet written).
+    submitted_at = Column(DateTime, nullable=True)
+    cutoff_at = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+    placed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    deferral_count = Column(Integer, default=0, nullable=False)
 
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     shipment = relationship("Shipment", back_populates="order", uselist=False)
+    allocation = relationship("Allocation", back_populates="orders")
     outlet = relationship("Outlet")
 
 
