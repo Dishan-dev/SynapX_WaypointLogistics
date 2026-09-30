@@ -45,11 +45,36 @@ def upgrade() -> None:
     op.create_index(op.f('ix_delivery_receipts_id'), 'delivery_receipts', ['id'], unique=False)
     op.create_index(op.f('ix_delivery_receipts_order_id'), 'delivery_receipts', ['order_id'], unique=True)
 
+    # 3. Create outlet_settings table
+    op.create_table(
+        'outlet_settings',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('outlet_id', sa.Integer(), nullable=False),
+        sa.Column('store_manager', sa.String(length=255), nullable=False, server_default='Sarah Jenkins · MGR-88'),
+        sa.Column('contact_phone', sa.String(length=50), nullable=False, server_default='+94 11 234 5678'),
+        sa.Column('emergency_contact', sa.String(length=255), nullable=False, server_default='Kamal S. (Backroom Lead) · ext 8802'),
+        sa.Column('parking', sa.String(length=100), nullable=False, server_default='No restrictions'),
+        sa.Column('driver_check_in_call', sa.Boolean(), nullable=False, server_default=sa.text('true')),
+        sa.Column('share_dock_gate_code', sa.Boolean(), nullable=False, server_default=sa.text('true')),
+        sa.Column('email_alerts_issues', sa.Boolean(), nullable=False, server_default=sa.text('true')),
+        sa.Column('sms_alerts_priority', sa.Boolean(), nullable=False, server_default=sa.text('false')),
+        sa.Column('last_synced_at', sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        sa.ForeignKeyConstraint(['outlet_id'], ['outlets.id'], name='fk_outlet_settings_outlet_id_outlets'),
+        sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_outlet_settings_id'), 'outlet_settings', ['id'], unique=False)
+    op.create_index(op.f('ix_outlet_settings_outlet_id'), 'outlet_settings', ['outlet_id'], unique=True)
+
 
 def downgrade() -> None:
+    op.drop_index(op.f('ix_outlet_settings_outlet_id'), table_name='outlet_settings')
+    op.drop_index(op.f('ix_outlet_settings_id'), table_name='outlet_settings')
+    op.drop_table('outlet_settings')
+
     op.drop_index(op.f('ix_delivery_receipts_order_id'), table_name='delivery_receipts')
     op.drop_index(op.f('ix_delivery_receipts_id'), table_name='delivery_receipts')
     op.drop_table('delivery_receipts')
 
     op.drop_column('order_items', 'dispatcher_note')
     op.drop_column('order_items', 'quantity_sent')
+

@@ -9,7 +9,7 @@ from app.schemas.receipts import (
     ReceiptSyncResponse,
 )
 
-router = APIRouter(prefix="/api/receipts", tags=["receipts"])
+router = APIRouter(prefix="/receipts", tags=["Receipts"])
 receipt_service = ReceiptService()
 
 
