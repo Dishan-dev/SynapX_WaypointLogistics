@@ -609,6 +609,7 @@ function mockServerQueue(): RunQueue {
           return {
             ...card,
             status: run.status,
+            stop_count: run.stops.length,
             orders_loaded: run.orders_loaded,
             orders_checked: run.orders_checked,
             orders_total: run.orders_total,
