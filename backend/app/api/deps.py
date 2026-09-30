@@ -80,3 +80,13 @@ def require_dispatcher_or_admin(
             detail="Only dispatchers and admins can perform this action.",
         )
     return user
+
+
+def require_driver(current_user: User = Depends(get_current_user)) -> User:
+    from app.models.user import UserRole
+    if current_user.role != UserRole.DRIVER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Driver access only"
+        )
+    return current_user
