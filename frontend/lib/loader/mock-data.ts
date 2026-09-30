@@ -289,7 +289,116 @@ const RUN_021: Run = {
 };
 
 /** Run details available offline in the mock. Other runs are queue-level only. */
-export const mockRunDetails: Run[] = [RUN_021];
+// RUN-022: signed off 01:48 by Nimal S. (queue card T1b, success screen 1f).
+// Outlet names are placeholders.
+const RUN_022: Run = {
+  code: "RUN-022",
+  trip_number: 1,
+  brand: "fresh",
+  district: "Colombo",
+  wave: "night",
+  departs_at: at("03:40"),
+  status: "ready_to_depart",
+  current_plan_version: 2,
+  dock: "Dock 3",
+  vehicle: {
+    code: "VEH005",
+    vehicle_type: "truck",
+    temp_capability: "reefer",
+    max_weight_kg: 5510,
+    max_volume_m3: 26.4,
+  },
+  capacity: {
+    loaded_weight_kg: 2310,
+    planned_weight_kg: 2310,
+    max_weight_kg: 5510,
+    loaded_volume_m3: 11.2,
+    planned_volume_m3: 11.2,
+    max_volume_m3: 26.4,
+  },
+  plan: {
+    version: 2,
+    published_at: at("00:40"),
+    source: "Dispatcher",
+    summary: null,
+    acknowledged_at: at("00:44"),
+    acknowledged_by: "Nimal S.",
+  },
+  unacknowledged_plan_version: null,
+  orders_loaded: 4,
+  orders_checked: 4,
+  orders_total: 4,
+  acknowledged_plan_version: 2,
+  plan_change: null,
+  release_locked: false,
+  release_blockers: [],
+  released_at: at("01:48"),
+  released_by: "Nimal S.",
+  stops: [
+    {
+      stop_sequence: 2,
+      load_position: 1,
+      eta: at("05:10"),
+      handling_minutes: 15,
+      status: "complete",
+      outlet: { ...outlet("OUT012", "Colombo Fort", "rear_dock", "04:00", "07:45"), district: "Colombo" },
+      orders: [
+        {
+          order_number: "ORD0092311",
+          temperature_class: "ambient",
+          units: 40,
+          weight_kg: 600,
+          volume_m3: 2.9,
+          state: "loaded",
+          checked_at: at("01:20"),
+          checked_by: "Nimal S.",
+        },
+        {
+          order_number: "ORD0092312",
+          temperature_class: "chilled",
+          units: 30,
+          weight_kg: 450,
+          volume_m3: 2.2,
+          state: "loaded",
+          checked_at: at("01:24"),
+          checked_by: "Nimal S.",
+        },
+      ],
+    },
+    {
+      stop_sequence: 1,
+      load_position: 2,
+      eta: at("04:35"),
+      handling_minutes: 15,
+      status: "complete",
+      outlet: { ...outlet("OUT010", "Colombo Pettah", "rear_dock", "04:00", "07:45"), district: "Colombo" },
+      orders: [
+        {
+          order_number: "ORD0092309",
+          temperature_class: "ambient",
+          units: 52,
+          weight_kg: 760,
+          volume_m3: 3.7,
+          state: "loaded",
+          checked_at: at("01:35"),
+          checked_by: "Nimal S.",
+        },
+        {
+          order_number: "ORD0092310",
+          temperature_class: "chilled",
+          units: 34,
+          weight_kg: 500,
+          volume_m3: 2.4,
+          state: "loaded",
+          checked_at: at("01:40"),
+          checked_by: "Nimal S.",
+        },
+      ],
+    },
+  ],
+};
+
+export const mockRunDetails: Run[] = [RUN_021, RUN_022];
 
 export function findMockRun(code: string): Run | undefined {
   return mockRunDetails.find((run) => run.code === code);

@@ -119,9 +119,10 @@ export function applyAction(run: Run, action: QueuedAction, actorName?: string):
         plan: { ...run.plan, version: action.plan_version, acknowledged_at: action.created_at, acknowledged_by: by },
       });
     case "release":
-      return { ...run, status: "ready_to_depart" };
+      return { ...run, status: "ready_to_depart", released_at: action.created_at, released_by: by };
     case "release_undo":
-      return { ...run, status: "loaded" };
+      // Release needs every order checked, so an undone run is loaded again.
+      return { ...run, status: "loaded", released_at: null, released_by: null };
   }
 
   const nextState = ORDER_STATE_AFTER[action.action_type];

@@ -351,6 +351,39 @@ const ORDER_WRITES: Partial<Record<QueuedActionType, { from: OrderState[]; noop:
   recheck: { from: ["re_check"], noop: ["loaded"] },
 };
 
+/** The undo window after "Mark ready to depart" (Figma 1e: "Undo for 10 s"). */
+const UNDO_WINDOW_MS = 10_000;
+
+/**
+ * How the mock server answers release and undo (contract, L6): release is
+ * refused while anything blocks it (409 RELEASE_LOCKED with the blockers);
+ * undo only while the run is still ready and within 10 s of released_at
+ * (409 RELEASE_UNDO_EXPIRED, a placeholder code).
+ */
+function releaseOutcome(run: Run, action: QueuedAction): TransportResponse | "noop" | undefined {
+  const refuse = (code: string, message: string, extra: object = {}) =>
+    errorResponse(409, code, message, { entity: "DeliveryRun", entity_id: run.code, ...extra });
+  if (action.action_type === "release") {
+    if (run.status === "ready_to_depart") return "noop";
+    if (run.status === "gated_out") return refuse("INVALID_STATE_TRANSITION", `${run.code} is through the gate.`);
+    const blockers = run.release_blockers ?? [];
+    const open = run.orders_total - run.orders_checked;
+    const locked = blockers.length > 0 || open > 0 || run.unacknowledged_plan_version !== null;
+    if (locked) {
+      return refuse("RELEASE_LOCKED", `${run.code} cannot be released yet.`, {
+        release_blockers: blockers.length ? blockers : [{ code: "orders_open", count: open }],
+      });
+    }
+  }
+  if (action.action_type === "release_undo") {
+    if (run.status !== "ready_to_depart") return refuse("INVALID_STATE_TRANSITION", `${run.code} is not ready to depart.`);
+    if (run.released_at && Date.now() - Date.parse(run.released_at) > UNDO_WINDOW_MS) {
+      return refuse("RELEASE_UNDO_EXPIRED", "The 10 s undo window has passed.");
+    }
+  }
+  return undefined;
+}
+
 /** How the mock server answers an order write: an error, a no-op, or undefined to apply it. */
 function orderWriteOutcome(run: Run, action: QueuedAction): TransportResponse | "noop" | undefined {
   const rule = ORDER_WRITES[action.action_type];
@@ -433,6 +466,10 @@ export function mockTransport(latencyMs = 300): Transport {
           });
         }
       }
+
+      const release = releaseOutcome(run, action);
+      if (release === "noop") return ok(run);
+      if (release) return release;
 
       const outcome = orderWriteOutcome(run, action);
       if (outcome === "noop") return ok(run);
@@ -671,10 +708,13 @@ function mockServerQueue(): RunQueue {
       runs: group.runs
         .map((card) => {
           const run = mockServerRun(state, card.code);
-          if (!run) return card;
+          // Queue-only runs have no detail on the mock server: keep the alert
+          // text but drop its Open action, which would only reach a dead end.
+          if (!run) return card.alert ? { ...card, alert: { ...card.alert, action: "", href: "" } } : card;
           return {
             ...card,
             status: run.status,
+            stop_count: run.stops.length,
             orders_loaded: run.orders_loaded,
             orders_checked: run.orders_checked,
             orders_total: run.orders_total,
