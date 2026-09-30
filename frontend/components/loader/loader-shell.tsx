@@ -4,7 +4,9 @@ import * as React from "react";
 import { usePathname } from "next/navigation";
 import { FlagIssueHost } from "./flag-issue-sheet";
 import { LoaderBottomNav, type LoaderTab } from "./loader-bottom-nav";
-import { LoaderSyncProvider } from "./loader-sync-provider";
+import { listOutbox } from "@/lib/loader/offline/db";
+import { loadIssues } from "@/lib/loader/offline/issues-cache";
+import { LoaderSyncProvider, useLoaderSync } from "./loader-sync-provider";
 
 export interface LoaderShellUser {
   name: string;
@@ -42,16 +44,75 @@ function runCodeFrom(pathname: string): string | undefined {
   return /^\/loader\/runs\/([^/]+)/.exec(pathname)?.[1];
 }
 
+/** Flags still waiting in the outbox; the server's count does not include them yet. */
+async function pendingFlagCount(): Promise<number> {
+  try {
+    const outbox = await listOutbox();
+    return outbox.filter((a) => a.action_type === "flag" && a.status === "pending").length;
+  } catch {
+    // IndexedDB unavailable (private mode): nothing queued to count.
+    return 0;
+  }
+}
+
+/**
+ * Bottom nav with the Issues badge: the dock's open issues from the server,
+ * plus flags queued on this tablet, so the badge rises as soon as a flag is
+ * queued offline. When queued flags go out, the list is reloaded so the
+ * server's count takes them over.
+ */
+function ShellBottomNav({
+  active,
+  loadingHref,
+  dock,
+  issueCount,
+}: {
+  active?: LoaderTab;
+  loadingHref: string;
+  dock?: string;
+  issueCount?: number;
+}) {
+  const { sync, transport } = useLoaderSync();
+  const [pendingFlags, setPendingFlags] = React.useState(0);
+  const lastPending = React.useRef(0);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void pendingFlagCount().then((count) => {
+      if (cancelled) return;
+      const sent = count < lastPending.current;
+      lastPending.current = count;
+      setPendingFlags(count);
+      if (sent && sync.online && dock) void loadIssues(transport, dock).catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sync.pending, sync.lastSyncedAt, sync.online, dock, transport]);
+
+  const total = (issueCount ?? 0) + pendingFlags;
+  return (
+    <LoaderBottomNav
+      className="sticky bottom-0 z-30"
+      active={active}
+      loadingHref={loadingHref}
+      issueCount={total}
+    />
+  );
+}
+
 interface LoaderShellProps {
   user: LoaderShellUser;
   dockLabel: string;
+  /** The session's dock ("Dock 3"), to reload its issues after queued flags go out. */
+  dock?: string;
   sessionId: number | null;
   issueCount?: number;
   children: React.ReactNode;
 }
 
 /** Frame for signed-in loader screens: page content plus the bottom nav. */
-export function LoaderShell({ user, dockLabel, sessionId, issueCount, children }: LoaderShellProps) {
+export function LoaderShell({ user, dockLabel, dock, sessionId, issueCount, children }: LoaderShellProps) {
   const pathname = usePathname();
 
   // Loading tab returns to the run opened last in this session.
@@ -69,10 +130,10 @@ export function LoaderShell({ user, dockLabel, sessionId, issueCount, children }
       <LoaderSyncProvider sessionId={sessionId}>
         <div className="flex min-h-dvh flex-col bg-background">
           <div className="flex flex-1 flex-col">{children}</div>
-          <LoaderBottomNav
-            className="sticky bottom-0 z-30"
+          <ShellBottomNav
             active={activeTab(pathname)}
             loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
+            dock={dock}
             issueCount={issueCount}
           />
         </div>
