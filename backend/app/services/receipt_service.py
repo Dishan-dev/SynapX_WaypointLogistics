@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -92,7 +91,7 @@ class ReceiptService:
         return {"synced": synced, "skipped": skipped}
 
     async def get_receipt_by_order(
-        self, order_id: uuid.UUID, db: Session
+        self, order_id: int, db: Session
     ) -> DeliveryReceipt | None:
         result = db.execute(
             select(DeliveryReceipt).where(DeliveryReceipt.order_id == order_id)

@@ -1,7 +1,6 @@
-import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.api.deps import get_db
 from app.services.receipt_service import ReceiptService
 from app.schemas.receipts import (
     ReceiptCreateRequest,
@@ -40,7 +39,7 @@ async def sync_offline_receipts(
 
 @router.get("/{order_id}", response_model=ReceiptResponse)
 async def get_receipt(
-    order_id: uuid.UUID,
+    order_id: int,
     db: Session = Depends(get_db),
 ):
     """Get the receipt for an order. Returns 404 if not yet submitted."""

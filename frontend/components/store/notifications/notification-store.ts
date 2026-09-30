@@ -1,11 +1,27 @@
 "use client";
 
 import { useMemo, useSyncExternalStore } from "react";
+import { toast } from "sonner";
 import { mockNotifications, type StoreNotification } from "@/components/store/mock-data";
+import { STORE_DATA_SOURCE } from "@/components/store/api/config";
+import { getNotifications, markAllNotificationsRead, markNotificationRead } from "@/components/store/api/store-data";
 
-// Read state for the Store Manager's notifications, shared by the bell badges and the Notifications page.
-// Kept in this browser until PATCH /api/v1/notifications/{id}/read exists.
+// Notifications shared by the bell badges and the Notifications page.
+//   mock mode: the mock list, with read state kept in this browser.
+//   api mode:  loaded from /api/v1/notifications, marked read through the API (updates show immediately).
 
+export type NotificationsStatus = "loading" | "ready" | "error";
+
+interface NotificationsState {
+  items: StoreNotification[];
+  status: NotificationsStatus;
+}
+
+const live = STORE_DATA_SOURCE === "api";
+const EMPTY: NotificationsState = { items: [], status: "loading" };
+const MOCK_SERVER: NotificationsState = { items: mockNotifications, status: "ready" };
+
+// ── mock mode: read ids in localStorage ──
 const KEY = "waypoint.store.read-notifications";
 const EVENT = "waypoint:notifications-read";
 
@@ -17,7 +33,15 @@ function readRaw() {
   }
 }
 
-function subscribe(onChange: () => void) {
+function parseIds(raw: string | null) {
+  try {
+    return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function subscribeMock(onChange: () => void) {
   window.addEventListener("storage", onChange);
   window.addEventListener(EVENT, onChange);
   return () => {
@@ -35,29 +59,85 @@ function writeReadIds(ids: Set<string>) {
   window.dispatchEvent(new Event(EVENT));
 }
 
-function parseIds(raw: string | null) {
+// ── api mode: module-level cache shared by every component ──
+let apiState: NotificationsState = EMPTY;
+let loadStarted = false;
+const listeners = new Set<() => void>();
+
+function setApiState(next: NotificationsState) {
+  apiState = next;
+  listeners.forEach((listener) => listener());
+}
+
+async function load() {
+  loadStarted = true;
+  setApiState({ ...apiState, status: apiState.items.length ? "ready" : "loading" });
   try {
-    return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+    setApiState({ items: await getNotifications(), status: "ready" });
   } catch {
-    return new Set<string>();
+    setApiState({ ...apiState, status: "error" });
   }
 }
 
-/** Notifications with their current read state. The server render uses the mock's own read flags. */
-export function useNotifications(): StoreNotification[] {
-  const raw = useSyncExternalStore(subscribe, readRaw, () => null);
-  return useMemo(() => {
+function subscribeApi(onChange: () => void) {
+  listeners.add(onChange);
+  if (!loadStarted) void load();
+  return () => listeners.delete(onChange);
+}
+
+// ── hooks ──
+
+const noopSubscribe = () => () => {};
+const getNull = () => null;
+const getApiState = () => apiState;
+const getEmpty = () => EMPTY;
+
+export function useNotificationsState(): NotificationsState & { reload: () => void } {
+  const raw = useSyncExternalStore(live ? noopSubscribe : subscribeMock, live ? getNull : readRaw, getNull);
+  const api = useSyncExternalStore(live ? subscribeApi : noopSubscribe, getApiState, getEmpty);
+  const state = useMemo<NotificationsState>(() => {
+    if (live) return api;
     const readIds = parseIds(raw);
-    return mockNotifications.map((n) => (readIds.has(n.id) ? { ...n, isRead: true } : n));
-  }, [raw]);
+    return { status: "ready", items: MOCK_SERVER.items.map((n) => (readIds.has(n.id) ? { ...n, isRead: true } : n)) };
+  }, [api, raw]);
+  return { ...state, reload: () => void load() };
+}
+
+export function useNotifications(): StoreNotification[] {
+  return useNotificationsState().items;
 }
 
 export function useUnreadCount() {
   return useNotifications().filter((n) => !n.isRead).length;
 }
 
+function markLocally(ids: string[]) {
+  const set = new Set(ids);
+  setApiState({ ...apiState, items: apiState.items.map((n) => (set.has(n.id) ? { ...n, isRead: true } : n)) });
+}
+
 export function markNotificationsRead(ids: string[]) {
-  const readIds = parseIds(readRaw());
-  ids.forEach((id) => readIds.add(id));
-  writeReadIds(readIds);
+  if (ids.length === 0) return;
+  if (!live) {
+    const readIds = parseIds(readRaw());
+    ids.forEach((id) => readIds.add(id));
+    writeReadIds(readIds);
+    return;
+  }
+  const before = apiState;
+  markLocally(ids);
+  Promise.all(ids.map((id) => markNotificationRead(id))).catch(() => {
+    setApiState(before);
+    toast.error("Couldn't mark that as read. Try again.");
+  });
+}
+
+export function markAllRead(unreadIds: string[]) {
+  if (!live) return markNotificationsRead(unreadIds);
+  const before = apiState;
+  markLocally(unreadIds);
+  markAllNotificationsRead().catch(() => {
+    setApiState(before);
+    toast.error("Couldn't mark notifications as read. Try again.");
+  });
 }

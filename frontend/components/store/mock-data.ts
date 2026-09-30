@@ -43,6 +43,7 @@ export type OrderStatus =
   | "draft"
   | "submitted"
   | "confirmed"
+  | "allocated"
   | "processing"
   | "ready_for_dispatch"
   | "dispatched"

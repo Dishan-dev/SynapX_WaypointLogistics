@@ -1,12 +1,11 @@
-import uuid
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 
 class ReceiptCreateRequest(BaseModel):
-    order_id: uuid.UUID
-    outlet_id: str
+    order_id: int
+    outlet_id: int
     units_received: Optional[int] = None
     weight_received_kg: Optional[float] = None
     has_issues: bool = False
@@ -21,10 +20,11 @@ class ReceiptSyncRequest(BaseModel):
 
 
 class ReceiptResponse(BaseModel):
-    id: uuid.UUID
-    order_id: uuid.UUID
-    outlet_id: str
+    id: int
+    order_id: int
+    outlet_id: int
     units_received: Optional[int] = None
+    weight_received_kg: Optional[float] = None
     has_issues: bool
     issue_type: Optional[str] = None
     issue_description: Optional[str] = None

@@ -3,16 +3,20 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StoreMetricCard } from "@/components/store/store-cards";
 import { formatTime, greeting } from "@/components/store/format";
-import { currentManager, MOCK_NOW, mockIssues, mockOrders } from "@/components/store/mock-data";
+import { currentManager, mockIssues } from "@/components/store/mock-data";
+import { STORE_DATA_SOURCE, storeNow } from "@/components/store/api/config";
+import { getStoreOrders } from "@/components/store/api/store-data";
 import { getDashboardData } from "@/components/store/dashboard/dashboard-data";
 import { UpcomingDeliveries } from "@/components/store/dashboard/upcoming-deliveries";
 import { RecentRequests } from "@/components/store/dashboard/recent-requests";
 import { NeedsAttention } from "@/components/store/dashboard/needs-attention";
 
 // Figma: Desktop / 01 Dashboard and Mobile / 01 Dashboard.
-export default function StoreDashboardPage() {
-  const now = MOCK_NOW;
-  const data = getDashboardData(mockOrders, mockIssues);
+export default async function StoreDashboardPage() {
+  const now = storeNow();
+  // Delivery issues belong to Dev B's receipts flow; there's no API for them yet.
+  const issues = STORE_DATA_SOURCE === "api" ? [] : mockIssues;
+  const data = getDashboardData(await getStoreOrders(), issues);
   const next = data.nextDelivery;
   const nextEta = next?.eta ? formatTime(next.eta) : null;
   const issueCount = data.openIssues.length;

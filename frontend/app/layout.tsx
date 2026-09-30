@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/inter";
 import "./globals.css";
 import { OfflineSyncBanner } from "@/components/OfflineSyncBanner";
+import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   title: "Waypoint Logistics | Intelligent Supply Chain & Fleet Management",
@@ -31,6 +32,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <OfflineSyncBanner />
         <main className="flex-1 flex flex-col">{children}</main>
+        <Toaster position="top-right" richColors />
         <script
           dangerouslySetInnerHTML={{
             __html: `

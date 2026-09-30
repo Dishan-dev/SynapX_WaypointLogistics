@@ -34,6 +34,7 @@ import { brandLabels, type StoreManager, type StoreOrder, type StoreOrderItem, t
 import { formatDeliveryWindow, formatUnitCount } from "@/components/store/format";
 import { cutoffFor, isPastCutoff } from "@/components/store/new-request/delivery-rules";
 import { DispatcherNoteDialog } from "@/components/store/request-detail/dispatcher-note";
+import { cancelStoreOrder } from "@/components/store/api/store-data";
 import {
   allocationFor,
   currentStepIndex,
@@ -101,10 +102,16 @@ export function RequestDetailView({
     return "—";
   };
 
-  const cancel = () => {
-    setOrder((current) => ({ ...current, status: "cancelled" }));
-    setCancelOpen(false);
-    toast.success(`${order.orderNumber} cancelled.`);
+  const cancel = async () => {
+    try {
+      await cancelStoreOrder(order.id);
+      setOrder((current) => ({ ...current, status: "cancelled" }));
+      toast.success(`${order.orderNumber} cancelled.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Couldn't cancel the request. Try again.");
+    } finally {
+      setCancelOpen(false);
+    }
   };
 
   return (

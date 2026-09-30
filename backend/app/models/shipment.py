@@ -1,16 +1,16 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum, JSON
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
 class ShipmentStatus(str, enum.Enum):
-    PENDING = "pending"
-    IN_TRANSIT = "in_transit"
-    OUT_FOR_DELIVERY = "out_for_delivery"
-    DELIVERED = "delivered"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    IN_TRANSIT = "IN_TRANSIT"
+    OUT_FOR_DELIVERY = "OUT_FOR_DELIVERY"
+    DELIVERED = "DELIVERED"
+    FAILED = "FAILED"
 
 
 class DispatchTrip(Base):
@@ -18,13 +18,35 @@ class DispatchTrip(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     trip_code = Column(String(50), unique=True, index=True, nullable=False)
+    
+    allocation_id = Column(Integer, ForeignKey("allocations.id"), nullable=True)
+    vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
+    driver_id = Column(Integer, ForeignKey("driver_profiles.id"), nullable=True)
+
     vehicle_number = Column(String(50), nullable=False)
     driver_name = Column(String(255), nullable=False)
+    
     origin = Column(String(255), nullable=False)
     destination = Column(String(255), nullable=False)
+    depot_name = Column(String(50), nullable=True)
+
+    status = Column(String(50), default="scheduled", nullable=False)
+
     departure_time = Column(DateTime, nullable=True)
     estimated_arrival = Column(DateTime, nullable=True)
     actual_arrival = Column(DateTime, nullable=True)
+
+    total_weight_kg = Column(Float, default=0.0, nullable=False)
+    total_volume_m3 = Column(Float, default=0.0, nullable=False)
+    stop_count = Column(Integer, default=0, nullable=False)
+    stops_completed = Column(Integer, default=0, nullable=False)
+    stop_sequence = Column(JSON, nullable=True)
+    
+    open_shortfalls = Column(Integer, default=0, nullable=False)
+    loading_events = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     shipments = relationship("Shipment", back_populates="dispatch_trip")
 

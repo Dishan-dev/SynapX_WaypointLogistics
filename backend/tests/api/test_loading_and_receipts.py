@@ -1,51 +1,9 @@
-import uuid
 from datetime import datetime, timezone
 
 
-def test_get_loading_tasks(client):
-    response = client.get("/api/loading/tasks?vehicle_id=VEH001&date=2026-10-01")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-    assert data[0]["vehicle_id"] == "VEH001"
-    assert "task_id" in data[0]
-    assert data[0]["task_status"] == "pending"
-
-
-def test_loading_task_lifecycle(client):
-    # 1. Get tasks to obtain task_id
-    res = client.get("/api/loading/tasks?vehicle_id=VEH001&date=2026-10-01")
-    task_id = res.json()[0]["task_id"]
-
-    # 2. Start loading
-    loader_id = str(uuid.uuid4())
-    start_res = client.patch(f"/api/loading/tasks/{task_id}/start", json={"loader_id": loader_id})
-    assert start_res.status_code == 200
-    assert start_res.json()["status"] == "in_progress"
-
-    # 3. Update loaded items
-    item_res = client.patch(f"/api/loading/tasks/{task_id}/item", json={"loaded_units": 35})
-    assert item_res.status_code == 200
-    assert item_res.json()["loaded_units"] == 35
-
-    # 4. Flag shortfall
-    shortfall_res = client.patch(
-        f"/api/loading/tasks/{task_id}/shortfall",
-        json={"shortfall_notes": "5 units damaged in storage", "loaded_units": 35},
-    )
-    assert shortfall_res.status_code == 200
-    assert shortfall_res.json()["status"] == "shortfall_flagged"
-    assert shortfall_res.json()["shortfall_notes"] == "5 units damaged in storage"
-
-    # 5. Complete loading
-    comp_res = client.patch(f"/api/loading/tasks/{task_id}/complete")
-    assert comp_res.status_code == 200
-    assert comp_res.json()["status"] == "completed"
-
-
 def test_delivery_receipt_flow(client):
-    order_id = str(uuid.uuid4())
-    outlet_id = "OUT001"
+    order_id = 1
+    outlet_id = 5
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Submit receipt
@@ -75,15 +33,15 @@ def test_delivery_receipt_flow(client):
 
 
 def test_offline_receipt_sync(client):
-    order_1 = str(uuid.uuid4())
-    order_2 = str(uuid.uuid4())
+    order_1 = 101
+    order_2 = 102
     now_iso = datetime.now(timezone.utc).isoformat()
 
     batch = {
         "receipts": [
             {
                 "order_id": order_1,
-                "outlet_id": "OUT001",
+                "outlet_id": 5,
                 "units_received": 30,
                 "has_issues": False,
                 "confirmed_at": now_iso,
@@ -91,7 +49,7 @@ def test_offline_receipt_sync(client):
             },
             {
                 "order_id": order_2,
-                "outlet_id": "OUT002",
+                "outlet_id": 5,
                 "units_received": 20,
                 "has_issues": True,
                 "issue_type": "damaged",

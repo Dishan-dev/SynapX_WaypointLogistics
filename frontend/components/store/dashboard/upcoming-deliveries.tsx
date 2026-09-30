@@ -119,7 +119,10 @@ export function UpcomingDeliveries({ orders, now }: { orders: StoreOrder[]; now:
                   </div>
                 )}
               </dl>
-              <div className="pt-2 flex justify-end">
+              <div className="pt-2 flex items-center justify-between">
+                {order.deliveryAlert === "vehicle_unavailable" ? (
+                  <StoreArrowLink href={deliveryHref(order)}>Choose what happens</StoreArrowLink>
+                ) : <span />}
                 <Button asChild size="sm" variant="outline" className="text-xs font-bold text-primary border-primary hover:bg-secondary">
                   <Link href={deliveryHref(order)}>View Details</Link>
                 </Button>

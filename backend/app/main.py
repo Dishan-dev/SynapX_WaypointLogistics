@@ -1,23 +1,10 @@
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.api import api_router
 from app.core.config import settings
-from app.core.database import create_tables
 from app.core.exceptions import register_exception_handlers
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Safe auto-creation in development / test environments if needed
-    if settings.DEBUG or settings.DATABASE_URL.startswith("sqlite"):
-        try:
-            create_tables()
-        except Exception:
-            pass
-    yield
-
-
+# Tables are created and changed only through Alembic migrations (alembic upgrade head).
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
@@ -25,7 +12,6 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url=f"{settings.API_V1_STR}/docs",
     redoc_url=f"{settings.API_V1_STR}/redoc",
-    lifespan=lifespan,
 )
 
 # Register Domain Exception Handlers

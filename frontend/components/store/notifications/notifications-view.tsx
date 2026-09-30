@@ -13,7 +13,11 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StoreArrowLink } from "@/components/store/store-cards";
 import { StorePill, type StorePillTone } from "@/components/store/status-pill";
 import type { NotificationCategory, NotificationType, StoreNotification, StoreOutlet } from "@/components/store/mock-data";
-import { markNotificationsRead, useNotifications } from "@/components/store/notifications/notification-store";
+import {
+  markAllRead,
+  markNotificationsRead,
+  useNotificationsState,
+} from "@/components/store/notifications/notification-store";
 
 type NotificationTab = "all" | NotificationCategory;
 
@@ -53,7 +57,7 @@ function timeLabel(iso: string, now: Date) {
 }
 
 export function NotificationsView({ outlet, now }: { outlet: StoreOutlet; now: Date }) {
-  const notifications = useNotifications();
+  const { items: notifications, status, reload } = useNotificationsState();
   const [tab, setTab] = useState<NotificationTab>("all");
   const [unreadOnly, setUnreadOnly] = useState(false);
 
@@ -65,7 +69,7 @@ export function NotificationsView({ outlet, now }: { outlet: StoreOutlet; now: D
     (n) => (tab === "all" || n.category === tab) && (!unreadOnly || !n.isRead)
   );
 
-  const markAllRead = () => markNotificationsRead(unread.map((n) => n.id));
+  const markAll = () => markAllRead(unread.map((n) => n.id));
 
   return (
     <div className="flex flex-col gap-4 md:gap-6">
@@ -89,7 +93,7 @@ export function NotificationsView({ outlet, now }: { outlet: StoreOutlet; now: D
             <Link href="/store/settings#notifications">Preferences</Link>
           </Button>
           <Button
-            onClick={markAllRead}
+            onClick={markAll}
             disabled={unread.length === 0}
             className="hidden h-10 px-4 text-base font-bold md:inline-flex"
           >
@@ -97,7 +101,7 @@ export function NotificationsView({ outlet, now }: { outlet: StoreOutlet; now: D
           </Button>
           <button
             type="button"
-            onClick={markAllRead}
+            onClick={markAll}
             disabled={unread.length === 0}
             className="min-h-11 text-sm font-medium text-primary disabled:text-muted-foreground md:hidden"
           >
@@ -137,7 +141,19 @@ export function NotificationsView({ outlet, now }: { outlet: StoreOutlet; now: D
           {visible.length} {visible.length === 1 ? "notification" : "notifications"} shown, {unread.length} unread
         </p>
 
-        {visible.length === 0 ? (
+        {status === "error" ? (
+          <div role="alert" className="mt-4 flex flex-col items-center gap-3 rounded-lg border border-dashed border-destructive/40 px-4 py-10 text-center md:mt-0 md:rounded-none md:border-0">
+            <p className="text-base font-semibold text-foreground">Couldn&apos;t load notifications</p>
+            <p className="text-sm text-muted-foreground">Check your connection, then try again.</p>
+            <Button variant="outline" onClick={reload} className="h-11 md:h-9">
+              Try again
+            </Button>
+          </div>
+        ) : status === "loading" ? (
+          <p className="mt-4 px-4 py-10 text-center text-sm text-muted-foreground md:mt-0" role="status">
+            Loading notifications…
+          </p>
+        ) : visible.length === 0 ? (
           <div className="mt-4 flex flex-col items-center gap-2 rounded-lg border border-dashed border-border px-4 py-10 text-center md:mt-0 md:rounded-none md:border-0">
             <BellOff className="size-6 text-muted-foreground" aria-hidden="true" />
             <p className="text-base font-semibold text-foreground">

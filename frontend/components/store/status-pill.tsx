@@ -41,6 +41,7 @@ const orderStatusDisplay: Record<OrderStatus, { label: string; tone: StorePillTo
   draft: { label: "Draft", tone: "neutral" },
   submitted: { label: "Submitted", tone: "brand" },
   confirmed: { label: "Submitted", tone: "brand" },
+  allocated: { label: "Scheduled", tone: "brand" },
   processing: { label: "Being Prepared", tone: "warning" },
   ready_for_dispatch: { label: "Ready for Dispatch", tone: "brand" },
   dispatched: { label: "In Transit", tone: "info" },
