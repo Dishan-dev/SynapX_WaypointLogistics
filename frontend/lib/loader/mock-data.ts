@@ -461,9 +461,43 @@ export const mockQueue: RunQueue = {
   ],
 };
 
-// ---- Issues (GET /loader/issues/{id}) ------------------------------------
+// ---- Issues (GET /loader/issues, /loader/issues/{id}) ----------------------
 
 export const mockIssues: LoaderIssue[] = [
+  {
+    // Figma 1d / T1e: flagged 02:13, the Dispatcher answered 02:20.
+    id: 3,
+    run_code: "RUN-021",
+    order_number: "ORD0092301",
+    outlet_code: "OUT026",
+    issue_type: "damaged",
+    units_affected: 3,
+    units_total: 56,
+    quick_note_tag: "Crushed carton",
+    note: null,
+    photo_path: null,
+    reported_by: "Saman J.",
+    reported_at: at("02:13"),
+    status: "decided",
+    seen_at: at("02:15"),
+    decide_by: at("03:10"),
+    decided_at: at("02:20"),
+    decided_by: "Kasun P.",
+    options: [
+      {
+        label: "Send 53 of 56",
+        detail: "Balance Fri 29 May.",
+        is_default: true,
+        is_chosen: true,
+      },
+      {
+        label: "Hold VEH001",
+        detail: "Wait for replacement stock.",
+        is_default: false,
+        is_chosen: false,
+      },
+    ],
+  },
   {
     id: 7,
     run_code: "RUN-027",

@@ -5,14 +5,15 @@
 // Loader-only for now; to be merged into the team PWA-0 worker later.
 
 // v2: adds the sign-in and More pages (sign-in and sign-out work offline).
-const VERSION = "loader-v2";
+// v3: adds the Issues tab.
+const VERSION = "loader-v3";
 const PAGES = `${VERSION}-pages`;
 const STATIC = `${VERSION}-static`;
-const PRECACHE = ["/loader", "/loader/sign-in", "/loader/more", "/loader.webmanifest", "/loader-icons/icon-192.png", "/loader-icons/icon-512.png"];
+const PRECACHE = ["/loader", "/loader/sign-in", "/loader/more", "/loader/issues", "/loader.webmanifest", "/loader-icons/icon-192.png", "/loader-icons/icon-512.png"];
 
-// Cache the shell pages plus the build assets the queue, sign-in and More
-// pages reference, so the app opens offline even on the first visit after install.
-const SHELL_PAGES = ["/loader", "/loader/sign-in", "/loader/more"];
+// Cache the shell pages plus the build assets the queue, sign-in, More and
+// Issues pages reference, so the app opens offline even on the first visit after install.
+const SHELL_PAGES = ["/loader", "/loader/sign-in", "/loader/more", "/loader/issues"];
 
 async function precache() {
   const pages = await caches.open(PAGES);

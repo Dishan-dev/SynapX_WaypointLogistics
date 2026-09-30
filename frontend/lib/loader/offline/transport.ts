@@ -4,8 +4,11 @@
 // NEXT_PUBLIC_API_URL.
 
 import { planChangeAlert, withRecomputedCounts } from "../format";
-import { findMockRun, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
+import { findMockRun, mockIssues, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
 import type {
+  FlagActionPayload,
+  IssueOption,
+  LoaderIssue,
   LoaderSession,
   LoaderUser,
   OrderState,
@@ -37,6 +40,11 @@ export interface Transport {
   fetchQueue(dock: string): Promise<RunQueue>;
   /** GET /loader/summary?dock=: the queue's metric cards. Throws NetworkError when unreachable. */
   fetchSummary(dock: string): Promise<QueueSummary>;
+  /**
+   * GET /loader/issues?dock=&run=: flagged issues, newest first. Throws
+   * NetworkError when unreachable.
+   */
+  fetchIssues(query: { dock: string; run?: string }): Promise<LoaderIssue[]>;
   /** GET /loader/users: the loaders registered at this tablet's depot. */
   fetchUsers(): Promise<LoaderUser[]>;
   /** POST /loader/session. Undefined for a wrong PIN (401); throws NetworkError when unreachable. */
@@ -108,6 +116,13 @@ export function apiTransport(baseUrl: string): Transport {
       const res = await request(`${api}/loader/summary?dock=${encodeURIComponent(dock)}`, { cache: "no-store" });
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as QueueSummary;
+    },
+    async fetchIssues({ dock, run }) {
+      const params = new URLSearchParams({ dock });
+      if (run) params.set("run", run);
+      const res = await request(`${api}/loader/issues?${params}`, { cache: "no-store" });
+      if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
+      return (await res.json()) as LoaderIssue[];
     },
     async fetchUsers() {
       const res = await request(`${api}/loader/users`, { cache: "no-store" });
@@ -286,11 +301,11 @@ export function mockTransport(latencyMs = 300): Transport {
       const ids = loadMockIds();
       const code = decodeURIComponent(/^\/loader\/runs\/([^/]+)/.exec(request.path)?.[1] ?? String(request.body.run_code));
       const run = mockServerRun(state, code);
-      // POST /loader/issues returns the issue; the mock has none, and the
-      // outbox reads no success bodies.
+      // POST /loader/issues returns the issue; the other writes the run.
+      const isFlag = request.path === "/loader/issues";
       const ok = (current: Run | undefined): TransportResponse => ({
         status: 200,
-        body: request.path === "/loader/issues" ? { client_action_id: id } : current,
+        body: isFlag ? loadMockIssues().find((i) => mockIssueAction(i) === id) : current,
       });
 
       if (ids[id]) {
@@ -342,6 +357,11 @@ export function mockTransport(latencyMs = 300): Transport {
       }
       const by = sessionUser?.short_name;
       state[run.code] = applyAction(run, action, by);
+      if (isFlag) {
+        const issues = [...loadMockIssues(), newMockIssue(run, request.body as unknown as FlagActionPayload, id, by)];
+        saveMockIssues(issues);
+        state[run.code] = withIssueLock(state[run.code], issues);
+      }
       ids[id] = signature;
       saveMockState(state);
       saveMockIds(ids);
@@ -361,6 +381,13 @@ export function mockTransport(latencyMs = 300): Transport {
       if (!(await probeConnectivity())) throw new NetworkError();
       await new Promise((r) => setTimeout(r, latencyMs));
       return mockServerSummary(mockServerQueue());
+    },
+    async fetchIssues({ run }) {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      return loadMockIssues()
+        .filter((i) => !run || i.run_code === run)
+        .sort((a, b) => b.reported_at.localeCompare(a.reported_at));
     },
     async fetchUsers() {
       if (!(await probeConnectivity())) throw new NetworkError();
@@ -395,6 +422,137 @@ export function mockTransport(latencyMs = 300): Transport {
       }
     },
   };
+}
+
+// ---- Mock issues ----------------------------------------------------------
+
+const MOCK_ISSUES_KEY = "waypoint-loader-mock-server-v2-issues";
+
+interface StoredMockIssue extends LoaderIssue {
+  /** The flag's client_action_id, so a replay answers with the same issue. */
+  client_action_id?: string;
+}
+
+/** Issues on the mock server: the seeded ones, then any flagged in this browser. */
+function loadMockIssues(): StoredMockIssue[] {
+  return readJson<StoredMockIssue[]>(MOCK_ISSUES_KEY) ?? mockIssues;
+}
+
+function saveMockIssues(issues: StoredMockIssue[]) {
+  writeJson(MOCK_ISSUES_KEY, issues);
+}
+
+const mockIssueAction = (issue: LoaderIssue) => (issue as StoredMockIssue).client_action_id;
+
+const WAITING = (issue: LoaderIssue) => issue.status === "sent" || issue.status === "seen";
+
+/** The Dispatcher's choices for a new flag; the first is the default. */
+function mockOptions(type: LoaderIssue["issue_type"], affected: number, total: number): IssueOption[] {
+  const option = (label: string, detail: string, isDefault = false): IssueOption => ({
+    label,
+    detail,
+    is_default: isDefault,
+    is_chosen: false,
+  });
+  switch (type) {
+    case "missing":
+      return [option("Send without it", "Defer it to the next delivery day.", true), option("Hold the vehicle", "Wait for the order to be found.")];
+    case "wont_fit":
+      return [
+        option("Leave the overflow for the next run", `${affected} units wait at the dock.`, true),
+        option("Swap to a larger vehicle", "Reload on a bigger truck."),
+      ];
+    default:
+      return [
+        option(`Send ${total - affected} of ${total}`, "Balance on the next delivery day.", true),
+        option("Hold the vehicle", "Wait for replacement stock."),
+      ];
+  }
+}
+
+function newMockIssue(run: Run, flag: FlagActionPayload, clientActionId: string, by?: string): StoredMockIssue {
+  const stop = run.stops.find((s) => s.orders.some((o) => o.order_number === flag.order_number));
+  const order = stop?.orders.find((o) => o.order_number === flag.order_number);
+  const total = order?.units ?? flag.units_affected;
+  const ids = loadMockIssues().map((i) => i.id);
+  return {
+    id: Math.max(100, ...ids) + 1,
+    run_code: run.code,
+    order_number: flag.order_number,
+    outlet_code: stop?.outlet.code ?? "",
+    issue_type: flag.issue_type,
+    units_affected: flag.units_affected,
+    units_total: total,
+    quick_note_tag: flag.quick_note_tag,
+    note: flag.note || null,
+    photo_path: null,
+    reported_by: by ?? "Unknown loader",
+    reported_at: new Date().toISOString(),
+    status: "sent",
+    seen_at: null,
+    // Contract: departure − 20 min.
+    decide_by: new Date(Date.parse(run.departs_at) - 20 * 60_000).toISOString(),
+    decided_at: null,
+    decided_by: null,
+    options: mockOptions(flag.issue_type, flag.units_affected, total),
+    client_action_id: clientActionId,
+  };
+}
+
+/**
+ * The run's issue_waiting blocker and status from its open issues: waiting
+ * issues keep it issue_flagged; once all are answered it goes back to
+ * loading or loaded (the Dispatcher's decision clears it, per L4).
+ */
+function withIssueLock(run: Run, issues: LoaderIssue[]): Run {
+  const waiting = issues.filter((i) => i.run_code === run.code && WAITING(i)).length;
+  const others = (run.release_blockers ?? []).filter((b) => b.code !== "issue_waiting");
+  const blockers = waiting > 0 ? [...others, { code: "issue_waiting" as const, count: waiting }] : others;
+  const status =
+    waiting > 0
+      ? "issue_flagged"
+      : run.status === "issue_flagged"
+        ? run.orders_total > 0 && run.orders_checked === run.orders_total
+          ? "loaded"
+          : "loading"
+        : run.status;
+  return { ...run, status, release_blockers: blockers, release_locked: blockers.length > 0 };
+}
+
+/** Mock transport only, for the dev kit: the newest issue still waiting on the Dispatcher. */
+export function newestWaitingMockIssue(): LoaderIssue | undefined {
+  return loadMockIssues()
+    .filter(WAITING)
+    .sort((a, b) => b.reported_at.localeCompare(a.reported_at))[0];
+}
+
+/**
+ * Mock transport only, for the dev kit: what POST /loader/dev/issues/{id}/decide
+ * (optionLabel) or …/expire (no label: the default is applied) does on the API.
+ */
+export function decideMockIssue(id: number, optionLabel?: string): LoaderIssue | undefined {
+  const issues = loadMockIssues();
+  const issue = issues.find((i) => i.id === id);
+  if (!issue || !WAITING(issue)) return issue;
+  const chosen = optionLabel ?? issue.options.find((o) => o.is_default)?.label;
+  const now = new Date().toISOString();
+  const decided: StoredMockIssue = {
+    ...issue,
+    status: optionLabel ? "decided" : "default_applied",
+    seen_at: issue.seen_at ?? now,
+    decided_at: now,
+    decided_by: optionLabel ? "Kasun P." : null,
+    options: issue.options.map((o) => ({ ...o, is_chosen: o.label === chosen })),
+  };
+  const next = issues.map((i) => (i.id === id ? decided : i));
+  saveMockIssues(next);
+  const state = loadMockState();
+  const run = mockServerRun(state, issue.run_code);
+  if (run) {
+    state[run.code] = withIssueLock(run, next);
+    saveMockState(state);
+  }
+  return decided;
 }
 
 /**
@@ -441,6 +599,8 @@ function mockServerSummary(queue: RunQueue): QueueSummary {
       loaders: [...new Set(loading.flatMap((r) => (r.loader ? [r.loader.split(" ")[0]] : [])))],
     },
     ready: { count: ready.length, run_codes: ready.map((r) => r.code) },
+    // Open flags on the mock server, so a new flag shows on the Issues badge.
+    issues: { count: loadMockIssues().filter(WAITING).length, label: mockSummary.issues.label },
   };
 }
 
