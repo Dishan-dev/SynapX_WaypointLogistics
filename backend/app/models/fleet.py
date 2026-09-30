@@ -6,10 +6,10 @@ from app.core.database import Base
 
 
 class VehicleStatus(str, enum.Enum):
-    AVAILABLE = "available"
-    ALLOCATED = "allocated"
-    LOADING = "loading"
-    UNAVAILABLE = "unavailable"
+    AVAILABLE = "AVAILABLE"
+    ALLOCATED = "ALLOCATED"
+    LOADING = "LOADING"
+    UNAVAILABLE = "UNAVAILABLE"
 
 
 class Vehicle(Base):

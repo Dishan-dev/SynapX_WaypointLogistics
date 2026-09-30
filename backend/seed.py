@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(__file__))
 from app.models.user import User, UserRole
 from app.models.fleet import Vehicle, DriverProfile, VehicleStatus
 from app.models.allocation import Allocation, AllocationStatus
+from app.models.shipment import DispatchTrip
 
 load_dotenv()
 url = os.environ["DATABASE_URL_UNPOOLED"].replace("postgresql://", "postgresql+psycopg://", 1)
@@ -24,6 +25,7 @@ def today_at(hour: int, minute: int = 0) -> datetime:
 def wipe(db):
     """Delete all seed data cleanly so re-seeding is idempotent."""
     print("Wiping existing seed data...")
+    db.execute(sa.text("DELETE FROM dispatch_trips"))
     db.execute(sa.text("DELETE FROM allocations"))
     db.execute(sa.text("DELETE FROM driver_profiles"))
     db.execute(sa.text("DELETE FROM vehicles"))
@@ -146,6 +148,92 @@ def seed():
         ]
 
         db.add_all(allocations)
+        db.commit()
+        
+        # ── 4. Delivery Runs (Dispatch Trips) ─────────────────────────────────
+        runs_seed = [
+            {
+                "trip_code": "RUN-024",
+                "vehicle_number": "VEH014",
+                "driver_name": "Kasun Perera",
+                "origin": "peliyagoda",
+                "destination": "nugegoda",
+                "depot_name": "peliyagoda",
+                "status": "ready",
+                "stop_count": 6,
+                "stops_completed": 0,
+                "total_weight_kg": 3280.0,
+                "total_volume_m3": 14.5,
+                "open_shortfalls": 0,
+                "departure_time": today_at(6),
+                "estimated_arrival": today_at(8, 10),
+                "stop_sequence": ["Nugegoda", "Maharagama", "Kottawa", "Homagama", "Panadura", "Piliyandala"],
+                "loading_events": [
+                    {"event": "Plan published", "time": "04:30", "note": "06:00 departure · 6 stops", "status": "ok"},
+                    {"event": "Loading started", "time": "05:12", "note": "loading dock confirmed", "status": "ok"},
+                    {"event": "Shortfall reported", "time": "05:20", "note": "OUT033 · 2 cartons unavailable", "status": "error"},
+                    {"event": "Shortfall resolved", "time": "05:28", "note": "Order adjusted by dispatcher", "status": "ok"},
+                    {"event": "Ready to depart", "time": None, "note": "Waiting for final dock confirmation", "status": "pending"},
+                ],
+            },
+            {
+                "trip_code": "RUN-029", 
+                "vehicle_number": "VEH031", 
+                "driver_name": "Amal Fernando", 
+                "origin": "peliyagoda", 
+                "destination": "gampaha", 
+                "depot_name": "peliyagoda", 
+                "status": "en_route", 
+                "stop_count": 5, 
+                "stops_completed": 3, 
+                "total_weight_kg": 4100.0, 
+                "total_volume_m3": 18.2, 
+                "open_shortfalls": 1, 
+                "departure_time": today_at(9),
+                "estimated_arrival": today_at(13, 40),
+                "stop_sequence": ["Kelaniya", "Wattala", "Ja-Ela", "Gampaha", "Nittambuwa"], 
+                "loading_events": []
+            },
+            {
+                "trip_code": "RUN-018", 
+                "vehicle_number": "VEH022", 
+                "driver_name": "Nimal Perera", 
+                "origin": "kandy", 
+                "destination": "matale", 
+                "depot_name": "kandy", 
+                "status": "en_route", 
+                "stop_count": 4, 
+                "stops_completed": 2, 
+                "total_weight_kg": 2900.0, 
+                "total_volume_m3": 12.0, 
+                "open_shortfalls": 0, 
+                "departure_time": today_at(8, 30),
+                "estimated_arrival": today_at(12, 15),
+                "stop_sequence": ["Katugastota", "Matale", "Dambulla", "Sigiriya"], 
+                "loading_events": []
+            },
+            {
+                "trip_code": "RUN-031", 
+                "vehicle_number": "VEH041", 
+                "driver_name": "Unassigned", 
+                "origin": "peliyagoda", 
+                "destination": "colombo-07", 
+                "depot_name": "peliyagoda", 
+                "status": "scheduled", 
+                "stop_count": 6, 
+                "stops_completed": 0, 
+                "total_weight_kg": 5200.0, 
+                "total_volume_m3": 22.0, 
+                "open_shortfalls": 0, 
+                "departure_time": today_at(11, 30),
+                "estimated_arrival": today_at(16, 45),
+                "stop_sequence": ["Colombo 7", "Colombo 3", "Colombo 1", "Pettah", "Grandpass", "Maradana"], 
+                "loading_events": []
+            },
+        ]
+        
+        for run_data in runs_seed:
+            db.add(DispatchTrip(**run_data))
         db.commit()
 
         print("\n✅ Seeding complete! All statuses covered:")

@@ -6,12 +6,14 @@ from app.core.database import Base
 
 
 class OrderStatus(str, enum.Enum):
-    DRAFT = "draft"
-    CONFIRMED = "confirmed"
-    PROCESSING = "processing"
-    DISPATCHED = "dispatched"
-    DELIVERED = "delivered"
-    CANCELLED = "cancelled"
+    DRAFT = "DRAFT"
+    CONFIRMED = "CONFIRMED"
+    PROCESSING = "PROCESSING"
+    DISPATCHED = "DISPATCHED"
+    DELIVERED = "DELIVERED"
+    CANCELLED = "CANCELLED"
+    ALLOCATED = "ALLOCATED"
+    DEFERRED = "DEFERRED"
 
 
 class Order(Base):

@@ -69,7 +69,7 @@ export default function AllocationsPage() {
   // Use real data from API; show empty on API error so backend issues are visible
   const rawData = useMemo(() => (fetchError ? [] : allocations), [fetchError, allocations]);
 
-  // Filter logic (client-side filtering for now)
+  // Filter logic (client-side filtering)
   const filteredData = useMemo(() => {
     return rawData.filter((alloc) => {
       const search = searchQuery.toLowerCase();
@@ -79,14 +79,15 @@ export default function AllocationsPage() {
         alloc.driver?.user?.full_name?.toLowerCase().includes(search) ||
         alloc.run_id?.toLowerCase().includes(search);
 
-      const matchesStatus = !statusFilter || alloc.status.toLowerCase() === statusFilter;
+      // Normalise both sides to lowercase so "READY" === "ready" works
+      const matchesStatus = !statusFilter || alloc.status?.toLowerCase() === statusFilter.toLowerCase();
       const matchesType = !typeFilter || alloc.vehicle?.vehicle_type?.toLowerCase().includes(typeFilter);
 
       return matchesSearch && matchesStatus && matchesType;
     });
   }, [rawData, searchQuery, statusFilter, typeFilter]);
 
-  // Dynamic metric counts derived from raw data
+  // Dynamic metric counts — normalise status to lowercase before comparing
   const metrics = useMemo(() => {
     const counts = { available: 0, allocated: 0, loading: 0, ready: 0, unavailable: 0 };
     rawData.forEach((a) => {
@@ -102,12 +103,6 @@ export default function AllocationsPage() {
 
   const handleViewClick = (allocation: Allocation) => {
     setSelectedAllocation(allocation);
-  };
-
-  const handleReassignDriver = () => {
-    // Close detail drawer and open the reassign/form drawer
-    setSelectedAllocation(null);
-    setIsReassignDrawerOpen(true);
   };
 
   return (
@@ -155,6 +150,12 @@ export default function AllocationsPage() {
           <div className="flex items-center justify-center h-64 text-muted-foreground">
             Loading allocations...
           </div>
+        ) : fetchError ? (
+          <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+            <p className="text-sm font-medium text-destructive">Failed to load allocations from server.</p>
+            <p className="text-xs text-muted-foreground">Check the backend is running, then retry.</p>
+            <Button variant="outline" size="sm" onClick={fetchAllocations}>Retry</Button>
+          </div>
         ) : (
           <AllocationTable allocations={filteredData} onViewClick={handleViewClick} />
         )}
@@ -179,7 +180,6 @@ export default function AllocationsPage() {
         open={!!selectedAllocation}
         onOpenChange={(open) => { if (!open) setSelectedAllocation(null); }}
         allocation={selectedAllocation}
-        onReassignDriver={handleReassignDriver}
         onSuccess={fetchAllocations}
       />
     </div>
