@@ -3,6 +3,7 @@
 
 import type {
   ActivityEntry,
+  ConflictCode,
   IssueType,
   LoaderIssue,
   LoaderSession,
@@ -342,8 +343,8 @@ export function planSource(run: Run): PlanSource {
 }
 
 /**
- * Dock-wide strip for the queue: latest plan publish across known runs.
- * The queue and summary responses carry no plan time yet (contract gap).
+ * Dock-wide strip for the queue: latest plan publish across known runs. The
+ * queue replaces the time with the summary's plan_updated_at once it has one.
  */
 export function dockPlanSource(runs: Run[]): PlanSource {
   const latest = runs.map((r) => r.plan.published_at).sort().at(-1);
@@ -490,9 +491,13 @@ export function releaseLockLabel(run: Run): string | undefined {
 /**
  * Units that stay at the dock on answered shortfalls (short or damaged, part
  * of the order): Figma "1 partial order", "3 damaged units stay at the dock".
- * Worked out from the issues until the run read carries loaded_units.
+ * Per order, the run read's loaded_units when it is there; otherwise the
+ * issue's units_affected (runs cached before loaded_units existed).
  */
-export function partialLoads(issues: LoaderIssue[]): { orders: number; unitsLeft: number; orderNumbers: string[] } {
+export function partialLoads(
+  issues: LoaderIssue[],
+  run?: Run,
+): { orders: number; unitsLeft: number; orderNumbers: string[] } {
   const partial = issues.filter(
     (i) =>
       !isIssueWaiting(i) &&
@@ -500,11 +505,41 @@ export function partialLoads(issues: LoaderIssue[]): { orders: number; unitsLeft
       i.units_affected > 0 &&
       i.units_affected < i.units_total,
   );
+  const orders = new Map(run?.stops.flatMap((s) => s.orders).map((o) => [o.order_number, o]));
+  const left = (i: LoaderIssue) => {
+    const order = orders.get(i.order_number);
+    return order?.loaded_units != null ? order.units - order.loaded_units : i.units_affected;
+  };
   return {
     orders: partial.length,
-    unitsLeft: partial.reduce((n, i) => n + i.units_affected, 0),
+    unitsLeft: partial.reduce((n, i) => n + left(i), 0),
     orderNumbers: partial.map((i) => i.order_number),
   };
+}
+
+/** Undo after "Mark ready to depart" (Figma 1e "Undo for 10 s"), counted from released_at. */
+export const UNDO_WINDOW_MS = 10_000;
+
+/**
+ * Why the server refused an undo, for the alert: past the window
+ * (UNDO_WINDOW_EXPIRED) or the run is no longer ready to depart
+ * (INVALID_STATE_TRANSITION: a plan change reopened it, or it left the gate).
+ */
+export function undoRefusal(code: ConflictCode | undefined): { title: string; body: string } {
+  if (code === "UNDO_WINDOW_EXPIRED") {
+    return { title: "Too late to undo.", body: "The 10 s window had passed. Ask the Dispatcher to reopen the run." };
+  }
+  return { title: "Can’t undo.", body: "The run is no longer ready to depart. Open it again to see where it stands." };
+}
+
+/**
+ * Who signed the run off ("Saman J."), or undefined. Also reads a plain name,
+ * which runs cached on this tablet before released_by became {id, name} carry.
+ */
+export function releasedByName(run: Run): string | undefined {
+  const by: unknown = run.released_by;
+  if (typeof by === "string") return by || undefined;
+  return run.released_by?.name || undefined;
 }
 
 /** Stops in the driver's order: stop_sequence 1 comes off first, by the door. */

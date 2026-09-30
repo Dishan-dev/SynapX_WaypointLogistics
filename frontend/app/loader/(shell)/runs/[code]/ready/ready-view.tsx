@@ -10,12 +10,9 @@ import { LoaderPill } from "@/components/loader/loader-pill";
 import { LoaderScreen } from "@/components/loader/loader-screen";
 import { useLoaderShell } from "@/components/loader/loader-shell";
 import { useLoaderSync, useOfflineRun } from "@/components/loader/loader-sync-provider";
-import { formatTime, planSource } from "@/lib/loader/format";
+import { formatTime, planSource, releasedByName, UNDO_WINDOW_MS, undoRefusal } from "@/lib/loader/format";
 import type { Run } from "@/lib/loader/types";
 import { RunGate } from "../review/run-gate";
-
-/** Figma 1e: "Undo for 10 s", counted from released_at. */
-const UNDO_WINDOW_MS = 10_000;
 
 const BRAND_LABELS = { fresh: "Fresh", style: "Style", tech: "Tech" } as const;
 
@@ -34,7 +31,7 @@ export function ReadyView({ code }: { code: string }) {
 function Ready({ initial }: { initial: Run }) {
   const router = useRouter();
   const { user, dockLabel } = useLoaderShell();
-  const { sync } = useLoaderSync();
+  const { sync, checkConnection } = useLoaderSync();
   const { run, act, rejected, dismissRejected } = useOfflineRun(initial, user.shortName);
   const [now, setNow] = React.useState(() => Date.now());
 
@@ -42,7 +39,8 @@ function Ready({ initial }: { initial: Run }) {
   const releasedAt = run.released_at ? Date.parse(run.released_at) : undefined;
   const secondsLeft = releasedAt === undefined ? 0 : Math.ceil((UNDO_WINDOW_MS - (now - releasedAt)) / 1000);
   const canUndo = ready && secondsLeft > 0;
-  const undoRefused = rejected.some((a) => a.action_type === "release_undo");
+  const undoRefused = rejected.find((a) => a.action_type === "release_undo");
+  const refusal = undoRefusal(undoRefused?.conflict_code);
   const dockName = dockLabel.split(" · ").pop() ?? dockLabel;
   const stopCount = run.stops.length;
 
@@ -54,6 +52,8 @@ function Ready({ initial }: { initial: Run }) {
   }, [canUndo]);
 
   const undo = async () => {
+    // Like release, undo is never queued for later.
+    if (!(await checkConnection())) return;
     const action = await act("release_undo");
     if (action) router.push(`/loader/runs/${encodeURIComponent(run.code)}/review`);
   };
@@ -63,11 +63,16 @@ function Ready({ initial }: { initial: Run }) {
       <LoaderButton className="w-full" onClick={() => router.push("/loader")}>
         Back to loading queue
       </LoaderButton>
-      {canUndo && (
-        <LoaderButton variant="ghost" className="w-full" onClick={() => void undo()}>
-          Undo · {secondsLeft} s
-        </LoaderButton>
-      )}
+      {canUndo &&
+        (sync.online ? (
+          <LoaderButton variant="ghost" className="w-full" onClick={() => void undo()}>
+            Undo · {secondsLeft} s
+          </LoaderButton>
+        ) : (
+          <LoaderButton variant="ghost" className="w-full" locked>
+            Undo needs a connection · {secondsLeft} s
+          </LoaderButton>
+        ))}
     </div>
   );
 
@@ -106,8 +111,8 @@ function Ready({ initial }: { initial: Run }) {
 
         {undoRefused && (
           <div role="alert" className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive-muted px-4 py-3">
-            <p className="text-sm font-semibold text-destructive">Too late to undo.</p>
-            <p className="text-sm text-foreground">The 10 s window had passed. Ask the Dispatcher to reopen the run.</p>
+            <p className="text-sm font-semibold text-destructive">{refusal.title}</p>
+            <p className="text-sm text-foreground">{refusal.body}</p>
             <LoaderButton variant="ghost" className="w-fit" onClick={() => void dismissRejected()}>
               OK
             </LoaderButton>
@@ -121,7 +126,7 @@ function Ready({ initial }: { initial: Run }) {
             </span>
             <h2 className="text-xl font-semibold text-primary">Ready to depart</h2>
             <p className="text-sm text-muted-foreground">
-              Signed off{run.released_by ? ` by ${run.released_by}` : ""}
+              Signed off{releasedByName(run) ? ` by ${releasedByName(run)}` : ""}
               {run.released_at ? ` · ${formatTime(run.released_at)}` : ""}
             </p>
             <p
