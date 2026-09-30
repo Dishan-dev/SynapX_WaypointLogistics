@@ -2,6 +2,7 @@
 // these functions, so a contract rename stays in lib/loader.
 
 import type {
+  ActivityEntry,
   IssueType,
   LoaderIssue,
   LoaderSession,
@@ -584,4 +585,74 @@ export function signInOverview(
     runs: { count: summary.runs, caption: `${fresh} Fresh · ${runs.length - fresh} Style & Tech` },
     issues: { count: summary.issues.count, caption: summary.issues.label },
   };
+}
+
+// ---- Activity log (L9) ---------------------------------------------------
+
+export interface ActivityRow {
+  key: string;
+  /** Depot time, "02:24". */
+  time: string;
+  /** ISO, for <time dateTime>. */
+  at: string;
+  summary: string;
+}
+
+const ORDER_EVENTS = new Set(["order_checked", "order_unchecked", "order_rechecked", "order_unloaded"]);
+
+/** Log rows as the API sends them: newest first, one row per event. */
+export function activityRows(events: ActivityEntry[]): ActivityRow[] {
+  return events.map((e) => ({ key: String(e.id), time: formatTime(e.at), at: e.at, summary: e.summary }));
+}
+
+/** "ORD0092305/06" – the numbers after the first keep only the digits that differ (at least two). */
+function joinOrderNumbers(numbers: string[]): string {
+  const [first, ...rest] = numbers;
+  return [
+    first,
+    ...rest.map((n) => {
+      let same = 0;
+      while (same < n.length && n[same] === first[same]) same += 1;
+      return n.slice(Math.min(same, n.length - 2));
+    }),
+  ].join("/");
+}
+
+/** The summary without its leading order number: " re-checked". */
+function orderTail(e: ActivityEntry): string | undefined {
+  const number = e.order?.order_number;
+  return number && ORDER_EVENTS.has(e.type) && e.summary.startsWith(number) ? e.summary.slice(number.length) : undefined;
+}
+
+/** How many rows the checklist's Change log card shows (Figma T1c). */
+export const CHANGE_LOG_ROWS = 5;
+
+/**
+ * The checklist's Change log card (Figma T1c): oldest first, the last few
+ * rows. Order events of the same kind in the same minute by the same loader
+ * share a line, as the design writes them: "ORD0092305/06 re-checked".
+ */
+export function changeLogRows(events: ActivityEntry[], limit = CHANGE_LOG_ROWS): ActivityRow[] {
+  const rows: (ActivityRow & { tail?: string; type: string; who: string | null; numbers: string[] })[] = [];
+  for (const e of [...events].reverse()) {
+    const time = formatTime(e.at);
+    const tail = orderTail(e);
+    const last = rows[rows.length - 1];
+    if (tail && last?.tail === tail && last.type === e.type && last.time === time && last.who === e.actor.name) {
+      last.numbers.push(e.order!.order_number);
+      last.summary = joinOrderNumbers(last.numbers) + tail;
+      continue;
+    }
+    rows.push({
+      key: String(e.id),
+      time,
+      at: e.at,
+      summary: e.summary,
+      tail,
+      type: e.type,
+      who: e.actor.name,
+      numbers: e.order ? [e.order.order_number] : [],
+    });
+  }
+  return rows.slice(-limit).map(({ key, time, at, summary }) => ({ key, time, at, summary }));
 }

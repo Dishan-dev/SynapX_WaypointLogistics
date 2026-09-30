@@ -21,6 +21,8 @@ interface LoaderShellContextValue {
   dockLabel: string;
   /** Sent as loader_session_id on every write; null until L2 sign-in. */
   sessionId: number | null;
+  /** The run opened last in this session, if any: where Loading and Log go. */
+  lastRunCode?: string;
 }
 
 const LoaderShellContext = React.createContext<LoaderShellContextValue | null>(null);
@@ -33,6 +35,7 @@ export function useLoaderShell(): LoaderShellContextValue {
 
 function activeTab(pathname: string): LoaderTab | undefined {
   if (pathname === "/loader") return "queue";
+  if (/^\/loader\/runs\/[^/]+\/log/.test(pathname)) return "log";
   if (pathname.startsWith("/loader/runs/")) return "loading";
   if (pathname.startsWith("/loader/issues")) return "issues";
   if (pathname.startsWith("/loader/log")) return "log";
@@ -64,11 +67,13 @@ async function pendingFlagCount(): Promise<number> {
 function ShellBottomNav({
   active,
   loadingHref,
+  logHref,
   dock,
   issueCount,
 }: {
   active?: LoaderTab;
   loadingHref: string;
+  logHref: string;
   dock?: string;
   issueCount?: number;
 }) {
@@ -96,6 +101,7 @@ function ShellBottomNav({
       className="sticky bottom-0 z-30"
       active={active}
       loadingHref={loadingHref}
+      logHref={logHref}
       issueCount={total}
     />
   );
@@ -121,8 +127,8 @@ export function LoaderShell({ user, dockLabel, dock, sessionId, issueCount, chil
   if (currentRunCode && currentRunCode !== lastRunCode) setLastRunCode(currentRunCode);
 
   const ctx = React.useMemo<LoaderShellContextValue>(
-    () => ({ user, dockLabel, sessionId }),
-    [user, dockLabel, sessionId],
+    () => ({ user, dockLabel, sessionId, lastRunCode }),
+    [user, dockLabel, sessionId, lastRunCode],
   );
 
   return (
@@ -133,6 +139,7 @@ export function LoaderShell({ user, dockLabel, dock, sessionId, issueCount, chil
           <ShellBottomNav
             active={activeTab(pathname)}
             loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
+            logHref={lastRunCode ? `/loader/runs/${lastRunCode}/log` : "/loader/log"}
             dock={dock}
             issueCount={issueCount}
           />

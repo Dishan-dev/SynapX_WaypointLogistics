@@ -3,9 +3,10 @@
 // up; set NEXT_PUBLIC_LOADER_TRANSPORT=api to use the real API at
 // NEXT_PUBLIC_API_URL.
 
-import { planChangeAlert, withRecomputedCounts } from "../format";
-import { findMockRun, mockIssues, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
+import { ISSUE_TYPE_LABELS, planChangeAlert, withRecomputedCounts } from "../format";
+import { findMockRun, mockActivity, mockIssues, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
 import type {
+  ActivityEntry,
   FlagActionPayload,
   IssueOption,
   LoaderIssue,
@@ -36,6 +37,11 @@ export interface Transport {
    * NetworkError when the server cannot be reached.
    */
   fetchRun(code: string): Promise<Run | undefined>;
+  /**
+   * GET /loader/runs/{code}/activity, newest first. Undefined when the run does
+   * not exist; throws NetworkError when the server cannot be reached.
+   */
+  fetchActivity(code: string): Promise<ActivityEntry[] | undefined>;
   /** GET /loader/runs?dock=: the dock's runs, grouped by brand and wave. Throws NetworkError when unreachable. */
   fetchQueue(dock: string): Promise<RunQueue>;
   /** GET /loader/summary?dock=: the queue's metric cards. Throws NetworkError when unreachable. */
@@ -106,6 +112,12 @@ export function apiTransport(baseUrl: string): Transport {
       if (res.status === 404) return undefined;
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as Run;
+    },
+    async fetchActivity(code) {
+      const res = await request(`${api}/loader/runs/${encodeURIComponent(code)}/activity`, { cache: "no-store" });
+      if (res.status === 404) return undefined;
+      if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
+      return (await res.json()) as ActivityEntry[];
     },
     async fetchQueue(dock) {
       const res = await request(`${api}/loader/runs?dock=${encodeURIComponent(dock)}`, { cache: "no-store" });
@@ -217,6 +229,88 @@ function mockSessionUser(sessionId: number): LoaderUser | undefined {
 }
 
 const mockServerRun = (state: Record<string, Run>, code: string) => state[code] ?? findMockRun(code);
+
+const MOCK_ACTIVITY_KEY = "waypoint-loader-mock-server-v2-activity";
+
+/** The mock server's log per run, newest first: the seeded log plus what it applied since. */
+const loadMockActivity = () => readJson<Record<string, ActivityEntry[]>>(MOCK_ACTIVITY_KEY) ?? {};
+
+function mockServerActivity(code: string): ActivityEntry[] {
+  return loadMockActivity()[code] ?? mockActivity[code] ?? [];
+}
+
+type MockLogEntry = Pick<ActivityEntry, "type" | "summary"> & {
+  actor: ActivityEntry["actor"];
+  orderNumber?: string;
+  details?: Record<string, unknown>;
+};
+
+/** Log an event the mock server applied, like LoaderService.log on the API. */
+function logMockActivity(run: Run, entry: MockLogEntry) {
+  const events = mockServerActivity(run.code);
+  const stop = entry.orderNumber
+    ? run.stops.find((s) => s.orders.some((o) => o.order_number === entry.orderNumber))
+    : undefined;
+  const logged: ActivityEntry = {
+    id: Math.max(0, ...events.map((e) => e.id)) + 1,
+    type: entry.type,
+    at: new Date().toISOString(),
+    actor: entry.actor,
+    stop: stop ? { sequence: stop.stop_sequence, outlet_code: stop.outlet.code } : null,
+    order: entry.orderNumber ? { order_number: entry.orderNumber } : null,
+    summary: entry.summary,
+    details: entry.details ?? {},
+  };
+  writeJson(MOCK_ACTIVITY_KEY, { ...loadMockActivity(), [run.code]: [logged, ...events] });
+}
+
+const loaderActor = (user?: LoaderUser): ActivityEntry["actor"] => ({
+  kind: "loader",
+  name: user?.short_name ?? null,
+  full_name: user?.full_name ?? null,
+});
+
+// The loader's wording for each write (API_CONTRACT.md "GET /loader/runs/{code}/activity").
+const ORDER_WORDS: Partial<Record<QueuedActionType, [type: string, verb: string]>> = {
+  check: ["order_checked", "loaded"],
+  uncheck: ["order_unchecked", "unchecked"],
+  recheck: ["order_rechecked", "re-checked"],
+  unload: ["order_unloaded", "unloaded"],
+};
+
+/** What the mock server logs for a write it applied to `before`. */
+function mockLogEntry(before: Run, action: QueuedAction, user?: LoaderUser): MockLogEntry | undefined {
+  const actor = loaderActor(user);
+  const who = user?.short_name ?? "unknown loader";
+  const { order_number } = action.payload as { order_number?: string };
+  const order = before.stops.flatMap((s) => s.orders).find((o) => o.order_number === order_number);
+  const words = ORDER_WORDS[action.action_type];
+  if (words && order_number) {
+    // A check that clears re_check is a re-check, as on the API.
+    const [type, verb] = action.action_type === "check" && order?.state === "re_check" ? ORDER_WORDS.recheck! : words;
+    if (action.action_type !== "unload") return { type, actor, orderNumber: order_number, summary: `${order_number} ${verb}` };
+    const area = order?.temperature_class === "chilled" ? "chiller" : "staging";
+    return { type, actor, orderNumber: order_number, summary: `${order_number} ${verb} → ${area}`, details: { return_area: area } };
+  }
+  switch (action.action_type) {
+    case "acknowledge":
+      return { type: "plan_acknowledged", actor, summary: `Acknowledged · ${who}` };
+    case "flag": {
+      // The seed's wording: "ORD0092314: missing 8 of 8 units, sent to Dispatcher".
+      const issue = loadMockIssues().find((i) => mockIssueAction(i) === action.client_action_id);
+      const what = issue
+        ? `${ISSUE_TYPE_LABELS[issue.issue_type].toLowerCase()} ${issue.units_affected} of ${issue.units_total} units`
+        : "flagged";
+      return { type: "issue_flagged", actor, orderNumber: order_number, summary: `${order_number}: ${what}, sent to Dispatcher` };
+    }
+    case "release":
+      return { type: "run_released", actor, summary: `Ready to depart · ${who}` };
+    case "release_undo":
+      return { type: "run_release_undone", actor, summary: `Ready undone · ${who}` };
+    default:
+      return undefined;
+  }
+}
 
 /** Turn a write request back into the action it carries, for the mock server. */
 function actionFromRequest({ method, path, body }: ActionRequest, plan: number) {
@@ -399,6 +493,9 @@ export function mockTransport(latencyMs = 300): Transport {
         saveMockIssues(issues);
         state[run.code] = withIssueLock(state[run.code], issues);
       }
+      // After the flag block, so a flag's log line can read the issue it created.
+      const logged = mockLogEntry(run, action, sessionUser);
+      if (logged) logMockActivity(state[run.code], logged);
       ids[id] = signature;
       saveMockState(state);
       saveMockIds(ids);
@@ -408,6 +505,12 @@ export function mockTransport(latencyMs = 300): Transport {
       if (!(await probeConnectivity())) throw new NetworkError();
       await new Promise((r) => setTimeout(r, latencyMs));
       return mockServerRun(loadMockState(), code);
+    },
+    async fetchActivity(code) {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      if (!mockServerRun(loadMockState(), code)) return undefined;
+      return mockServerActivity(code);
     },
     async fetchQueue() {
       if (!(await probeConnectivity())) throw new NetworkError();
@@ -697,6 +800,18 @@ export function simulateMockPlanChange(code: string): Run | undefined {
   const reopened = wasReady || (run.status === "loaded" && next.orders_checked < next.orders_total);
   state[code] = { ...next, status: reopened ? "loading" : run.status };
   saveMockState(state);
+  logMockActivity(state[code], {
+    type: "plan_published",
+    actor: { kind: "dispatcher", name: "Dispatcher", full_name: null },
+    summary: `Dispatcher published plan v${version}`,
+  });
+  if (wasReady) {
+    logMockActivity(state[code], {
+      type: "load_reopened",
+      actor: { kind: "system", name: "System", full_name: null },
+      summary: `Load reopened · plan changed after Ready · v${run.current_plan_version} -> v${version}`,
+    });
+  }
   return state[code];
 }
 

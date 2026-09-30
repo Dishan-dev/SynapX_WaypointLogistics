@@ -1,22 +1,32 @@
 // IndexedDB store for the loader tablet: the last copy of each open run, the
-// last queue per dock, and the outbox of writes made while offline. Raw
+// last queue per dock, the last activity log per run, and the outbox of writes
+// made while offline. Raw
 // IndexedDB, no dependency.
 
-import type { QueueSummary, QueuedAction, Run, RunQueue } from "../types";
+import type { ActivityEntry, QueueSummary, QueuedAction, Run, RunQueue } from "../types";
 
 const DB_NAME = "waypoint-loader";
 // v2: runs keyed by "code" (API contract shapes); v1 data is dropped.
 // v3: adds the queue store; runs and the outbox are kept.
-const DB_VERSION = 3;
+// v4: adds the activity store; everything else is kept.
+const DB_VERSION = 4;
 const RUNS = "runs";
 const OUTBOX = "outbox";
 const QUEUE = "queue";
+const ACTIVITY = "activity";
 
 /** The last GET /loader/runs and /loader/summary this tablet saw for a dock. */
 export interface CachedQueue {
   dock: string;
   queue: RunQueue;
   summary: QueueSummary;
+  fetched_at: string;
+}
+
+/** The last GET /loader/runs/{code}/activity this tablet saw for a run. */
+export interface CachedActivity {
+  run_code: string;
+  events: ActivityEntry[];
   fetched_at: string;
 }
 
@@ -47,6 +57,7 @@ function openDb(): Promise<IDBDatabase> {
         outbox.createIndex("created_at", "created_at");
       }
       if (!db.objectStoreNames.contains(QUEUE)) db.createObjectStore(QUEUE, { keyPath: "dock" });
+      if (!db.objectStoreNames.contains(ACTIVITY)) db.createObjectStore(ACTIVITY, { keyPath: "run_code" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => {
@@ -80,6 +91,21 @@ export async function getCachedQueue(dock: string): Promise<CachedQueue | undefi
 
 export async function putCachedQueue(entry: CachedQueue): Promise<void> {
   await request((await store(QUEUE, "readwrite")).put(entry));
+}
+
+// ---- Activity ----------------------------------------------------------
+
+export async function getCachedActivity(runCode: string): Promise<CachedActivity | undefined> {
+  return request((await store(ACTIVITY, "readonly")).get(runCode));
+}
+
+export async function putCachedActivity(entry: CachedActivity): Promise<void> {
+  await request((await store(ACTIVITY, "readwrite")).put(entry));
+}
+
+/** Drops every run's saved log (on sign-out). Only the activity store: the outbox, runs and queue are kept. */
+export async function clearCachedActivity(): Promise<void> {
+  await request((await store(ACTIVITY, "readwrite")).clear());
 }
 
 // ---- Outbox ------------------------------------------------------------

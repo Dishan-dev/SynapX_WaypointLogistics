@@ -9,6 +9,8 @@ interface LoaderBottomNavProps {
   active?: LoaderTab;
   /** The run being loaded (/loader/runs/[code]); falls back to the queue. */
   loadingHref?: string;
+  /** That run's log (/loader/runs/[code]/log); /loader/log sends it on. */
+  logHref?: string;
   /** Open issues, shown as a count on the Issues tab. */
   issueCount?: number;
   className?: string;
@@ -21,6 +23,7 @@ const tabClass =
 export function LoaderBottomNav({
   active,
   loadingHref = "/loader",
+  logHref = "/loader/log",
   issueCount = 0,
   className,
 }: LoaderBottomNavProps) {
@@ -28,7 +31,7 @@ export function LoaderBottomNav({
     { id: "queue", label: "Queue", href: "/loader", icon: <List className="size-5" aria-hidden /> },
     { id: "loading", label: "Loading", href: loadingHref, icon: <Truck className="size-5" aria-hidden /> },
     { id: "issues", label: "Issues", href: "/loader/issues", icon: <TriangleAlert className="size-5" aria-hidden /> },
-    { id: "log", label: "Log", href: "/loader/log", icon: <History className="size-5" aria-hidden /> },
+    { id: "log", label: "Log", href: logHref, icon: <History className="size-5" aria-hidden /> },
     { id: "more", label: "More", href: "/loader/more", icon: <Ellipsis className="size-5" aria-hidden /> },
   ];
 

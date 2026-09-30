@@ -139,9 +139,16 @@ def test_page_routes_are_listed_with_owners(contract_text):
 def test_both_activity_endpoints_are_documented(contract_text):
     assert "### `GET /loader/activity`" in contract_text
     assert "### `GET /loader/runs/{code}/activity`" in contract_text
-    # Their opposite orderings are the thing most likely to surprise a caller.
-    assert "**Oldest first.**" in contract_text
-    assert "**Newest first**" in contract_text
+    # Both are newest first; the Change log card reversing it is the surprise.
+    assert "**Oldest first.**" not in contract_text
+    assert "**Newest first** — the Log tab" in contract_text
+    assert "reverses the list" in contract_text
+
+
+def test_log_types_for_sanduni_endpoints_are_documented(contract_text):
+    """L5/L6 writes must log, under these types, to show up in the Log."""
+    for event_type in ("issue_flagged", "run_released", "run_release_undone"):
+        assert f"`{event_type}`" in contract_text
 
 
 def test_both_progress_counts_are_documented(contract_text):

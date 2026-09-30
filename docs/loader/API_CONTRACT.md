@@ -204,7 +204,8 @@ redirect.
 | --- | --- | --- | --- |
 | `/loader/runs/[code]` | `loader/runs/[code]/page.tsx` | **L4** — loading checklist | 1c, 1c.1, 9, 10, 16 |
 | `/loader/issues/[id]` | `loader/issues/[id]/page.tsx` | **L8** — waiting / decision | 3a, 3b, 3c |
-| `/loader/log` | `loader/log/page.tsx` | **L9** — Log tab | Log tab |
+| `/loader/log` | `loader/log/page.tsx` | **L9** — redirects to the open run's log, or the queue | — |
+| `/loader/runs/[code]/log` | `loader/runs/[code]/log/page.tsx` | **L9** — Log tab | Log tab, T1c Change log |
 
 ### Shared
 
@@ -219,7 +220,7 @@ page. The plan-change takeover (2a) is likewise a blocking overlay on the
 checklist, with no `✕` and no tap-outside.
 
 **Bottom nav** maps to: Queue `/loader` · Loading `/loader/runs/[code]` · Issues
-`/loader/issues` · Log `/loader/log` · More `/loader/more`.
+`/loader/issues` · Log `/loader/log` (→ `/loader/runs/[code]/log`) · More `/loader/more`.
 
 ---
 
@@ -528,10 +529,80 @@ A `loaded` run is re-rolled; `issue_flagged` is left alone. After `gated_out`
 no plan is published and acknowledge / row writes are `409` — the change is
 the Driver's.
 
-### `GET /loader/runs/{code}/activity` — L9, one run's timeline
+### `GET /loader/runs/{code}/activity` — L9, one run's log
 
-**Oldest first.** The checklist's Change log panel reads top to bottom as the
-shift progresses (02:14 published → 02:16 acknowledged → 02:20 …).
+**Newest first** — the Log tab (`/loader/runs/[code]/log`). The checklist's
+Change log card (tablet T1c) reverses the list, so it reads top to bottom as the
+shift goes (02:14 published → 02:16 acknowledged → 02:20 …).
+
+```jsonc
+[
+  {
+    "id": 42,
+    "type": "order_unloaded",
+    "at": "2026-05-27T20:54:00Z",
+    "actor": { "kind": "loader", "name": "Saman J.", "full_name": "Saman Jayawardena" },
+    "stop": { "sequence": 5, "outlet_code": "OUT027" },
+    "order": { "order_number": "ORD0092308" },
+    "summary": "ORD0092308 unloaded → chiller",
+    "details": { "return_area": "chiller" }
+  },
+  {
+    "id": 40,
+    "type": "plan_published",
+    "at": "2026-05-27T20:44:00Z",
+    "actor": { "kind": "dispatcher", "name": "Dispatcher", "full_name": null },
+    "stop": null,
+    "order": null,
+    "summary": "Dispatcher published plan v3",
+    "details": {}
+  }
+]
+```
+
+- **Source:** `loader_activities`, the table every write logs to. Nothing is
+  derived from other tables except the order's stop.
+- **`type` is an open set.** Today: `plan_published` · `plan_acknowledged` ·
+  `order_checked` · `order_unchecked` · `order_rechecked` · `order_unloaded` ·
+  `load_reopened` · `issue_flagged` · `issue_decided` · `issue_default_applied`.
+  More will be added (L8, and the L5/L6 types below). A client shows `summary`
+  for a type it does not know; it never drops the entry.
+- **`summary`** is the loader's wording (Figma T1c): `Acknowledged · Saman J.`,
+  `ORD0092302 loaded`, `ORD0092308 unloaded → chiller`. It is built at read time,
+  so the stored `message` keeps the Dispatcher's wording (Figma 2c #5, "Plan v3
+  received · Saman Jayawardena") for the dock-wide feed below. Types without a
+  loader wording send the stored message as is.
+- **`actor`**: `name` is the short name for a loader, or the label logged for a
+  dispatcher or the system; `full_name` is set for loaders only. The session is
+  not recorded — every write stores the loader behind it, not the session id.
+- **`stop`**: where the order is on the newest plan version it appears in (an
+  order dropped by a later plan keeps its last stop). `null` with no order.
+- **`details`**: only what the row gives cleanly. Today `order_unloaded` carries
+  `return_area` (`chiller` · `staging`); everything else is `{}`.
+- Unknown run → `404 NOT_FOUND`; a run with nothing logged → `[]`.
+
+**Writes must log.** An event shows in the Log only if its write adds a
+`loader_activities` row, through `LoaderService.log(...)` in the same
+transaction as the write, with `actor_kind="loader"` and `actor_id` from the
+session. Sanduni's endpoints need these:
+
+| Endpoint | `event_type` | `order_id` | `message` (Dispatcher's wording) |
+| --- | --- | --- | --- |
+| `POST /loader/issues` (L5 flag) | `issue_flagged` | the order | `ORD0092314: missing 8 of 8 units, sent to Dispatcher` (the seed's row) |
+| `POST …/release` (L6) | `run_released` | — | `Ready to depart · Saman Jayawardena` |
+| `POST …/release/undo` (L6) | `run_release_undone` | — | `Ready undone · Saman Jayawardena` |
+
+A replayed `client_action_id` must not log a second row. The Log shows these
+stored messages until a loader wording is added for them in
+`LoaderService._activity_summary`.
+
+### `GET /loader/activity` — L9, the dock-wide feed
+
+`?dock=<n>` **(required)** · `&run_code=<code>` · `&limit=<1–500>` (default 100)
+
+**Newest first**, across every run on the dock. Each entry is the `ActivityRead`
+shape below, with the stored `message` (the Dispatcher's wording) and `run_code`
+on every entry. This feed is unchanged by the per-run log above.
 
 ```jsonc
 [
@@ -546,17 +617,6 @@ shift progresses (02:14 published → 02:16 acknowledged → 02:20 …).
   }
 ]
 ```
-
-### `GET /loader/activity` — L9, the dock-wide feed
-
-`?dock=<n>` **(required)** · `&run_code=<code>` · `&limit=<1–500>` (default 100)
-
-**Newest first**, across every run on the dock — the Log tab. Same entry shape as
-above, which is why `run_code` is on every entry.
-
-The two orderings are opposite **on purpose**: the per-run panel is a timeline,
-this is a feed, and a loader coming back to the Log tab wants the most recent
-thing at the top. A test asserts both so neither drifts.
 
 `dock` accepts the number, the code or the name — `3`, `DOCK3` or `Dock 3` — since
 the screens say "Dock 3" while the row stores `DOCK3`. `run_code` narrows the feed
