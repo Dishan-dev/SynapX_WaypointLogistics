@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Snowflake, Truck } from "lucide-react";
+import { openFlagSheet } from "@/components/loader/flag-issue-sheet";
 import { LoaderAppBar } from "@/components/loader/loader-app-bar";
 import { LoaderBottomNav } from "@/components/loader/loader-bottom-nav";
 import { PlanSourceStrip } from "@/components/loader/plan-source-strip";
@@ -28,7 +29,7 @@ import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import { TempBadge } from "@/components/loader/temp-badge";
 import { dockPlanSource, loadMapSlots, planSource, runCapacity, stopsInLoadOrder } from "@/lib/loader/format";
-import { simulateMockPlanChange } from "@/lib/loader/offline/transport";
+import { decideMockIssue, newestWaitingMockIssue, simulateMockPlanChange } from "@/lib/loader/offline/transport";
 import { mockQueue, mockRunDetails } from "@/lib/loader/mock-data";
 import type { OrderState, RunOrder } from "@/lib/loader/types";
 
@@ -87,7 +88,7 @@ export function KitView() {
                   { order_number: order.order_number },
                 )
               }
-              onFlag={() => {}}
+              onFlag={(order) => openFlagSheet(run, order, offline.act)}
             />
           )),
         )}
@@ -111,6 +112,31 @@ export function KitView() {
             >
               Simulate plan change
             </LoaderButton>
+          )}
+          {MOCK_TRANSPORT && (
+            <>
+              <LoaderButton
+                variant="secondary"
+                onClick={() => {
+                  const issue = newestWaitingMockIssue();
+                  // The Dispatcher picks the second option when there is one.
+                  if (issue) decideMockIssue(issue.id, (issue.options[1] ?? issue.options[0])?.label);
+                  void flush();
+                }}
+              >
+                Dispatcher answers
+              </LoaderButton>
+              <LoaderButton
+                variant="secondary"
+                onClick={() => {
+                  const issue = newestWaitingMockIssue();
+                  if (issue) decideMockIssue(issue.id);
+                  void flush();
+                }}
+              >
+                Decide-by passes
+              </LoaderButton>
+            </>
           )}
           {run.unacknowledged_plan_version !== null && (
             <LoaderButton onClick={() => void offline.act("acknowledge")}>

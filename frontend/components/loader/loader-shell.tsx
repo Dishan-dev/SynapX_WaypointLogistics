@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { usePathname } from "next/navigation";
+import { FlagIssueHost } from "./flag-issue-sheet";
 import { LoaderBottomNav, type LoaderTab } from "./loader-bottom-nav";
 import { LoaderSyncProvider } from "./loader-sync-provider";
 
@@ -79,6 +80,7 @@ export function LoaderShell({ user, dockLabel, sessionId, issueCount, children }
             issueCount={issueCount}
           />
         </div>
+        <FlagIssueHost />
       </LoaderSyncProvider>
     </LoaderShellContext.Provider>
   );

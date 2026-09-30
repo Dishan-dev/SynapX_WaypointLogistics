@@ -13,6 +13,7 @@ import { LoaderPill, type LoaderPillTone } from "@/components/loader/loader-pill
 import { LoaderScreen } from "@/components/loader/loader-screen";
 import { useLoaderShell } from "@/components/loader/loader-shell";
 import { useLoaderSync, useOfflineRun } from "@/components/loader/loader-sync-provider";
+import { openFlagSheet } from "@/components/loader/flag-issue-sheet";
 import { OrderRow } from "@/components/loader/order-row";
 import { StopHeader } from "@/components/loader/stop-header";
 import {
@@ -266,7 +267,7 @@ function Checklist({ initial, onNewPlan }: { initial: Run; onNewPlan: (run: Run)
                   key={order.order_number}
                   order={displayOrder(order)}
                   onToggle={closed || !toggleAction[order.state] ? undefined : onToggle}
-                  // Flag stays disabled until Sanduni's flag sheet (L5) lands; then pass onFlag.
+                  onFlag={closed ? undefined : (o) => openFlagSheet(run, o, act)}
                 />
               ))}
             </section>
