@@ -127,7 +127,7 @@ export default function TripSummaryPage() {
         </div>
 
         {/* Primary Action */}
-        <Link href="/driver" className="w-full mt-2">
+        <Link href="/driver/trip/depot" className="w-full mt-2">
           <button 
             className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
             style={{ backgroundColor: "#092C4C" }}
