@@ -31,7 +31,7 @@ export function ReadyView({ code }: { code: string }) {
 function Ready({ initial }: { initial: Run }) {
   const router = useRouter();
   const { user, dockLabel } = useLoaderShell();
-  const { sync } = useLoaderSync();
+  const { sync, checkConnection } = useLoaderSync();
   const { run, act, rejected, dismissRejected } = useOfflineRun(initial, user.shortName);
   const [now, setNow] = React.useState(() => Date.now());
 
@@ -52,6 +52,8 @@ function Ready({ initial }: { initial: Run }) {
   }, [canUndo]);
 
   const undo = async () => {
+    // Like release, undo is never queued for later.
+    if (!(await checkConnection())) return;
     const action = await act("release_undo");
     if (action) router.push(`/loader/runs/${encodeURIComponent(run.code)}/review`);
   };
@@ -61,11 +63,16 @@ function Ready({ initial }: { initial: Run }) {
       <LoaderButton className="w-full" onClick={() => router.push("/loader")}>
         Back to loading queue
       </LoaderButton>
-      {canUndo && (
-        <LoaderButton variant="ghost" className="w-full" onClick={() => void undo()}>
-          Undo · {secondsLeft} s
-        </LoaderButton>
-      )}
+      {canUndo &&
+        (sync.online ? (
+          <LoaderButton variant="ghost" className="w-full" onClick={() => void undo()}>
+            Undo · {secondsLeft} s
+          </LoaderButton>
+        ) : (
+          <LoaderButton variant="ghost" className="w-full" locked>
+            Undo needs a connection · {secondsLeft} s
+          </LoaderButton>
+        ))}
     </div>
   );
 

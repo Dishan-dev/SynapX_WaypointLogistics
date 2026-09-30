@@ -59,7 +59,7 @@ export function ReviewView({ code }: { code: string }) {
 function Review({ initial }: { initial: Run }) {
   const router = useRouter();
   const { user, dockLabel } = useLoaderShell();
-  const { sync } = useLoaderSync();
+  const { sync, checkConnection } = useLoaderSync();
   const { run, act, rejected, dismissRejected } = useOfflineRun(initial, user.shortName);
   const issues = useRunIssues(run.code);
   const [releasing, setReleasing] = React.useState(false);
@@ -87,6 +87,9 @@ function Review({ initial }: { initial: Run }) {
 
   const release = async () => {
     setReleasing(true);
+    // Release is never queued: if the connection dropped before the tablet
+    // noticed, nothing is sent and the footer turns to "Release needs a connection".
+    if (!(await checkConnection())) return setReleasing(false);
     const action = await act("release");
     if (action) router.push(readyHref(run.code));
     else setReleasing(false);
