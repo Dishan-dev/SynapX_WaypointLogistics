@@ -1,6 +1,6 @@
 "use client";
 
-import React, from "react";
+import React from "react";
 import Link from "next/link";
 import {
   Signal, BatteryFull, User, Truck, Phone, Mail,
