@@ -130,17 +130,25 @@ Until the real one exists, each dev codes against a **stub with exactly these si
 
 ## 5. API routes (prefix `/api/v1`)
 
+*Updated 30 Sep 2026 to match what's built. The Store Manager routes live in their own module (`endpoints/store_orders.py`) so they don't clash with the Dispatcher team's changes to `endpoints/orders.py`. The existing `/orders/` CRUD routes are unchanged.*
+
 | Route | Owner | Notes |
 |---|---|---|
-| `POST /orders` | Dev A | **Existing, extended**: enforces the rules below when `outlet_id` is set |
-| `GET /orders?outlet_id=&date=&status=&priority=` | Dev A | **Existing, extended** with filters |
-| `GET /orders/{id}` | Dev A | **Existing, extended**: adds items, ETA, loading status, receipt |
-| `POST /orders/{id}/submit` | Dev A | draft → submitted (splits by temperature class) |
-| `DELETE /orders/{id}` | Dev A | Cancel, before cutoff only |
-| `GET /notifications?outlet_id=&category=&unread=` | Dev A | |
-| `PATCH /notifications/{id}/read`, `POST /notifications/read-all` | Dev A | |
-| `GET /calendar/operating-days?from=&to=` | Dev A | For the date picker (03c) |
+| `POST /orders/store` | Dev A | Place a goods request. Body: `outlet_id`, `delivery_date`, `is_priority`, `notes`, `items[]` (`sku`, `item_name`, `quantity`, `temperature_zone`: `Chilled`/`Ambient`). Returns **one order per zone** |
+| `GET /orders/store?outlet_id=&status=&priority=&date_from=&date_to=&search=` | Dev A | Goods Requests list. Repeat `status` for several; dates filter on submission time |
+| `GET /orders/store/{order_number}` | Dev A | Request Details, e.g. `ORD0000001` |
+| `POST /orders/{order_id}/cancel` | Dev A | Cancel before the cutoff (only draft / submitted / confirmed) |
+| `PATCH /orders/{order_id}/status` | Dev A → **Dev B, Driver, Dispatcher call it** | `update_order_status`. Illegal moves return **409** |
+| `POST /orders/{order_id}/defer` | Dev A → **Dispatcher calls it** | Body: `reason`, optional `new_delivery_date`. Counts deferrals, notifies the store |
+| `GET /orders/by-date?date=&depot=` | Dev A → **Dev B calls it** | `get_orders_by_date` for loading lists |
+| `GET /notifications/?outlet_id=&category=&unread=` | Dev A | Newest first |
+| `PATCH /notifications/{id}/read`, `POST /notifications/read-all?outlet_id=` | Dev A | |
+| `GET /calendar/operating-days?date_from=&date_to=` | Dev A | Operating days plus `earliest_default` / `earliest_high_priority` for the date picker (03c) |
 | `/loading/*`, `/receipts/*` | Dev B | As in the workplan |
+
+Rule errors return **422** with `detail.code`: `NOT_OPERATING_DAY` (+ `suggested_date`), `CUTOFF_PASSED`, `TOO_EARLY` (+ `earliest_date`), `DUPLICATE_ORDER` (+ `existing_orders`), `MIXED_ZONES_NOT_ALLOWED`.
+
+**Column decisions (30 Sep):** the orders code reuses Nisith's columns from `0a80c3e0353c` as they are: `is_priority`, `deferral_reason`, `temperature_zone` (`Chilled`/`Ambient`), `weight_kg`, `brand`, `district`, `delivery_window`, and **`operating_date` as the requested delivery date** (`YYYY-MM-DD`). Loader `0003` supplies `outlet_id`, `units`, `volume_m3` (it should no longer add `brand`, `weight_kg` or `temperature_class`). Dev A only adds `submitted_at`, `cutoff_at`, `notes`, `placed_by`, `deferral_count`, the `notifications` table, and the `SUBMITTED` / `READY_FOR_DISPATCH` / `COMPLETED` status values.
 
 ---
 
