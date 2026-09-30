@@ -160,7 +160,7 @@ export default function ProofOfDeliveryPage() {
 
         {/* Primary Action Button */}
         <div className="mt-auto pt-2 shrink-0">
-          <Link href="/driver">
+          <Link href="/driver/trip/complete">
             <button 
               className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
               style={{ backgroundColor: "#092C4C" }}
