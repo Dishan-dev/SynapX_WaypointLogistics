@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronRight, WifiOff } from "lucide-react";
 import { cn } from "cn";
 import { InfoChip } from "@/components/loader/info-chip";
+import { LoaderButton } from "@/components/loader/loader-button";
 import { LoaderPill, type LoaderPillTone } from "@/components/loader/loader-pill";
 import { LoaderScreen } from "@/components/loader/loader-screen";
 import { useStoredSession } from "@/components/loader/loader-session";
@@ -53,7 +54,7 @@ function useIssues(dock: string | undefined): IssuesState {
   React.useEffect(() => {
     const id = window.setTimeout(() => void refresh(), 0);
     return () => window.clearTimeout(id);
-  }, [refresh, sync.lastSyncedAt, sync.pending]);
+  }, [refresh, sync.lastSyncedAt, sync.pending, sync.failed, sync.stale]);
 
   React.useEffect(() => {
     const id = window.setInterval(() => void refresh(), REFRESH_MS);
@@ -77,6 +78,7 @@ function useIssues(dock: string | undefined): IssuesState {
 export function IssuesView() {
   const dock = useStoredSession()?.session.dock;
   const { loaded, local, ready } = useIssues(dock);
+  const { dismissActions } = useLoaderSync();
   const issues = loaded?.issues ?? [];
   const waiting = issues.filter(isIssueWaiting);
   const answered = issues.filter((i) => !isIssueWaiting(i));
@@ -106,7 +108,7 @@ export function IssuesView() {
             {local.length > 0 && (
               <IssueSection title="Not sent yet" count={local.length}>
                 {local.map((flag) => (
-                  <LocalFlagRow key={flag.clientActionId} flag={flag} />
+                  <LocalFlagRow key={flag.clientActionId} flag={flag} onDismiss={dismissActions} />
                 ))}
               </IssueSection>
             )}
@@ -193,7 +195,24 @@ function IssueRow({ issue }: { issue: LoaderIssue }) {
   );
 }
 
-function LocalFlagRow({ flag }: { flag: LocalFlag }) {
+/**
+ * Why a flag did not go through, for the loader. Refusals are final: the flag
+ * is not sent again, and the loader clears it with OK.
+ */
+function refusedReason(flag: LocalFlag): string {
+  if (flag.conflictCode === "INVALID_STATE_TRANSITION") {
+    return "This order already has a flag, or can’t be flagged any more.";
+  }
+  if (flag.conflictCode === "PLAN_VERSION_STALE" || flag.conflictCode === "PLAN_NOT_ACKNOWLEDGED") {
+    return "The plan changed before it was sent. Check the order on the new plan.";
+  }
+  if (flag.lastError?.startsWith("INVALID_FLAG")) {
+    return "The flag was incomplete: no signed-in loader, or the units were out of range.";
+  }
+  return "The server refused this flag.";
+}
+
+function LocalFlagRow({ flag, onDismiss }: { flag: LocalFlag; onDismiss: (ids: string[]) => Promise<void> }) {
   const refused = flag.status !== "pending";
   return (
     <li className={rowClass}>
@@ -201,18 +220,21 @@ function LocalFlagRow({ flag }: { flag: LocalFlag }) {
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-base font-semibold text-foreground">{flag.flag.order_number}</span>
           <LoaderPill tone="error">{ISSUE_TYPE_LABELS[flag.flag.issue_type]}</LoaderPill>
-          <LoaderPill tone={refused ? "error" : "info"}>{refused ? "Not sent" : "Waiting to send"}</LoaderPill>
+          <LoaderPill tone={refused ? "error" : "info"}>{refused ? "Not synced" : "Waiting to send"}</LoaderPill>
         </div>
         <p className="text-xs text-muted-foreground">
           {flag.flag.units_affected} {flag.flag.units_affected === 1 ? "unit" : "units"} · {flag.runCode} · flagged{" "}
           {formatTime(flag.createdAt)}
         </p>
         <p className="text-xs font-medium text-muted-foreground">
-          {refused
-            ? "The server refused this flag. Flag the order again if it still applies."
-            : "Goes to the Dispatcher when the tablet reconnects."}
+          {refused ? refusedReason(flag) : "Goes to the Dispatcher when the tablet reconnects."}
         </p>
       </div>
+      {refused && (
+        <LoaderButton variant="ghost" className="shrink-0" onClick={() => void onDismiss([flag.clientActionId])}>
+          OK
+        </LoaderButton>
+      )}
     </li>
   );
 }
