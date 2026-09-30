@@ -202,7 +202,7 @@ export default function RouteMapPage() {
           <TriangleAlert size={22} color="#5D6A78" />
           <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Report</span>
         </Link>
-        <Link href="/driver/notifications" className="flex flex-col items-center gap-1 w-[72px]">
+        <Link href="/driver/queue" className="flex flex-col items-center gap-1 w-[72px]">
           <Layers size={22} color="#5D6A78" />
           <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Queue</span>
         </Link>

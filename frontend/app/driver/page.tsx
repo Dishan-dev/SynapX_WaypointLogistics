@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import {
-  MapPin, Signal, BatteryFull, Map, Home, TriangleAlert, Layers
+  MapPin, Signal, BatteryFull, Map, Home, TriangleAlert, Layers, User
 } from "lucide-react";
 
 export default function DriverDashboard() {
@@ -25,7 +25,7 @@ export default function DriverDashboard() {
         </div>
 
         {/* Title bar */}
-        <div className="flex px-5 py-2.5 items-center w-full">
+        <div className="flex px-5 py-2.5 items-center justify-between w-full">
           <div className="flex flex-col gap-0.5">
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
               Today — Tue, Sep 29
@@ -34,6 +34,11 @@ export default function DriverDashboard() {
               Good morning, Nimal · VEH014
             </p>
           </div>
+          <Link href="/driver/profile">
+            <div className="flex justify-center items-center w-10 h-10 rounded-full shrink-0" style={{ backgroundColor: "#EAF2FF" }}>
+              <User size={20} color="#2167D5" />
+            </div>
+          </Link>
         </div>
       </div>
 
@@ -149,7 +154,7 @@ export default function DriverDashboard() {
           <TriangleAlert size={22} color="#5D6A78" />
           <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Report</span>
         </Link>
-        <Link href="/driver/notifications" className="flex flex-col items-center gap-1 w-[72px]">
+        <Link href="/driver/queue" className="flex flex-col items-center gap-1 w-[72px]">
           <Layers size={22} color="#5D6A78" />
           <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Queue</span>
         </Link>
