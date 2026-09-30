@@ -19,7 +19,7 @@ from app.models.delivery_run import (
     StopStatus,
 )
 from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck
-from app.models.loader_issue import IssueStatus, LoaderIssue, LoaderIssueOption
+from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderSession, LoaderUser
 from app.models.order import Order
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
@@ -122,6 +122,58 @@ class PlanNotAcknowledgedError(InvalidStateTransitionError):
         }
 
 
+# Undo of a release (L6): the tablet shows a 10 s undo; the server allows 2 s
+# more so a tap on the last second, sent over a slow link, still lands.
+UNDO_WINDOW_SECONDS = 10
+UNDO_GRACE_SECONDS = 2
+
+
+def _utc_z(value: datetime) -> str:
+    """A datetime as the API writes it, for error details (which are plain JSON)."""
+    return _naive_utc(value).isoformat() + "Z"
+
+
+class ReleaseLockedError(InvalidStateTransitionError):
+    """POST /release while something still blocks it (L6).
+
+    detail.release_blockers is the same [{code, count}] list the run read and
+    release-summary send, so the tablet can say why without another request.
+    """
+
+    def __init__(self, run: DeliveryRun, blockers: List[schemas.ReleaseBlockerRead]):
+        super().__init__(
+            f"{run.code} cannot be released yet.",
+            current_state="locked",
+            target_state="ready_to_depart",
+            entity="DeliveryRun",
+        )
+        self.code = "RELEASE_LOCKED"
+        self.details = {
+            "entity": "DeliveryRun",
+            "entity_id": run.code,
+            "release_blockers": [b.model_dump() for b in blockers],
+        }
+
+
+class UndoWindowExpiredError(InvalidStateTransitionError):
+    """POST /release/undo after the undo window has closed (L6)."""
+
+    def __init__(self, run: DeliveryRun):
+        super().__init__(
+            f"The undo window for {run.code} has closed.",
+            current_state=run.status.value,
+            target_state="undo",
+            entity="DeliveryRun",
+        )
+        self.code = "UNDO_WINDOW_EXPIRED"
+        self.details = {
+            "entity": "DeliveryRun",
+            "entity_id": run.code,
+            "released_at": _utc_z(run.released_at),
+            "window_seconds": UNDO_WINDOW_SECONDS,
+        }
+
+
 class ClientActionIdReusedError(InvalidStateTransitionError):
     """A client_action_id already recorded for a different order or action.
 
@@ -177,6 +229,7 @@ class LoaderService:
     @staticmethod
     def build_run_detail(db: Session, run: DeliveryRun) -> schemas.RunDetailRead:
         stops = LoaderService.current_stops(db, run)
+        issues = LoaderService._latest_issues(db, run)
         unloads = LoaderService._unloads(db, run)
         diff = LoaderService._plan_diff(db, run, stops, unloads)
         blockers = LoaderService.release_blockers(db, run)
@@ -205,6 +258,7 @@ class LoaderService:
                         state=row.state,
                         checked_at=row.checked_at,
                         checked_by=row.checked_by.short_name if row.checked_by else None,
+                        loaded_units=LoaderService.loaded_units(row, issues.get(row.order_id)),
                         unloaded_at=unload.at if unload else None,
                         unloaded_by=unload.actor.short_name if unload and unload.actor else None,
                         **(diff.order_fields(row, stop) if diff else {}),
@@ -248,6 +302,7 @@ class LoaderService:
             wave=run.wave,
             departs_at=run.departs_at,
             status=run.status,
+            **LoaderService.release_fields(run),
             current_plan_version=run.current_plan_version,
             dock=run.dock.name,
             vehicle=schemas.VehicleRead.model_validate(run.vehicle),
@@ -275,6 +330,112 @@ class LoaderService:
             release_locked=bool(blockers),
             release_blockers=blockers,
         )
+
+    @staticmethod
+    def loaded_units(row: RunStopOrder, issue: Optional[LoaderIssue]) -> int:
+        """Units of this order actually on the truck.
+
+        - loaded, re_check, take_off (not yet unloaded): every unit is aboard.
+        - flagged: missing -> 0; short, damaged or won't fit -> units minus the
+          units flagged; a flag without a count means the whole order is affected (0).
+        - to_load, new, moved: nothing aboard.
+        """
+        units = row.units or 0
+        if row.state in (RunOrderState.LOADED, RunOrderState.RE_CHECK, RunOrderState.TAKE_OFF):
+            return units
+        if row.state == RunOrderState.FLAGGED and issue is not None:
+            if issue.issue_type == IssueType.MISSING or issue.units_affected is None:
+                return 0
+            return max(units - issue.units_affected, 0)
+        return 0
+
+    @staticmethod
+    def _latest_issues(db: Session, run: DeliveryRun) -> dict:
+        """The most recent issue per order on this run, by order id."""
+        issues = db.execute(
+            select(LoaderIssue)
+            .filter_by(run_id=run.id)
+            .order_by(LoaderIssue.reported_at, LoaderIssue.id)
+        ).scalars().all()
+        return {issue.order_id: issue for issue in issues}
+
+    @staticmethod
+    def release_fields(run: DeliveryRun) -> dict:
+        """released_at / released_by as the API sends them, for the run read and
+        the queue card alike.
+
+        Only while the run is signed off (ready_to_depart or gated_out). The
+        column keeps the time after a plan change reopens the run, for "was
+        Ready 01:48", but the run is not released any more, so the API says so.
+        """
+        if run.status not in CLOSED_RUN_STATES or run.released_at is None:
+            return {"released_at": None, "released_by": None}
+        who = run.released_by
+        return {
+            "released_at": run.released_at,
+            "released_by": (
+                schemas.LoaderRefRead(id=who.id, name=who.short_name) if who else None
+            ),
+        }
+
+    @staticmethod
+    def plan_updated_at(db: Session, run: DeliveryRun) -> Optional[datetime]:
+        """When the run's current plan was published - plan_updated_at on a queue
+        card (L3). None for a run with no revision on record."""
+        revision = LoaderService.get_revision(db, run, run.current_plan_version)
+        return revision.published_at if revision else None
+
+    @staticmethod
+    def dock_plan_updated_at(
+        db: Session, dock: Dock, run_ids: Optional[List[int]] = None
+    ) -> Optional[datetime]:
+        """The latest plan publish across a dock - plan_updated_at on the summary
+        (L3), "Plan from Dispatcher · updated 02:14" on the queue strip.
+
+        Only each run's current version counts. run_ids narrows it to the runs
+        the queue actually shows (for example, today's); None means every run
+        at the dock.
+        """
+        query = (
+            select(func.max(PlanRevision.published_at))
+            .join(DeliveryRun, PlanRevision.run_id == DeliveryRun.id)
+            .where(
+                DeliveryRun.dock_id == dock.id,
+                PlanRevision.version == DeliveryRun.current_plan_version,
+            )
+        )
+        if run_ids is not None:
+            query = query.where(DeliveryRun.id.in_(run_ids))
+        return db.execute(query).scalar()
+
+    @staticmethod
+    def check_release_allowed(db: Session, run: DeliveryRun) -> None:
+        """For POST /release (L6): raise 409 RELEASE_LOCKED, with the blockers
+        in the detail, unless nothing blocks the release."""
+        blockers = LoaderService.release_blockers(db, run)
+        if blockers:
+            raise ReleaseLockedError(run, blockers)
+
+    @staticmethod
+    def check_undo_allowed(run: DeliveryRun, now: Optional[datetime] = None) -> None:
+        """For POST /release/undo (L6).
+
+        Only a run that is still ready_to_depart can be undone - a plan change
+        inside the window has already reopened it, and after gate-out it is the
+        Driver's. Then only within UNDO_WINDOW_SECONDS of released_at, plus
+        UNDO_GRACE_SECONDS; after that, 409 UNDO_WINDOW_EXPIRED.
+        """
+        if run.status != RunStatus.READY_TO_DEPART or run.released_at is None:
+            raise InvalidStateTransitionError(
+                f"{run.code} is {run.status.value}; only a ready_to_depart run can be undone.",
+                current_state=run.status.value,
+                target_state="undo",
+                entity="DeliveryRun",
+            )
+        now = now or datetime.now(timezone.utc)
+        elapsed = (_naive_utc(now) - _naive_utc(run.released_at)).total_seconds()
+        if elapsed > UNDO_WINDOW_SECONDS + UNDO_GRACE_SECONDS:
+            raise UndoWindowExpiredError(run)
 
     @staticmethod
     def release_blockers(db: Session, run: DeliveryRun) -> List[schemas.ReleaseBlockerRead]:

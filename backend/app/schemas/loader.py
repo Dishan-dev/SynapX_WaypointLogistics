@@ -91,6 +91,11 @@ class RunOrderRead(BaseModel):
     state: RunOrderState
     checked_at: Optional[UtcDateTime] = None
     checked_by: Optional[str] = None
+    # Units actually on the truck: all of them once loaded (re_check and a
+    # take_off not yet unloaded count, the goods are aboard), units minus the
+    # flagged units for short / damaged / won't fit (0 if the flag has no
+    # count), 0 for missing and for anything not loaded. "53 of 56 units will be loaded".
+    loaded_units: int = 0
 
     # --- Plan diff (L7). All null on an order the latest change left alone.
     # Plan version whose change this row is showing.
@@ -169,6 +174,13 @@ class ReleaseBlockerRead(BaseModel):
     count: int
 
 
+class LoaderRefRead(BaseModel):
+    """A loader named on a record: {"id": 1, "name": "Saman J."}."""
+
+    id: int
+    name: str
+
+
 class PlanChangeRead(BaseModel):
     change_kind: PlanChangeKind
     order_number: Optional[str] = None
@@ -190,6 +202,12 @@ class RunDetailRead(BaseModel):
     wave: Optional[str] = None
     departs_at: UtcDateTime
     status: RunStatus
+    # Who signed the run off and when ("signed off by Saman J. 03:06"). Only
+    # while the run is ready_to_depart or gated_out: null before release, after
+    # an undo, and after a plan change reopens it (that time is in
+    # plan_change.was_ready_at).
+    released_at: Optional[UtcDateTime] = None
+    released_by: Optional[LoaderRefRead] = None
     current_plan_version: int
     dock: str
     vehicle: VehicleRead

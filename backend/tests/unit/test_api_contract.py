@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from app.models.delivery_run import RunOrderState, RunStatus
+from app.models.delivery_run import RunOrderState, RunStatus, StopStatus
 from app.models.loader_activity import ActorKind
 from app.models.loader_issue import IssueStatus, IssueType
 from app.models.plan_revision import PlanChangeKind
@@ -29,6 +29,7 @@ DOCUMENTED_ENUMS = {
     "issue_status": IssueStatus,
     "change_kind": PlanChangeKind,
     "actor_kind": ActorKind,
+    "stop_status": StopStatus,
 }
 
 
@@ -163,6 +164,8 @@ def test_every_loader_error_code_is_documented(contract_text):
         "PLAN_NOT_ACKNOWLEDGED",
         "CLIENT_ACTION_ID_REUSED",
         "PLAN_VERSION_MISMATCH",
+        "RELEASE_LOCKED",
+        "UNDO_WINDOW_EXPIRED",
     ):
         assert f"`{code}`" in section, f"{code} missing from the Errors table"
 
@@ -187,3 +190,31 @@ def test_the_l7_writes_are_documented(contract_text):
     section = " ".join(contract_text.split("### Acknowledge · unload")[1].split("\n### ")[0].split())
     assert "optional until L2 sign-in is merged" in section
     assert "becomes **required** after L2" in section
+
+
+def test_wave_values_match_the_seed_and_the_frontend(contract_text):
+    """wave has no Python enum (the column is free text), so pin the values."""
+    row = next(line for line in contract_text.splitlines() if line.startswith("| `wave` |"))
+    assert re.findall(r"`([a-z_]+)`", row.split("|")[2]) == ["night", "day"]
+
+
+def test_the_helpers_sanduni_calls_exist_and_are_named(contract_text):
+    """The contract tells L3/L6 which helper to call; each must really exist."""
+    from app.services.loader_service import LoaderService
+
+    for helper in (
+        "release_blockers",
+        "check_release_allowed",
+        "check_undo_allowed",
+        "release_fields",
+        "plan_updated_at",
+        "dock_plan_updated_at",
+    ):
+        assert f"`{helper}" in contract_text or f".{helper}(" in contract_text, helper
+        assert callable(getattr(LoaderService, helper)), helper
+
+
+def test_the_new_card_fields_are_documented(contract_text):
+    for field in ("released_at", "released_by", "plan_updated_at", "pre_stage_note", "loaded_units"):
+        assert f'"{field}"' in contract_text or f"`{field}`" in contract_text, field
+    assert "Source TBD with dispatcher" in contract_text or "source TBD with dispatcher" in contract_text
