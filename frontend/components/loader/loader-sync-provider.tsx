@@ -6,7 +6,7 @@ import { applyAction, enqueue, type NewAction } from "@/lib/loader/offline/outbo
 import { rejectedActions, resolveRun, type RunSource } from "@/lib/loader/offline/run-cache";
 import { flushOutbox } from "@/lib/loader/offline/sync";
 import { createTransport, probeConnectivity, type Transport } from "@/lib/loader/offline/transport";
-import { flushSessionEnds } from "@/lib/loader/session";
+import { flushSessionEnds, readSession } from "@/lib/loader/session";
 import {
   isPlanConflict,
   type ActionInput,
@@ -25,6 +25,12 @@ interface LoaderSyncValue {
   /** Queue a write; it is sent now if online, otherwise on reconnect. */
   enqueueAction: (input: NewAction) => Promise<QueuedAction>;
   flush: () => Promise<void>;
+  /**
+   * Probe the server now and update `sync.online`. For writes that must not
+   * wait in the outbox (release, undo): true means send, false means the
+   * screen now shows Offline and nothing was queued.
+   */
+  checkConnection: () => Promise<boolean>;
   /** Remove refused or failed actions once the loader has seen them. */
   dismissActions: (clientActionIds: string[]) => Promise<void>;
   /** Used to refetch runs after a sync. */
@@ -53,7 +59,9 @@ export function LoaderSyncProvider({
   children: React.ReactNode;
 }) {
   const transport = React.useMemo(() => createTransport(), []);
-  const [online, setOnline] = React.useState(true);
+  // Start from the browser's own flag, so a reload while offline shows Offline
+  // at once; the probe below then confirms it either way.
+  const [online, setOnline] = React.useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   const [syncing, setSyncing] = React.useState(false);
   const [counts, setCounts] = React.useState({ pending: 0, stale: 0, failed: 0 });
   const [lastSyncedAt, setLastSyncedAt] = React.useState<string>();
@@ -94,12 +102,16 @@ export function LoaderSyncProvider({
     }
   }, [transport, refreshCounts]);
 
-  const check = React.useCallback(async () => {
+  const checkConnection = React.useCallback(async () => {
     const reachable = await probeConnectivity();
     setOnline(reachable);
-    if (reachable) await flush();
+    return reachable;
+  }, []);
+
+  const check = React.useCallback(async () => {
+    if (await checkConnection()) await flush();
     else await refreshCounts();
-  }, [flush, refreshCounts]);
+  }, [checkConnection, flush, refreshCounts]);
 
   // Connectivity: browser events, visibility, and a probe that runs faster while offline.
   React.useEffect(() => {
@@ -152,11 +164,12 @@ export function LoaderSyncProvider({
       sync: { online, syncing, ...counts, lastSyncedAt },
       enqueueAction,
       flush,
+      checkConnection,
       dismissActions,
       transport,
       sessionId,
     }),
-    [online, syncing, counts, lastSyncedAt, enqueueAction, flush, dismissActions, transport, sessionId],
+    [online, syncing, counts, lastSyncedAt, enqueueAction, flush, checkConnection, dismissActions, transport, sessionId],
   );
 
   return <LoaderSyncContext.Provider value={value}>{children}</LoaderSyncContext.Provider>;
@@ -213,7 +226,7 @@ export function useOfflineRun(initial: Run, actorName?: string) {
         plan_version: current.current_plan_version,
         payload: { ...input, loader_session_id: sessionId } as QueuedActionPayload,
       });
-      const next = applyAction(current, action, actorName);
+      const next = applyAction(current, action, actorName, readSession()?.session.loader.id);
       runRef.current = next;
       setRun(next);
       setSource("local");

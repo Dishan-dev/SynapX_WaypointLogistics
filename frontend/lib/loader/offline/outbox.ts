@@ -105,7 +105,7 @@ const ORDER_STATE_AFTER: Partial<Record<QueuedActionType, OrderState>> = {
  * the server confirms it. Returns a new run with counts and capacity
  * recomputed; the input is not changed.
  */
-export function applyAction(run: Run, action: QueuedAction, actorName?: string): Run {
+export function applyAction(run: Run, action: QueuedAction, actorName?: string, actorId?: number): Run {
   const by = actorName ?? null;
 
   switch (action.action_type) {
@@ -119,7 +119,13 @@ export function applyAction(run: Run, action: QueuedAction, actorName?: string):
         plan: { ...run.plan, version: action.plan_version, acknowledged_at: action.created_at, acknowledged_by: by },
       });
     case "release":
-      return { ...run, status: "ready_to_depart", released_at: action.created_at, released_by: by };
+      return {
+        ...run,
+        status: "ready_to_depart",
+        released_at: action.created_at,
+        // Without the loader's id the name is left out rather than guessed.
+        released_by: by && actorId != null ? { id: actorId, name: by } : null,
+      };
     case "release_undo":
       // Release needs every order checked, so an undone run is loaded again.
       return { ...run, status: "loaded", released_at: null, released_by: null };

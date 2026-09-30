@@ -47,8 +47,14 @@ export type IssueType = "missing" | "short" | "damaged" | "wont_fit";
 export type IssueStatus = "sent" | "seen" | "decided" | "default_applied";
 export type ChangeKind = "unload_from_truck" | "dont_load" | "load_new" | "resequence";
 export type ActorKind = "loader" | "dispatcher" | "system";
-/** Not in the enum table; only "night" appears in the contract examples. */
+/** Fresh runs on the night wave, Style and Tech on the day wave. */
 export type Wave = "night" | "day";
+/**
+ * stops[].status: pending until something at the stop is aboard or resolved,
+ * loading once it is, complete when every active order is loaded or flagged.
+ * Not shown: the load map derives its own states from the rows.
+ */
+export type StopStatus = "pending" | "loading" | "complete";
 
 // ---- Built (L0): GET /loader/runs/{code} ---------------------------------
 
@@ -82,7 +88,10 @@ export interface RunOrder {
   state: OrderState;
   checked_at: string | null;
   checked_by: string | null;
-  /** Not in contract, pending Sachintha: units loaded when fewer than ordered. */
+  /**
+   * Units of the order actually on the truck ("53 of 56"). Sent on every
+   * order; optional only for runs cached before the field existed.
+   */
   loaded_units?: number;
   // L7 plan diff ("Plan diff" in the contract). Optional: runs cached before
   // L7 do not carry them.
@@ -118,8 +127,7 @@ export interface RunStop {
   /** Null for a stop a plan change just added, until it is routed. */
   eta: string | null;
   handling_minutes: number;
-  /** Values are not listed in the contract ("pending" in the example). */
-  status: string;
+  status: StopStatus;
   outlet: Outlet;
   orders: RunOrder[];
   /** L7: "was Stop 4" or "new stop"; null if the stop kept its place. */
@@ -179,11 +187,17 @@ export interface Run {
   release_locked?: boolean;
   /** What still stops release, in the order the footer names them. */
   release_blockers?: ReleaseBlocker[];
-  // L6. Not in the contract yet (Sachintha is adding them): optional.
-  /** When the run was marked ready to depart; kept after a plan change reopens it. */
+  // L6 ("Released"). Set only while ready_to_depart or gated_out, null
+  // otherwise. Optional: runs cached before the fields existed.
+  /** When the run was signed off. */
   released_at?: string | null;
-  /** Who marked it ready ("Saman J."). */
-  released_by?: string | null;
+  /** Who signed it off; `name` is the loader's short name ("Saman J."). */
+  released_by?: ReleasedBy | null;
+}
+
+export interface ReleasedBy {
+  id: number;
+  name: string;
 }
 
 export interface PlanChange {
@@ -334,6 +348,13 @@ export interface RunSummary {
   orders_checked: number;
   orders_total: number;
   loader: string | null;
+  // Contract fields the card does not read yet. Optional until the route exists.
+  released_at?: string | null;
+  released_by?: ReleasedBy | null;
+  /** The current plan's publish time; null if the run has none. */
+  plan_updated_at?: string | null;
+  /** Always null for now: its source is still to be agreed with the dispatcher team. */
+  pre_stage_note?: string | null;
   /** Display strings, e.g. ["Truck", "Reefer", "5,510 kg · 26.4 m³"]. */
   chips: string[];
   alert: RunAlert | null;
@@ -359,6 +380,8 @@ export interface QueueSummary {
   loading: { count: number; loaders: string[] };
   issues: { count: number; label: string };
   ready: { count: number; run_codes: string[] };
+  /** Latest plan publish across the dock ("Plan from Dispatcher · updated 02:14"); null when none. */
+  plan_updated_at?: string | null;
 }
 
 // ---- Offline writes -------------------------------------------------------
@@ -406,16 +429,17 @@ export type QueuedActionStatus = "pending" | "conflict" | "failed";
  * - PLAN_VERSION_STALE: made on a plan that is no longer current.
  * - PLAN_NOT_ACKNOWLEDGED: a row write while the current plan is unread (L7).
  * - RELEASE_LOCKED: release refused while release_blockers lists anything (L6).
- * - RELEASE_UNDO_EXPIRED: undo after the 10 s window (L6; placeholder code
- *   until the backend names it).
+ * - UNDO_WINDOW_EXPIRED: undo after the window (L6); detail carries
+ *   released_at and window_seconds.
  * - CLIENT_ACTION_ID_REUSED: the id was already used for another action (a client bug).
- * - INVALID_STATE_TRANSITION: the row or run no longer allows it.
+ * - INVALID_STATE_TRANSITION: the row or run no longer allows it (for undo:
+ *   the run is no longer ready to depart).
  */
 export type ConflictCode =
   | "PLAN_VERSION_STALE"
   | "PLAN_NOT_ACKNOWLEDGED"
   | "RELEASE_LOCKED"
-  | "RELEASE_UNDO_EXPIRED"
+  | "UNDO_WINDOW_EXPIRED"
   | "CLIENT_ACTION_ID_REUSED"
   | "INVALID_STATE_TRANSITION";
 
