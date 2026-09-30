@@ -103,6 +103,11 @@ export async function putCachedActivity(entry: CachedActivity): Promise<void> {
   await request((await store(ACTIVITY, "readwrite")).put(entry));
 }
 
+/** Drops every run's saved log (on sign-out). Only the activity store: the outbox, runs and queue are kept. */
+export async function clearCachedActivity(): Promise<void> {
+  await request((await store(ACTIVITY, "readwrite")).clear());
+}
+
 // ---- Outbox ------------------------------------------------------------
 
 /** All queued actions, oldest first. */
