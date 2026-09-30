@@ -44,7 +44,7 @@ export function LoadingReadinessDialog({ run, onClose }: LoadingReadinessDialogP
           </div>
         </div>
 
-        <div className="p-6 space-y-8">
+        <div className="p-6 space-y-8 max-h-[60vh] overflow-y-auto custom-scrollbar">
           {/* Timeline Section */}
           <div>
             <h4 className="text-sm font-bold text-slate-900 mb-4">Run readiness</h4>

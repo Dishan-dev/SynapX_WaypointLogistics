@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum, Boolean
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -9,11 +9,11 @@ class OrderStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     CONFIRMED = "CONFIRMED"
     PROCESSING = "PROCESSING"
+    ALLOCATED = "ALLOCATED"
+    DEFERRED = "DEFERRED"
     DISPATCHED = "DISPATCHED"
     DELIVERED = "DELIVERED"
     CANCELLED = "CANCELLED"
-    ALLOCATED = "ALLOCATED"
-    DEFERRED = "DEFERRED"
 
 
 class Order(Base):
@@ -25,7 +25,16 @@ class Order(Base):
     destination_address = Column(String(500), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.DRAFT, nullable=False)
     total_amount = Column(Float, default=0.0)
+    brand = Column(String(100), nullable=True)
+    district = Column(String(100), nullable=True)
+    temperature_zone = Column(String(50), default="Ambient", nullable=False)
+    delivery_window = Column(String(50), nullable=True)
+    weight_kg = Column(Float, default=0.0, nullable=False)
+    is_priority = Column(Boolean, default=False, nullable=False)
     allocation_id = Column(Integer, ForeignKey("allocations.id"), nullable=True)
+    is_late = Column(Boolean, default=False, nullable=False)
+    operating_date = Column(String(50), nullable=True)
+    deferral_reason = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

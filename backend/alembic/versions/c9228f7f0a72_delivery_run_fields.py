@@ -1,7 +1,7 @@
 """delivery_run_fields
 
 Revision ID: c9228f7f0a72
-Revises: af60e6fa37a0
+Revises: 0a80c3e0353c
 Create Date: 2026-09-30 12:21:04.748983
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'c9228f7f0a72'
-down_revision: Union[str, Sequence[str], None] = 'af60e6fa37a0'
+down_revision: Union[str, Sequence[str], None] = '0a80c3e0353c'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
