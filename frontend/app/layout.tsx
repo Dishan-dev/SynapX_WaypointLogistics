@@ -33,19 +33,6 @@ export default function RootLayout({
         <OfflineSyncBanner />
         <main className="flex-1 flex flex-col">{children}</main>
         <Toaster position="top-right" richColors />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
-                window.addEventListener('load', function() {
-                  navigator.serviceWorker.register('/sw.js').catch(function(err) {
-                    console.log('ServiceWorker registration failed: ', err);
-                  });
-                });
-              }
-            `,
-          }}
-        />
       </body>
     </html>
   );

@@ -1,25 +1,3 @@
-export interface LoadingTask {
-  id: string;
-  order_id: string;
-  task_id?: string;
-  vehicle_id: string;
-  outlet_id: string;
-  outlet_name: string;
-  brand: string;
-  district: string;
-  temp_requirement: string;
-  order_units: number;
-  order_weight_kg: number;
-  order_volume_m3: number;
-  is_high_priority: boolean;
-  status: string;
-  task_status?: string;
-  loaded_units?: number | null;
-  shortfall_notes?: string | null;
-  seq_in_route: number;
-  completed_at?: string | null;
-}
-
 export interface DeliveryReceipt {
   id: string;
   order_id: string;
@@ -46,80 +24,6 @@ export interface ReceiptCreatePayload {
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
-
-// --- Loading API ---
-
-export async function getLoadingTasks(vehicleId: string, date: string): Promise<LoadingTask[]> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/loading/tasks?vehicle_id=${encodeURIComponent(vehicleId)}&date=${encodeURIComponent(date)}`, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to fetch tasks: ${res.statusText}`);
-    }
-    const data = await res.json();
-    // Cache last known list in localStorage for offline degradation
-    if (typeof window !== "undefined") {
-      localStorage.setItem(`cached_tasks_${vehicleId}_${date}`, JSON.stringify(data));
-      localStorage.setItem(`cached_tasks_time_${vehicleId}_${date}`, new Date().toLocaleTimeString());
-    }
-    return data;
-  } catch (err) {
-    if (typeof window !== "undefined") {
-      const cached = localStorage.getItem(`cached_tasks_${vehicleId}_${date}`);
-      if (cached) {
-        return JSON.parse(cached);
-      }
-    }
-    throw err;
-  }
-}
-
-export async function getLoadingTask(taskId: string): Promise<LoadingTask> {
-  const res = await fetch(`${API_BASE_URL}/api/loading/tasks/${taskId}`);
-  if (!res.ok) throw new Error("Loading task not found");
-  return res.json();
-}
-
-export async function startLoadingTask(taskId: string, loaderId: string): Promise<LoadingTask> {
-  const res = await fetch(`${API_BASE_URL}/api/loading/tasks/${taskId}/start`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ loader_id: loaderId }),
-  });
-  if (!res.ok) throw new Error("Failed to start loading task");
-  return res.json();
-}
-
-export async function updateLoadingItem(taskId: string, loadedUnits: number): Promise<LoadingTask> {
-  const res = await fetch(`${API_BASE_URL}/api/loading/tasks/${taskId}/item`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ loaded_units: loadedUnits }),
-  });
-  if (!res.ok) throw new Error("Failed to update item count");
-  return res.json();
-}
-
-export async function flagLoadingShortfall(taskId: string, notes: string, loadedUnits: number): Promise<LoadingTask> {
-  const res = await fetch(`${API_BASE_URL}/api/loading/tasks/${taskId}/shortfall`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ shortfall_notes: notes, loaded_units: loadedUnits }),
-  });
-  if (!res.ok) throw new Error("Failed to flag shortfall");
-  return res.json();
-}
-
-export async function completeLoadingTask(taskId: string): Promise<LoadingTask> {
-  const res = await fetch(`${API_BASE_URL}/api/loading/tasks/${taskId}/complete`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) throw new Error("Failed to complete loading task");
-  return res.json();
-}
 
 // --- Receipts API & Offline Helpers ---
 
