@@ -1,13 +1,12 @@
 """Loader endpoints.
 
 Scope: L2 (loaders and sign-in sessions), L3 (queue and summary), L4
-(checklist read, and check / uncheck / recheck), L7 (acknowledge a plan change,
-unload a take-off order), the reads for L8 (decision) and L9 (activity,
-per-run and dock-wide), plus the dev-only simulation endpoints from L0.
+(checklist read, and check / uncheck / recheck), L5 (flag an issue, the issue
+list), L6 (release and undo), L7 (acknowledge a plan change, unload a take-off
+order), the reads for L8 (decision) and L9 (activity, per-run and dock-wide),
+plus the dev-only simulation endpoints from L0.
 
 Every backend route here is owned by Sachintha (docs/loader/API_CONTRACT.md).
-The flag, issue-list and release endpoints (L5/L6) are still to be built;
-their shapes are in the contract.
 """
 from typing import List
 
@@ -19,7 +18,7 @@ from app.core.config import settings
 from app.models.loader_activity import CheckAction
 from app.models.reference import Brand
 from app.schemas import loader as schemas
-from app.services.loader_service import IncorrectPinError, loader_service
+from app.services.loader_service import FlagRequestError, IncorrectPinError, loader_service
 
 router = APIRouter()
 
@@ -220,6 +219,53 @@ def acknowledge_plan(
             },
         )
     run = loader_service.acknowledge_plan(db, code, version, payload)
+    db.commit()
+    return loader_service.build_run_detail(db, run)
+
+
+# ---------------------------------------------------------------------------
+# L5 flags and L6 release - tablet writes, same contract as the L4 writes
+# (client_action_id replay first, then 409 PLAN_VERSION_STALE)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/issues", response_model=schemas.IssueDetailRead)
+def flag_issue(payload: schemas.FlagIssueRequest, db: Session = Depends(deps.get_db)):
+    """Flag an order (missing, short, damaged, won't fit) and send it to the
+    Dispatcher. Returns the issue; a replay returns the one already filed."""
+    try:
+        issue = loader_service.flag_issue(db, payload)
+    except FlagRequestError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_FLAG", "message": exc.message})
+    db.commit()
+    return loader_service.build_issue_detail(db, issue)
+
+
+@router.get("/issues", response_model=List[schemas.IssueDetailRead])
+def list_issues(
+    dock: str = Query(..., description="Dock number, code or name: 3, DOCK3 or 'Dock 3'"),
+    run: str | None = Query(None, description="Only this run's issues"),
+    db: Session = Depends(deps.get_db),
+):
+    """The Issues tab: every issue on the dock's runs, newest first."""
+    issues = loader_service.list_issues(db, loader_service.resolve_dock(db, dock), run)
+    return [loader_service.build_issue_detail(db, issue) for issue in issues]
+
+
+@router.post("/runs/{code}/release", response_model=schemas.RunDetailRead)
+def release_run(code: str, payload: schemas.ReleaseRequest, db: Session = Depends(deps.get_db)):
+    """Mark ready to depart. 409 RELEASE_LOCKED, with the blockers, while
+    anything still blocks it; a run already ready is returned unchanged."""
+    run = loader_service.release_run(db, code, payload)
+    db.commit()
+    return loader_service.build_run_detail(db, run)
+
+
+@router.post("/runs/{code}/release/undo", response_model=schemas.RunDetailRead)
+def undo_release(code: str, payload: schemas.ReleaseRequest, db: Session = Depends(deps.get_db)):
+    """Undo within 10 s of the release (2 s grace); after that 409
+    UNDO_WINDOW_EXPIRED."""
+    run = loader_service.undo_release(db, code, payload)
     db.commit()
     return loader_service.build_run_detail(db, run)
 
