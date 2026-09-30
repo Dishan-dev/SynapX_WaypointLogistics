@@ -13,17 +13,27 @@ const WARM_PAGES = ["review", "ready", "log"];
 /** Must match the RUNS cache name in public/loader-sw.js ("loader-v4-runs"). */
 const isRunCache = (name: string) => name.startsWith("loader-") && name.endsWith("-runs");
 
+/** Build files a page's HTML references; the worker keeps these in its static cache. */
+const assetUrls = (html: string) => html.match(/\/_next\/static\/[\w\-.\/~%]+/g) ?? [];
+
 /**
- * Fetch a run's Review, Ready and Log pages so the service worker caches
- * them. Only worth doing while the worker controls the page; failures are
- * ignored (the pages simply stay online-only).
+ * Fetch a run's Review, Ready and Log pages, and the build files their HTML
+ * references, so the service worker caches them (a page without its script
+ * chunks cannot open offline). Only worth doing while the worker controls
+ * the page; failures are ignored (the pages simply stay online-only).
  */
 export async function warmRunPages(code: string): Promise<void> {
   if (typeof navigator === "undefined" || !navigator.serviceWorker?.controller) return;
   const base = `/loader/runs/${encodeURIComponent(code)}`;
-  await Promise.all(
-    WARM_PAGES.map((page) => fetch(`${base}/${page}`, { credentials: "same-origin" }).catch(() => undefined)),
+  const pages = await Promise.all(
+    WARM_PAGES.map((page) =>
+      fetch(`${base}/${page}`, { credentials: "same-origin" })
+        .then((res) => (res.ok ? res.text() : ""))
+        .catch(() => ""),
+    ),
   );
+  const assets = [...new Set(pages.flatMap(assetUrls))];
+  await Promise.all(assets.map((url) => fetch(url).catch(() => undefined)));
 }
 
 /** Drop every cached run page (checklist, review, ready, log and their navigation data). */
