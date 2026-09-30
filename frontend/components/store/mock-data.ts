@@ -164,6 +164,48 @@ export const mockOrders: StoreOrder[] = [
   },
 ];
 
+// Older requests so the Goods Requests list has history to page through
+// (Figma: 22 requests, 18 completed in the last 30 days, 1 cancelled).
+const historyOrders: StoreOrder[] = Array.from({ length: 17 }, (_, i) => {
+  const id = i + 6;
+  const day = 20 - i; // 20 Sep back to 4 Sep
+  const orderDate = `2026-09-${String(day + 2).padStart(2, "0")}`;
+  const temperatureClass: TemperatureClass = i % 3 === 0 ? "chilled" : "ambient";
+  return {
+    id,
+    orderNumber: `ORD${String(id).padStart(7, "0")}`,
+    status: id === 20 ? "cancelled" : "completed",
+    isHighPriority: i % 5 === 0,
+    temperatureClass,
+    orderDate,
+    submittedAt: `2026-09-${String(day).padStart(2, "0")}T${String(9 + (i % 7)).padStart(2, "0")}:00:00`,
+    items: Array.from({ length: 2 + (i % 5) }, (_, j) =>
+      item(`SKU-3${String(j).padStart(2, "0")}`, `Restock line ${j + 1}`, "Grocery", temperatureClass, 3 + j),
+    ),
+  };
+});
+
+mockOrders.push(...historyOrders);
+
+// ── Shortfalls (Figma 02b) — items the depot couldn't send in full or that arrived short ──
+
+export type ShortfallStatus = "back_ordered" | "out_of_stock" | "under_review" | "resolved";
+
+export interface StoreShortfall {
+  orderNumber: string;
+  sku: string;
+  itemName: string;
+  requested: number;
+  sent: number;
+  status: ShortfallStatus;
+}
+
+export const mockShortfalls: StoreShortfall[] = [
+  { orderNumber: "ORD0000001", sku: "SKU-014", itemName: "Soft Drinks 1L (12pk)", requested: 10, sent: 8, status: "back_ordered" },
+  { orderNumber: "ORD0000003", sku: "SKU-022", itemName: "Oat Milk 1L (6pk)", requested: 6, sent: 0, status: "out_of_stock" },
+  { orderNumber: "ORD0000006", sku: "SKU-014", itemName: "Soft Drinks 1L (12pk)", requested: 10, sent: 8, status: "under_review" },
+];
+
 // ── Delivery issues (owned by Dev B; read-only here for the dashboard) ────────
 
 export interface StoreIssue {

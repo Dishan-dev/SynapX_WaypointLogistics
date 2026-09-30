@@ -8,7 +8,7 @@ const moreLinks = [
   {
     title: "Shortfalls & Back-orders",
     description: "Items not sent or received in full",
-    href: "/store/requests?tab=shortfalls",
+    href: "/store/requests/shortfalls",
   },
   {
     title: "Delivery History",

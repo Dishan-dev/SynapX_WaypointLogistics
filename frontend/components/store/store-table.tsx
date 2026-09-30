@@ -10,7 +10,7 @@ export function StoreTableHeader({ columns }: { columns: { label: string; classN
           <TableHead
             key={column.label}
             className={cn(
-              "h-auto px-4 py-2 text-sm font-medium text-muted-foreground uppercase first:rounded-l-lg last:rounded-r-lg",
+              "h-auto px-4 py-2 text-sm font-medium text-muted-foreground uppercase first:rounded-l-lg last:rounded-r-lg xl:px-3 min-[1400px]:px-4",
               column.className
             )}
           >
@@ -23,5 +23,5 @@ export function StoreTableHeader({ columns }: { columns: { label: string; classN
 }
 
 export function StoreTableCell({ className, ...props }: React.ComponentProps<typeof TableCell>) {
-  return <TableCell className={cn("p-4 text-sm text-foreground", className)} {...props} />;
+  return <TableCell className={cn("p-4 text-sm text-foreground xl:px-3 min-[1400px]:px-4", className)} {...props} />;
 }

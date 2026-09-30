@@ -21,6 +21,24 @@ export function formatTime(isoDateTime: string) {
   return format(parseISO(isoDateTime), "HH:mm");
 }
 
+/** "24 Sep 2026" */
+export function formatLongDate(isoDate: string) {
+  return format(parseISO(isoDate), "d MMM yyyy");
+}
+
+/** "09:15 AM" */
+export function formatClockTime(isoDateTime: string) {
+  return format(parseISO(isoDateTime), "hh:mm a");
+}
+
+export function formatDeliveryWindow(outlet: StoreOutlet) {
+  return windowLabel(outlet);
+}
+
+export function formatUnitCount(count: number) {
+  return `${count} ${count === 1 ? "unit" : "units"}`;
+}
+
 export function formatItemCount(count: number) {
   return `${count} ${count === 1 ? "item" : "items"}`;
 }
