@@ -64,6 +64,9 @@ const pageTitles: { href: string; title: string }[] = [
 ];
 
 export function getStorePageTitle(pathname: string) {
+  // Request Details shows the order number in the mobile app bar (Figma Mobile / 04).
+  const orderMatch = pathname.match(/^\/store\/requests\/(ORD\d+)$/i);
+  if (orderMatch) return orderMatch[1].toUpperCase();
   return (
     pageTitles.find((page) => isStoreNavActive(pathname, page.href))?.title ??
     "Dashboard"

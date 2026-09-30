@@ -56,14 +56,42 @@ export type TemperatureClass = "chilled" | "ambient";
 // Delivery problems reported by the Dispatcher team that override the normal status pill.
 export type DeliveryAlert = "vehicle_unavailable";
 
+export interface DispatcherNote {
+  reason: string;
+  message: string;
+  author: string;
+  authorRole: string;
+  location: string;
+  at: string;
+}
+
 export interface StoreOrderItem {
   sku: string;
   itemName: string;
   category: string;
   temperatureClass: TemperatureClass;
+  /** Requested quantity. */
   quantity: number;
   unitLabel: string;
+  /** What the depot loaded (order_items.quantity_sent, written by Dev B). Undefined until picked. */
+  quantitySent?: number;
+  /** order_items.dispatcher_note (Figma 04b). */
+  dispatcherNote?: DispatcherNote;
 }
+
+export interface OrderVehicle {
+  code: string;
+  description: string;
+  driverName: string;
+  driverCode: string;
+  origin: string;
+  manifestNumber: string;
+}
+
+/** When each progress step was reached (Figma 04 Request Progress). */
+export type OrderStatusTimes = Partial<
+  Record<"submitted" | "processing" | "ready_for_dispatch" | "dispatched" | "delivered" | "completed", string>
+>;
 
 export interface StoreOrder {
   id: number;
@@ -79,6 +107,12 @@ export interface StoreOrder {
   arrivedAt?: string;
   vehicleCode?: string;
   deliveryAlert?: DeliveryAlert;
+  vehicle?: OrderVehicle;
+  statusTimes?: OrderStatusTimes;
+  /** Manager note shared with the depot and driver. */
+  notes?: string;
+  activity?: { at: string; text: string }[];
+  deferralReason?: string;
 }
 
 const item = (
@@ -100,10 +134,44 @@ export const mockOrders: StoreOrder[] = [
     submittedAt: "2026-09-24T09:15:00",
     eta: "2026-09-26T06:10:00",
     vehicleCode: "VEH001",
+    vehicle: {
+      code: "VEH001",
+      description: "Truck · Reefer",
+      driverName: "Marcus Vance",
+      driverCode: "DRV-309",
+      origin: "Peliyagoda Depot",
+      manifestNumber: "009384",
+    },
+    statusTimes: {
+      submitted: "2026-09-24T09:15:00",
+      processing: "2026-09-24T14:30:00",
+      ready_for_dispatch: "2026-09-25T16:00:00",
+      dispatched: "2026-09-26T05:15:00",
+    },
+    notes:
+      "Urgent stock for the weekend promotion. Driver instructed to use the rear dock. Staff ready with an electric pallet jack.",
+    activity: [
+      { at: "2026-09-24T09:15:00", text: "Request submitted by Sarah Jenkins" },
+      { at: "2026-09-24T14:30:00", text: "Dispatcher sent 3 items · Soft Drinks short by 2 cases" },
+      { at: "2026-09-25T16:00:00", text: "Staged at Depot Bay 4" },
+      { at: "2026-09-26T05:15:00", text: "Dispatched from Peliyagoda Depot on VEH001" },
+    ],
     items: [
-      item("SKU-014", "Soft Drinks 1L (12pk)", "Beverages · Carbonated", "chilled", 10),
-      item("SKU-063", "Greek Yogurt 500g", "Dairy", "chilled", 15),
-      item("SKU-022", "Oat Milk 1L (6pk)", "Beverages · Dairy-free", "chilled", 10),
+      {
+        ...item("SKU-014", "Soft Drinks 1L (12pk)", "Beverages · Carbonated", "chilled", 10),
+        quantitySent: 8,
+        dispatcherNote: {
+          reason: "Depot stock shortage",
+          message:
+            "Only 8 of the 10 cases of SKU-014 were in stock at Peliyagoda Depot when ORD0000001 was picked. The remaining 2 cases are back-ordered and will come with your next delivery on Mon 28 Sep (04:00 – 07:45).",
+          author: "Nimal Perera",
+          authorRole: "Dispatcher",
+          location: "Peliyagoda Depot",
+          at: "2026-09-25T16:05:00",
+        },
+      },
+      { ...item("SKU-063", "Greek Yogurt 500g", "Dairy", "chilled", 15), quantitySent: 15 },
+      { ...item("SKU-022", "Oat Milk 1L (6pk)", "Beverages · Dairy-free", "chilled", 10), quantitySent: 10 },
     ],
   },
   {
@@ -115,11 +183,16 @@ export const mockOrders: StoreOrder[] = [
     orderDate: "2026-09-28",
     submittedAt: "2026-09-25T11:30:00",
     deliveryAlert: "vehicle_unavailable",
+    statusTimes: {
+      submitted: "2026-09-25T11:30:00",
+      processing: "2026-09-26T02:10:00",
+      ready_for_dispatch: "2026-09-26T04:40:00",
+    },
     items: [
-      item("SKU-001", "Bottled Water 500ml", "Beverages · Packaged liquids", "ambient", 6),
-      item("SKU-048", "Espresso Roast Beans 1kg", "Beverages · Coffee", "ambient", 4),
-      item("SKU-032", "Paper Cups 8oz (500ct)", "Consumables · Disposables", "ambient", 5),
-      item("SKU-035", "Paper Napkins (1000ct)", "Consumables · Disposables", "ambient", 3),
+      { ...item("SKU-001", "Bottled Water 500ml", "Beverages · Packaged liquids", "ambient", 6), quantitySent: 6 },
+      { ...item("SKU-048", "Espresso Roast Beans 1kg", "Beverages · Coffee", "ambient", 4), quantitySent: 4 },
+      { ...item("SKU-032", "Paper Cups 8oz (500ct)", "Consumables · Disposables", "ambient", 5), quantitySent: 5 },
+      { ...item("SKU-035", "Paper Napkins (1000ct)", "Consumables · Disposables", "ambient", 3), quantitySent: 3 },
     ],
   },
   {
@@ -144,10 +217,25 @@ export const mockOrders: StoreOrder[] = [
     submittedAt: "2026-09-25T10:45:00",
     arrivedAt: "2026-09-26T04:35:00",
     vehicleCode: "VEH035",
+    vehicle: {
+      code: "VEH035",
+      description: "Truck · Reefer",
+      driverName: "Carlos Mendes",
+      driverCode: "DRV-221",
+      origin: "Peliyagoda Depot",
+      manifestNumber: "009377",
+    },
+    statusTimes: {
+      submitted: "2026-09-25T10:45:00",
+      processing: "2026-09-25T15:10:00",
+      ready_for_dispatch: "2026-09-25T20:30:00",
+      dispatched: "2026-09-26T03:40:00",
+      delivered: "2026-09-26T04:35:00",
+    },
     items: [
-      item("SKU-063", "Greek Yogurt 500g", "Dairy", "chilled", 5),
-      item("SKU-070", "Cheddar Block 250g", "Dairy", "chilled", 5),
-      item("SKU-014", "Soft Drinks 1L (12pk)", "Beverages · Carbonated", "chilled", 5),
+      { ...item("SKU-063", "Greek Yogurt 500g", "Dairy", "chilled", 5), quantitySent: 5 },
+      { ...item("SKU-070", "Cheddar Block 250g", "Dairy", "chilled", 5), quantitySent: 5 },
+      { ...item("SKU-014", "Soft Drinks 1L (12pk)", "Beverages · Carbonated", "chilled", 5), quantitySent: 5 },
     ],
   },
   {
