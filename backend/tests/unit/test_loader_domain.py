@@ -290,8 +290,8 @@ def test_a_plan_change_reopens_a_ready_run(db_session):
 
     assert run.status == RunStatus.LOADING
     assert run.released_at == at("01:48")
-    events = [entry.event_type for entry in LoaderService.list_activity(db_session, run)]
-    assert events == ["plan_published", "load_reopened"]
+    events = [entry.type for entry in LoaderService.list_activity(db_session, run)]
+    assert events == ["load_reopened", "plan_published"]
 
 
 def test_a_plan_change_takes_a_loaded_run_back_to_loading(db_session):

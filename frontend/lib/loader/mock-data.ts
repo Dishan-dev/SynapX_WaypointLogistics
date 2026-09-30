@@ -7,6 +7,7 @@
 // Outlet names other than OUT027 are placeholders.
 
 import type {
+  ActivityEntry,
   LoaderIssue,
   LoaderSession,
   LoaderUser,
@@ -293,6 +294,50 @@ export const mockRunDetails: Run[] = [RUN_021];
 export function findMockRun(code: string): Run | undefined {
   return mockRunDetails.find((run) => run.code === code);
 }
+
+// ---- Activity (GET /loader/runs/{code}/activity) -------------------------
+
+const saman = { kind: "loader", name: "Saman J.", full_name: "Saman Jayawardena" } as const;
+const dispatcher = { kind: "dispatcher", name: "Dispatcher", full_name: null } as const;
+
+type MockEvent = [time: string, type: string, actor: ActivityEntry["actor"], summary: string, order?: [string, number, string]];
+
+// RUN-021 up to T1c. The last five lines are the Change log card in Figma T1c
+// (the two 02:26 re-checks show there as one line, "ORD0092305/06 re-checked").
+const RUN_021_EVENTS: MockEvent[] = [
+  ["01:41", "order_checked", saman, "ORD0092307 loaded", ["ORD0092307", 5, "OUT027"]],
+  ["01:52", "order_checked", saman, "ORD0092305 loaded", ["ORD0092305", 4, "OUT031"]],
+  ["01:58", "order_checked", saman, "ORD0092306 loaded", ["ORD0092306", 4, "OUT031"]],
+  ["02:05", "order_checked", saman, "ORD0092303 loaded", ["ORD0092303", 3, "OUT030"]],
+  ["02:08", "issue_flagged", saman, "ORD0092301: damaged 3 of 56 units, sent to Dispatcher", ["ORD0092301", 2, "OUT026"]],
+  ["02:12", "order_checked", saman, "ORD0092308 loaded", ["ORD0092308", 5, "OUT027"]],
+  ["02:14", "plan_published", dispatcher, "Dispatcher published plan v3"],
+  ["02:16", "plan_acknowledged", saman, "Acknowledged · Saman J."],
+  ["02:20", "issue_decided", { kind: "dispatcher", name: "Kasun Perera", full_name: null }, "ORD0092301: send 53 of 56", ["ORD0092301", 2, "OUT026"]],
+  ["02:24", "order_unloaded", saman, "ORD0092308 unloaded → chiller", ["ORD0092308", 5, "OUT027"]],
+  ["02:26", "order_rechecked", saman, "ORD0092305 re-checked", ["ORD0092305", 4, "OUT031"]],
+  ["02:26", "order_rechecked", saman, "ORD0092306 re-checked", ["ORD0092306", 4, "OUT031"]],
+];
+
+function mockEntries(events: MockEvent[]): ActivityEntry[] {
+  return events
+    .map(([time, type, actor, summary, order], i) => ({
+      id: i + 1,
+      type,
+      at: at(time),
+      actor,
+      stop: order ? { sequence: order[1], outlet_code: order[2] } : null,
+      order: order ? { order_number: order[0] } : null,
+      summary,
+      details: type === "order_unloaded" ? { return_area: "chiller" } : {},
+    }))
+    .reverse(); // newest first, as the API sends it
+}
+
+/** Each detailed run's log, newest first. */
+export const mockActivity: Record<string, ActivityEntry[]> = {
+  "RUN-021": mockEntries(RUN_021_EVENTS),
+};
 
 // ---- Queue (GET /loader/runs, GET /loader/summary) -----------------------
 

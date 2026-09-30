@@ -30,11 +30,11 @@ def get_run(code: str, db: Session = Depends(deps.get_db)):
     return loader_service.build_run_detail(db, run)
 
 
-@router.get("/runs/{code}/activity", response_model=List[schemas.ActivityRead])
+@router.get("/runs/{code}/activity", response_model=List[schemas.RunActivityEventRead])
 def get_run_activity(code: str, db: Session = Depends(deps.get_db)):
-    """One run's timeline, OLDEST first - the checklist's Change log panel.
+    """One run's activity log, NEWEST first - the Log tab (L9).
 
-    Chronological because the panel reads top to bottom as the shift progresses.
+    The checklist's Change log card reverses it to read oldest first.
     For the dock-wide feed, see GET /loader/activity.
     """
     run = loader_service.get_run(db, code)

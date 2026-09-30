@@ -26,6 +26,7 @@ import {
   stopsInLoadOrder,
 } from "@/lib/loader/format";
 import type { OrderState, QueuedActionType, Run, RunOrder, RunStatus } from "@/lib/loader/types";
+import { ChangeLogCard } from "./change-log-card";
 import { loadRun, ordersLoaded, type LoadResult } from "./checklist-data";
 import { PlanChangeView } from "./plan-change-view";
 import { blockerSummary, displayOrder, pendingUnloads, releaseBlockers } from "./plan-diff";
@@ -206,6 +207,7 @@ function Checklist({ initial, onNewPlan }: { initial: Run; onNewPlan: (run: Run)
           <LoaderCard title="Load map" description="Cab to door, as seen from the dock">
             <LoadMap slots={slots} spareM3={capacity.spareM3} />
           </LoaderCard>
+          <ChangeLogCard code={run.code} />
         </aside>
 
         <div className="flex min-w-0 flex-col gap-4">

@@ -210,14 +210,42 @@ export interface ReleaseBlocker {
 
 // ---- Built (L0): activity and issues -------------------------------------
 
+/**
+ * Known activity types. The set is open: L8 (and L5/L6) add more, so a type
+ * this list does not name is still shown, by its summary.
+ */
+export type ActivityType =
+  | "plan_published"
+  | "plan_acknowledged"
+  | "order_checked"
+  | "order_unchecked"
+  | "order_rechecked"
+  | "order_unloaded"
+  | "load_reopened"
+  | "issue_flagged"
+  | "issue_decided"
+  | "issue_default_applied"
+  | "run_released"
+  | "run_release_undone"
+  | (string & {});
+
+/** RunActivityEventRead: one entry of GET /loader/runs/{code}/activity, newest first. */
 export interface ActivityEntry {
+  id: number;
+  type: ActivityType;
   at: string;
-  run_code: string;
-  actor_kind: ActorKind;
-  actor: string;
-  event_type: string;
-  order_number: string | null;
-  message: string;
+  actor: {
+    kind: ActorKind;
+    /** "Saman J." for a loader; the logged label for the dispatcher or the system. */
+    name: string | null;
+    /** Loaders only. */
+    full_name: string | null;
+  };
+  stop: { sequence: number; outlet_code: string } | null;
+  order: { order_number: string } | null;
+  /** The loader's wording (Figma T1c): "ORD0092308 unloaded → chiller". */
+  summary: string;
+  details: Record<string, unknown>;
 }
 
 export interface IssueOption {

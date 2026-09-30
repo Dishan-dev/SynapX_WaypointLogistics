@@ -508,7 +508,8 @@ def seed_checks(db: Session, run: DeliveryRun, loaded_at: dict, loader: LoaderUs
 
 
 def activity(db: Session, run: DeliveryRun, hhmm: str, kind: ActorKind, event: str,
-             message: str, actor: LoaderUser | None = None, label: str | None = None) -> None:
+             message: str, actor: LoaderUser | None = None, label: str | None = None,
+             order: Order | None = None) -> None:
     upsert(
         db,
         LoaderActivity,
@@ -517,6 +518,7 @@ def activity(db: Session, run: DeliveryRun, hhmm: str, kind: ActorKind, event: s
             "actor_kind": kind,
             "actor_id": actor.id if actor else None,
             "actor_label": label or (actor.short_name if actor else None),
+            "order_id": order.id if order else None,
             "message": message,
         },
     )
@@ -556,9 +558,9 @@ def seed_scenario(db: Session) -> None:
         },
     )
     activity(db, run_021, "01:41", ActorKind.LOADER, "order_checked",
-             "ORD0092307 loaded", actor=saman)
+             "ORD0092307 loaded", actor=saman, order=orders["ORD0092307"])
     activity(db, run_021, "02:11", ActorKind.LOADER, "order_checked",
-             "ORD0092301 loaded", actor=saman)
+             "ORD0092301 loaded", actor=saman, order=orders["ORD0092301"])
 
     # --- RUN-027: D2, chilled order missing, awaiting a decision -----------
     run_027 = seed_run(
@@ -622,7 +624,8 @@ def seed_scenario(db: Session) -> None:
     default_option.is_default = True
 
     activity(db, run_027, "02:03", ActorKind.LOADER, "issue_flagged",
-             "ORD0092314: missing 8 of 8 units, sent to Dispatcher", actor=tharindu)
+             "ORD0092314: missing 8 of 8 units, sent to Dispatcher", actor=tharindu,
+             order=orders["ORD0092314"])
 
     # --- Remaining runs: queue-level only ---------------------------------
     # Their per-order breakdown is not pinned down in Figma (the RUN-022

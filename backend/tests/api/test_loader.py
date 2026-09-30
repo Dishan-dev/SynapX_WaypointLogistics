@@ -208,8 +208,8 @@ def test_dev_decision_then_activity_is_logged(loader_client, db_session):
     assert detail["decided_by"] == "Kasun Perera"
 
     activity = loader_client.get(f"{BASE}/runs/RUN-021/activity").json()
-    assert any(entry["event_type"] == "issue_decided" for entry in activity)
-    assert any(entry["actor_kind"] == "dispatcher" for entry in activity)
+    assert any(entry["type"] == "issue_decided" for entry in activity)
+    assert any(entry["actor"]["kind"] == "dispatcher" for entry in activity)
 
 
 def test_dev_expire_applies_the_default(loader_client, db_session):
@@ -345,8 +345,8 @@ def test_dock_activity_requires_a_dock(loader_client, db_session):
     assert response.status_code == 422
 
 
-def test_run_activity_stays_oldest_first(loader_client, db_session):
-    """The two activity endpoints order deliberately opposite ways."""
+def test_run_activity_and_the_dock_feed_are_both_newest_first(loader_client, db_session):
+    """Both newest first; the checklist's Change log card reverses the run's list."""
     run, _ = build_run_021(db_session)
     LoaderService.log(
         db_session, run, at=at("02:20"), actor_kind=ActorKind.LOADER,
@@ -361,7 +361,7 @@ def test_run_activity_stays_oldest_first(loader_client, db_session):
     timeline = loader_client.get(f"{BASE}/runs/RUN-021/activity").json()
     feed = loader_client.get(f"{BASE}/activity?dock=3&run_code=RUN-021").json()
 
-    assert [e["message"] for e in timeline] == ["earlier", "later"]
+    assert [e["summary"] for e in timeline] == ["later", "earlier"]
     assert [e["message"] for e in feed] == ["later", "earlier"]
 
 

@@ -282,6 +282,46 @@ class ActivityRead(BaseModel):
     message: str
 
 
+class ActivityActorRead(BaseModel):
+    """Who did it. `name` is the short form the log shows ("Saman J.");
+    `full_name` is set for loaders only - dispatcher and system entries carry
+    the label they were logged with."""
+
+    kind: ActorKind
+    name: Optional[str] = None
+    full_name: Optional[str] = None
+
+
+class ActivityStopRead(BaseModel):
+    sequence: int
+    outlet_code: str
+
+
+class ActivityOrderRead(BaseModel):
+    order_number: str
+
+
+class RunActivityEventRead(BaseModel):
+    """One event on GET /loader/runs/{code}/activity (L9), newest first.
+
+    `type` is an open set: the values in API_CONTRACT.md today, and more as
+    features land (L8 decisions, L5 flags, L6 release). Clients show `summary`
+    for a type they do not know rather than dropping the event.
+
+    `summary` is the loader's wording (Figma T1c Change log). The dock-wide feed
+    keeps the stored `message`, which is the Dispatcher's wording (Figma 2c #5).
+    """
+
+    id: int
+    type: str
+    at: UtcDateTime
+    actor: ActivityActorRead
+    stop: Optional[ActivityStopRead] = None
+    order: Optional[ActivityOrderRead] = None
+    summary: str
+    details: Dict[str, object] = {}
+
+
 # --- Writes from the tablet -----------------------------------------------
 
 

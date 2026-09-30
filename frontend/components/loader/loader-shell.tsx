@@ -18,6 +18,8 @@ interface LoaderShellContextValue {
   dockLabel: string;
   /** Sent as loader_session_id on every write; null until L2 sign-in. */
   sessionId: number | null;
+  /** The run opened last in this session, if any: where Loading and Log go. */
+  lastRunCode?: string;
 }
 
 const LoaderShellContext = React.createContext<LoaderShellContextValue | null>(null);
@@ -30,6 +32,7 @@ export function useLoaderShell(): LoaderShellContextValue {
 
 function activeTab(pathname: string): LoaderTab | undefined {
   if (pathname === "/loader") return "queue";
+  if (/^\/loader\/runs\/[^/]+\/log/.test(pathname)) return "log";
   if (pathname.startsWith("/loader/runs/")) return "loading";
   if (pathname.startsWith("/loader/issues")) return "issues";
   if (pathname.startsWith("/loader/log")) return "log";
@@ -59,8 +62,8 @@ export function LoaderShell({ user, dockLabel, sessionId, issueCount, children }
   if (currentRunCode && currentRunCode !== lastRunCode) setLastRunCode(currentRunCode);
 
   const ctx = React.useMemo<LoaderShellContextValue>(
-    () => ({ user, dockLabel, sessionId }),
-    [user, dockLabel, sessionId],
+    () => ({ user, dockLabel, sessionId, lastRunCode }),
+    [user, dockLabel, sessionId, lastRunCode],
   );
 
   return (
@@ -72,6 +75,7 @@ export function LoaderShell({ user, dockLabel, sessionId, issueCount, children }
             className="sticky bottom-0 z-30"
             active={activeTab(pathname)}
             loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
+            logHref={lastRunCode ? `/loader/runs/${lastRunCode}/log` : "/loader/log"}
             issueCount={issueCount}
           />
         </div>

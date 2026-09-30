@@ -74,6 +74,15 @@ ACTION_EVENTS = {
     CheckAction.UNLOAD: ("order_unloaded", "off truck"),
 }
 
+# The Log's wording for order events (Figma T1c Change log), by event type.
+# An unload also names where the order went back to: "ORD0092308 unloaded → chiller".
+ORDER_SUMMARIES = {
+    "order_checked": "loaded",
+    "order_rechecked": "re-checked",
+    "order_unchecked": "unchecked",
+    "order_unloaded": "unloaded",
+}
+
 
 class StalePlanVersionError(InvalidStateTransitionError):
     """The tablet acted on a plan version the dispatcher has since replaced.
@@ -603,19 +612,91 @@ class LoaderService:
         )
 
     @staticmethod
-    def list_activity(db: Session, run: DeliveryRun) -> List[schemas.ActivityRead]:
-        """One run's timeline, OLDEST first.
+    def list_activity(db: Session, run: DeliveryRun) -> List[schemas.RunActivityEventRead]:
+        """One run's log, NEWEST first (L9).
 
-        The Change log panel reads top to bottom as the shift progresses
-        (02:14 published -> 02:16 acknowledged -> 02:20 ...), so chronological
-        order is what the design wants here.
+        Read from loader_activities, the one table every write logs to. The Log
+        tab shows it as is; the checklist's Change log card reverses it, since
+        that card reads top to bottom as the shift goes (02:14 published ->
+        02:16 acknowledged -> ...).
         """
         rows = db.execute(
             select(LoaderActivity)
             .filter_by(run_id=run.id)
-            .order_by(LoaderActivity.at, LoaderActivity.id)
-        ).scalars()
-        return [LoaderService._to_activity_read(row) for row in rows]
+            .order_by(LoaderActivity.at.desc(), LoaderActivity.id.desc())
+        ).scalars().all()
+        stops = LoaderService._stops_by_order(db, run)
+        return [LoaderService._to_run_event(row, stops) for row in rows]
+
+    @staticmethod
+    def _stops_by_order(db: Session, run: DeliveryRun) -> Dict[int, RunStop]:
+        """Each order's stop on this run, from the newest plan version it is in.
+
+        An order dropped by a later plan keeps the stop it was last on, so an
+        old "loaded" entry still says where it was.
+        """
+        pairs = db.execute(
+            select(RunStopOrder.order_id, RunStop)
+            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+            .where(RunStop.run_id == run.id)
+            .order_by(RunStop.plan_version)
+        ).all()
+        return {order_id: stop for order_id, stop in pairs}
+
+    @staticmethod
+    def _to_run_event(
+        row: LoaderActivity, stops: Dict[int, RunStop]
+    ) -> schemas.RunActivityEventRead:
+        stop = stops.get(row.order_id) if row.order_id is not None else None
+        return schemas.RunActivityEventRead(
+            id=row.id,
+            type=row.event_type,
+            at=row.at,
+            actor=schemas.ActivityActorRead(
+                kind=row.actor_kind,
+                name=row.actor.short_name if row.actor else row.actor_label,
+                full_name=row.actor.full_name if row.actor else None,
+            ),
+            stop=(
+                schemas.ActivityStopRead(sequence=stop.stop_sequence, outlet_code=stop.outlet.code)
+                if stop is not None
+                else None
+            ),
+            order=(
+                schemas.ActivityOrderRead(order_number=row.order.order_number)
+                if row.order is not None
+                else None
+            ),
+            summary=LoaderService._activity_summary(row),
+            details=LoaderService._activity_details(row),
+        )
+
+    @staticmethod
+    def _activity_summary(row: LoaderActivity) -> str:
+        """The loader's wording for an entry (Figma T1c Change log).
+
+        Built at read time from the event and its order, so stored rows keep
+        the Dispatcher's wording (Figma 2c #5) for the dock-wide feed. Anything
+        without a loader wording here - dispatcher decisions, the system,
+        future types - is shown as stored.
+        """
+        order_number = row.order.order_number if row.order else None
+        if row.event_type == "plan_acknowledged":
+            # TODO(L2): loader_session_id becomes required; drop "unknown loader".
+            return f"Acknowledged · {row.actor.short_name if row.actor else 'unknown loader'}"
+        if order_number and row.event_type in ORDER_SUMMARIES:
+            summary = f"{order_number} {ORDER_SUMMARIES[row.event_type]}"
+            if row.event_type == "order_unloaded":
+                summary += f" → {LoaderService.return_area(row.order)}"
+            return summary
+        return row.message
+
+    @staticmethod
+    def _activity_details(row: LoaderActivity) -> Dict[str, object]:
+        """Extra fields some types carry. Only what the row gives cleanly."""
+        if row.event_type == "order_unloaded" and row.order is not None:
+            return {"return_area": LoaderService.return_area(row.order)}
+        return {}
 
     @staticmethod
     def resolve_dock(db: Session, dock: str) -> Dock:
