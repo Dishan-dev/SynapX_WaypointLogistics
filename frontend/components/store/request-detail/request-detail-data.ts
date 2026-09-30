@@ -14,6 +14,7 @@ export const PROGRESS_STEPS = [
 const STEP_INDEX: Partial<Record<OrderStatus, number>> = {
   submitted: 0,
   confirmed: 0,
+  allocated: 0,
   processing: 1,
   ready_for_dispatch: 2,
   dispatched: 3,

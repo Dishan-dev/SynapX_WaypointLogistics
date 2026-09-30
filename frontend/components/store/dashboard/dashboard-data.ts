@@ -4,6 +4,7 @@ import type { OrderStatus, StoreIssue, StoreOrder } from "@/components/store/moc
 const ACTIVE_STATUSES: OrderStatus[] = [
   "submitted",
   "confirmed",
+  "allocated",
   "processing",
   "ready_for_dispatch",
   "dispatched",

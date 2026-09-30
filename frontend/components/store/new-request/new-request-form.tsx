@@ -48,6 +48,8 @@ import type {
 import { AddItemPicker, TemperaturePill, temperatureLabel } from "@/components/store/new-request/add-item-picker";
 import { QuantityStepper } from "@/components/store/new-request/quantity-stepper";
 import { clearDraft, saveDraft, type RequestDraft } from "@/components/store/new-request/draft-storage";
+import { ApiError } from "@/components/store/api/client";
+import { placeGoodsRequest } from "@/components/store/api/store-data";
 import {
   cutoffFor,
   dateKey,
@@ -119,6 +121,7 @@ export function NewRequestForm({
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
   const [submittedNumbers, setSubmittedNumbers] = useState<string[]>([]);
   const [draftDismissed, setDraftDismissed] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
 
   const savedDraftRaw = useSavedDraftRaw();
@@ -218,24 +221,45 @@ export function NewRequestForm({
 
   const submit = async () => {
     setShowErrors(true);
+    setServerError(null);
     if (errors.length > 0) {
       requestAnimationFrame(() => errorRef.current?.focus());
       return;
     }
     setSubmitState("submitting");
-    // Mock submit until POST /api/v1/orders exists. Going offline (DevTools → Network → Offline) shows the failure state.
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    if (!navigator.onLine) {
+    try {
+      const created = await placeGoodsRequest(
+        {
+          deliveryDate: dateKey(deliveryDate!),
+          isHighPriority,
+          notes,
+          items: lines.map((line) => ({
+            sku: line.sku,
+            itemName: line.item.itemName,
+            quantity: line.quantity,
+            temperatureClass: line.item.temperatureClass,
+          })),
+        },
+        orderNumbers
+      );
+      clearDraft();
+      setSubmittedNumbers(created);
+      setSubmitState("submitted");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      if (error instanceof ApiError && !error.isNetworkError && error.status < 500) {
+        // The server rejected the request (e.g. the cutoff passed meanwhile): show why, keep the form as is.
+        setServerError(error.message);
+        setSubmitState("idle");
+        requestAnimationFrame(() => errorRef.current?.focus());
+        return;
+      }
+      // Connection dropped or server error: keep a draft on this device (Figma 03d). Offline in DevTools shows this.
       persistDraft();
       setDraftDismissed(true);
       setSubmitState("failed");
       window.scrollTo({ top: 0, behavior: "smooth" });
-      return;
     }
-    clearDraft();
-    setSubmittedNumbers(orderNumbers);
-    setSubmitState("submitted");
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   if (submitState === "submitted") {
@@ -386,14 +410,14 @@ export function NewRequestForm({
         </div>
       </Card>
 
-      {showErrors && errors.length > 0 && (
+      {((showErrors && errors.length > 0) || serverError) && (
         <div ref={errorRef} tabIndex={-1} className="outline-none">
           <Alert className="border-destructive/30 bg-destructive-muted" role="alert">
             <CircleAlert className="text-destructive" aria-hidden="true" />
             <AlertTitle className="font-bold text-destructive">Fix these before submitting</AlertTitle>
             <AlertDescription className="text-foreground/80">
               <ul className="list-disc pl-5">
-                {errors.map((error) => (
+                {(serverError ? [...errors, { field: "server", message: serverError }] : errors).map((error) => (
                   <li key={error.message}>{error.message}</li>
                 ))}
               </ul>

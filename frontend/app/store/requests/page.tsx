@@ -1,4 +1,6 @@
-import { MOCK_NOW, mockOrders, mockShortfalls } from "@/components/store/mock-data";
+import { mockShortfalls } from "@/components/store/mock-data";
+import { STORE_DATA_SOURCE, storeNow } from "@/components/store/api/config";
+import { getStoreOrders } from "@/components/store/api/store-data";
 import { GoodsRequestsView } from "@/components/store/requests/goods-requests-view";
 import { getRequestSummary, isRequestTab } from "@/components/store/requests/request-filters";
 
@@ -7,9 +9,11 @@ export default async function GoodsRequestsPage({ searchParams }: PageProps<"/st
   const { tab } = await searchParams;
   const initialTab = isRequestTab(tab) ? tab : "active";
 
-  const orders = mockOrders.filter((order) => order.status !== "draft");
+  const orders = (await getStoreOrders()).filter((order) => order.status !== "draft");
+  // Shortfalls come from Dev B's loading flow; there's no API for them yet.
+  const shortfalls = STORE_DATA_SOURCE === "api" ? [] : mockShortfalls;
   const shortfallOrderNumbers = [
-    ...new Set(mockShortfalls.filter((s) => s.status !== "resolved").map((s) => s.orderNumber)),
+    ...new Set(shortfalls.filter((s) => s.status !== "resolved").map((s) => s.orderNumber)),
   ];
 
   return (
@@ -17,7 +21,7 @@ export default async function GoodsRequestsPage({ searchParams }: PageProps<"/st
       orders={orders}
       shortfallOrderNumbers={shortfallOrderNumbers}
       initialTab={initialTab}
-      summary={getRequestSummary(orders, MOCK_NOW)}
+      summary={getRequestSummary(orders, storeNow())}
     />
   );
 }

@@ -65,6 +65,7 @@ def test_mixed_request_splits_into_one_order_per_zone(client, clock, outlets):
 
     notifications = client.get("/api/v1/notifications/", params={"outlet_id": outlets["fresh"].id}).json()
     assert {n["type"] for n in notifications} == {"order_submitted"}
+    assert {n["order_number"] for n in notifications} == {"ORD0000001", "ORD0000002"}
     assert len(notifications) == 2
 
 

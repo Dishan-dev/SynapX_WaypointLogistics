@@ -13,7 +13,7 @@ export type RequestTab =
 export type PriorityFilter = "all" | "high" | "default";
 
 const TAB_STATUSES: Partial<Record<RequestTab, OrderStatus[]>> = {
-  active: ["submitted", "confirmed", "processing", "ready_for_dispatch", "dispatched"],
+  active: ["submitted", "confirmed", "allocated", "processing", "ready_for_dispatch", "dispatched"],
   arrived: ["delivered"],
   in_progress: ["processing", "ready_for_dispatch"],
   completed: ["completed"],

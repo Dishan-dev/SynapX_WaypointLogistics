@@ -8,6 +8,7 @@ class NotificationRead(BaseModel):
     id: int
     outlet_id: int
     order_id: Optional[int] = None
+    order_number: Optional[str] = None
     type: NotificationType
     category: NotificationCategory
     title: str

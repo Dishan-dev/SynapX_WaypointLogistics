@@ -43,3 +43,8 @@ class Notification(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     order = relationship("Order")
+
+    @property
+    def order_number(self):
+        """Lets the Notifications screen link to the order without a second request."""
+        return self.order.order_number if self.order is not None else None
