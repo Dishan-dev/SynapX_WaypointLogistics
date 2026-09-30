@@ -9,6 +9,7 @@ import type {
   LoaderSession,
   LoaderUser,
   MovedTo,
+  OrderState,
   QueueSummary,
   ReleaseBlocker,
   Run,
@@ -200,6 +201,13 @@ export function orderStatusLine(order: RunOrder): string | undefined {
   const by = order.checked_by ? ` · ${order.checked_by}` : "";
   return `${verb} ${formatTime(order.checked_at)}${by}`;
 }
+
+/**
+ * Rows the server lets a loader flag (POST /loader/issues): not one already
+ * flagged, not take_off or moved. Anything else is 409 INVALID_STATE_TRANSITION,
+ * as is any flag on a run that is ready to depart or gated out.
+ */
+export const FLAGGABLE_STATES: readonly OrderState[] = ["to_load", "loaded", "re_check", "new"];
 
 /** Still an order to load: take_off and moved are excluded (contract counting rules). */
 export function isActiveOrder(order: RunOrder): boolean {

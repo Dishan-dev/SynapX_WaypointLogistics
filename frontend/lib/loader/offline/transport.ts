@@ -3,7 +3,7 @@
 // up; set NEXT_PUBLIC_LOADER_TRANSPORT=api to use the real API at
 // NEXT_PUBLIC_API_URL.
 
-import { ISSUE_TYPE_LABELS, planChangeAlert, UNDO_WINDOW_MS, withRecomputedCounts } from "../format";
+import { FLAGGABLE_STATES, ISSUE_TYPE_LABELS, planChangeAlert, UNDO_WINDOW_MS, withRecomputedCounts } from "../format";
 import { findMockRun, mockActivity, mockIssues, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
 import type {
   ActivityEntry,
@@ -342,13 +342,15 @@ function errorResponse(status: number, code: string, message: string, extra: obj
   return { status, body: { detail: { code, message, ...extra } } };
 }
 
-// Row states each L4 write starts from (API_CONTRACT.md "Check · uncheck ·
-// recheck"). check also confirms a re_check row, as recheck does. A row
-// already where the write would put it is a no-op.
-const ORDER_WRITES: Partial<Record<QueuedActionType, { from: OrderState[]; noop: OrderState[] }>> = {
+// Row states each row write starts from (API_CONTRACT.md "Check · uncheck ·
+// recheck" and "POST /loader/issues"). check also confirms a re_check row, as
+// recheck does. A row already where the write would put it is a no-op; a flag
+// has no no-op: a second flag on a row is refused like the server does.
+const ORDER_WRITES: Partial<Record<QueuedActionType, { from: readonly OrderState[]; noop: OrderState[] }>> = {
   check: { from: ["to_load", "new", "re_check"], noop: ["loaded"] },
   uncheck: { from: ["loaded"], noop: ["to_load", "new"] },
   recheck: { from: ["re_check"], noop: ["loaded"] },
+  flag: { from: FLAGGABLE_STATES, noop: [] },
 };
 
 /** The server's grace on top of the undo window, so a last-second tap over a slow link lands. */

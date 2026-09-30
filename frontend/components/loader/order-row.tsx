@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ArrowUpRight, Ban, Check, Flag, RefreshCw } from "lucide-react";
 import { cn } from "cn";
-import { formatOrderSize, orderStatusLine } from "@/lib/loader/format";
+import { FLAGGABLE_STATES, formatOrderSize, orderStatusLine } from "@/lib/loader/format";
 import type { OrderState, RunOrder } from "@/lib/loader/types";
 import { useFlagWaiting } from "./flag-status";
 import { LoaderPill } from "./loader-pill";
@@ -85,7 +85,10 @@ interface OrderRowProps {
   order: RunOrder;
   /** Check / uncheck the order. Offered in to_load, loaded, re_check (a check clears it) and new. */
   onToggle?: (order: RunOrder) => void;
-  /** Open the flag-an-issue flow for this order. */
+  /**
+   * Open the flag-an-issue flow for this order. Leave it out where no flag is
+   * allowed (a closed run); the button then does not show.
+   */
   onFlag?: (order: RunOrder) => void;
   disabled?: boolean;
   className?: string;
@@ -101,7 +104,9 @@ export function OrderRow({ order, onToggle, onFlag, disabled = false, className 
   const statusLine =
     orderStatusLine(order) ?? (order.state === "flagged" && flagWaiting ? "Flagged · waiting on Dispatcher" : undefined);
   const canToggle = style.toggleable && !!onToggle && !disabled;
-  const canFlag = !isMoved && !!onFlag && !disabled;
+  // Only where the server takes a flag: never twice on one row (a flag queued
+  // offline counts at once), never on take_off or moved rows. No re-flagging.
+  const canFlag = FLAGGABLE_STATES.includes(order.state) && !flagWaiting && !!onFlag && !disabled;
 
   const tileClass = cn(
     "flex size-12 shrink-0 items-center justify-center rounded-lg",
@@ -162,18 +167,16 @@ export function OrderRow({ order, onToggle, onFlag, disabled = false, className 
         )}
       </div>
 
-      <button
-        type="button"
-        aria-label={`Flag an issue with ${order.order_number}`}
-        disabled={!canFlag}
-        onClick={() => onFlag?.(order)}
-        className={cn(
-          "flex h-12 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-default disabled:hover:bg-card",
-          isMoved && "opacity-40",
-        )}
-      >
-        <Flag className="size-5" aria-hidden />
-      </button>
+      {canFlag && (
+        <button
+          type="button"
+          aria-label={`Flag an issue with ${order.order_number}`}
+          onClick={() => onFlag?.(order)}
+          className="flex h-12 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <Flag className="size-5" aria-hidden />
+        </button>
+      )}
     </div>
   );
 }

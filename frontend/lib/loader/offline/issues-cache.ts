@@ -62,6 +62,9 @@ export interface LocalFlag {
   createdAt: string;
   /** pending: waiting to send; conflict / failed: refused, will not be retried. */
   status: QueuedAction["status"];
+  /** Why the server refused it: the 409's detail.code, or the error text of another 4xx. */
+  conflictCode?: QueuedAction["conflict_code"];
+  lastError?: string;
 }
 
 /** Flags in the outbox, newest first. */
@@ -76,6 +79,8 @@ export async function localFlags(): Promise<LocalFlag[]> {
         flag: a.payload as FlagActionPayload,
         createdAt: a.created_at,
         status: a.status,
+        conflictCode: a.conflict_code,
+        lastError: a.last_error,
       }))
       .reverse();
   } catch {
