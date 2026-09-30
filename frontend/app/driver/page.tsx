@@ -3,202 +3,156 @@
 import React from "react";
 import Link from "next/link";
 import {
-  MapPin, Bell, Package, CheckCircle2, Clock,
-  AlertTriangle, ChevronRight, Navigation, Truck
+  MapPin, Signal, BatteryFull, Map, Home, TriangleAlert, Layers
 } from "lucide-react";
-
-const trips = [
-  {
-    id: "TRIP-024",
-    status: "In Progress",
-    statusColor: "#2167D5",
-    statusBg: "#EAF2FF",
-    stops: 6,
-    totalStops: 8,
-    destination: "Colombo Fort Depot",
-    eta: "10:45 AM",
-    vehicle: "WP-AB-1234",
-  },
-];
-
-const stats = [
-  { label: "Trips Today", value: "3", icon: Truck, color: "#163A5F", bg: "#EAF2FF" },
-  { label: "Delivered", value: "18", icon: CheckCircle2, color: "#18794E", bg: "#E8F6EF" },
-  { label: "Pending", value: "6", icon: Clock, color: "#A85D00", bg: "#FFF4D6" },
-  { label: "Alerts", value: "1", icon: AlertTriangle, color: "#C9363E", bg: "#FDECEF" },
-];
 
 export default function DriverDashboard() {
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
-      {/* Status Bar */}
-      <div className="flex justify-between items-center px-5" style={{ height: 34 }}>
-        <span className="text-xs font-semibold" style={{ color: "#12202E" }}>06:58</span>
-      </div>
-
+    <div className="min-h-screen flex flex-col font-sans" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
       {/* Header */}
-      <div
-        className="flex items-center justify-between px-5 py-4"
-        style={{ backgroundColor: "#163A5F" }}
+      <div 
+        className="flex flex-col w-full bg-white"
+        style={{ borderBottom: "1px solid #D9E1E8" }}
       >
-        <div>
-          <p className="text-xs mb-0.5" style={{ color: "#8CC2FF" }}>Good morning</p>
-          <h1 className="text-lg font-bold" style={{ color: "#FFFFFF" }}>Minidu Perera</h1>
-          <div className="flex items-center gap-1 mt-1">
-            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: "#27AE60" }} />
-            <span className="text-xs" style={{ color: "#DCEAF4" }}>On Duty · WP-AB-1234</span>
+        {/* Device status */}
+        <div className="flex justify-between items-center px-5 h-[34px] w-full">
+          <span className="text-xs font-semibold" style={{ color: "#12202E" }}>06:58</span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-normal text-[#BDBDBD]">Synced</span>
+            <Signal size={16} color="#BDBDBD" />
+            <BatteryFull size={18} color="#BDBDBD" />
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <Link href="/driver/notifications">
-            <button
-              className="relative flex items-center justify-center rounded-full"
-              style={{ width: 38, height: 38, backgroundColor: "rgba(255,255,255,0.12)" }}
+
+        {/* Title bar */}
+        <div className="flex px-5 py-2.5 items-center w-full">
+          <div className="flex flex-col gap-0.5">
+            <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
+              Today — Tue, Sep 29
+            </h1>
+            <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
+              Good morning, Nimal · VEH014
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Trips content */}
+      <div className="flex flex-col flex-1 px-5 pt-5 pb-24 gap-4">
+        {/* Active Trip Card */}
+        <div 
+          className="flex flex-col p-4 gap-2.5 rounded-xl"
+          style={{ backgroundColor: "#EAF2FF", border: "2px solid #2167D5" }}
+        >
+          {/* Trip Header */}
+          <div className="flex justify-between items-start w-full">
+            <div className="flex flex-col gap-0.5">
+              <span className="font-bold text-[24px]" style={{ color: "#0B2743" }}>Trip R-1042</span>
+              <span className="font-semibold text-[12px]" style={{ color: "#5D6A78" }}>VEH014 · 4 stops to deliver</span>
+            </div>
+            <div className="flex items-center px-2 py-1 rounded-full bg-[#FFF4D6]">
+              <span className="font-bold text-[10px]" style={{ color: "#A85D00" }}>Not started</span>
+            </div>
+          </div>
+
+          {/* Trip tags */}
+          <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center px-2.5 py-1.5 rounded-full bg-[#E8F6EF]">
+              <span className="font-bold text-[10px]" style={{ color: "#18794E" }}>Ambient</span>
+            </div>
+            <div className="flex items-center px-2.5 py-1.5 rounded-full bg-[#FFF4D6]">
+              <span className="font-bold text-[10px]" style={{ color: "#A85D00" }}>Depart by 03:45</span>
+            </div>
+          </div>
+
+          {/* Region */}
+          <div className="flex items-center gap-2 mt-1">
+            <MapPin size={17} color="#12202E" />
+            <span className="font-semibold text-[14px]" style={{ color: "#12202E" }}>Colombo & Gampaha</span>
+          </div>
+
+          {/* Action */}
+          <Link href="/driver/trip/TRIP-1042" className="mt-2">
+            <button 
+              className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
+              style={{ backgroundColor: "#092C4C" }}
             >
-              <Bell size={18} color="#FFFFFF" />
-              <span
-                className="absolute top-1 right-1 w-2 h-2 rounded-full"
-                style={{ backgroundColor: "#C9363E", border: "2px solid #163A5F" }}
-              />
+              Open Trip R-1042
             </button>
           </Link>
-          <Link href="/driver/profile">
-            <div
-              className="flex items-center justify-center rounded-full font-bold text-sm"
-              style={{ width: 38, height: 38, backgroundColor: "#FF6B00", color: "#FFFFFF" }}
-            >
-              MP
-            </div>
-          </Link>
-        </div>
-      </div>
-
-      <div className="flex-1 px-4 py-4 flex flex-col gap-4 pb-24">
-        {/* Stats Row */}
-        <div className="grid grid-cols-4 gap-2">
-          {stats.map((s) => (
-            <div
-              key={s.label}
-              className="flex flex-col items-center gap-1 rounded-xl py-3"
-              style={{ backgroundColor: "#FFFFFF", border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22,58,95,0.08)" }}
-            >
-              <div className="flex items-center justify-center rounded-full" style={{ width: 32, height: 32, backgroundColor: s.bg }}>
-                <s.icon size={14} color={s.color} />
-              </div>
-              <span className="text-base font-bold" style={{ color: "#12202E" }}>{s.value}</span>
-              <span className="text-[9px] text-center leading-tight" style={{ color: "#8793A0" }}>{s.label}</span>
-            </div>
-          ))}
         </div>
 
-        {/* Active Trip Card */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "#5D6A78" }}>Active Trip</span>
-            <Link href="/driver/trip">
-              <span className="text-xs font-semibold flex items-center gap-0.5" style={{ color: "#163A5F" }}>
-                View all <ChevronRight size={12} />
-              </span>
-            </Link>
+        {/* Scheduled Trip Card */}
+        <div 
+          className="flex flex-col p-4 gap-2.5 rounded-xl bg-white"
+          style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
+        >
+          {/* Trip Header */}
+          <div className="flex justify-between items-start w-full mb-1">
+            <div className="flex flex-col gap-0.5">
+              <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>Trip R-1043</span>
+              <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Scheduled · 13:00</span>
+            </div>
+            <div className="flex items-center px-2 py-1 rounded-full bg-[#E9EEF3]">
+              <span className="font-bold text-[10px]" style={{ color: "#5D6A78" }}>Later today</span>
+            </div>
           </div>
 
-          {trips.map((trip) => (
-            <Link href={`/driver/trip/${trip.id}`} key={trip.id}>
-              <div
-                className="rounded-2xl p-4 flex flex-col gap-3"
-                style={{ backgroundColor: "#FFFFFF", border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22,58,95,0.08)" }}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold" style={{ color: "#12202E" }}>{trip.id}</span>
-                  <span
-                    className="text-[10px] font-bold px-2 py-1 rounded-full"
-                    style={{ backgroundColor: trip.statusBg, color: trip.statusColor }}
-                  >
-                    {trip.status}
-                  </span>
-                </div>
-
-                {/* Progress bar */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex justify-between text-xs" style={{ color: "#8793A0" }}>
-                    <span>Stop {trip.stops} of {trip.totalStops}</span>
-                    <span>{Math.round((trip.stops / trip.totalStops) * 100)}%</span>
-                  </div>
-                  <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: "#D9E1E8" }}>
-                    <div
-                      className="h-1.5 rounded-full"
-                      style={{ width: `${(trip.stops / trip.totalStops) * 100}%`, backgroundColor: "#163A5F" }}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs" style={{ color: "#5D6A78" }}>
-                  <MapPin size={12} color="#163A5F" />
-                  <span>{trip.destination}</span>
-                  <span style={{ color: "#D9E1E8" }}>·</span>
-                  <Clock size={12} />
-                  <span>ETA {trip.eta}</span>
-                </div>
-
-                <Link href="/driver/trip">
-                  <button
-                    className="w-full flex items-center justify-center gap-2 rounded-full py-3 font-semibold text-sm"
-                    style={{ backgroundColor: "#163A5F", color: "#FFFFFF" }}
-                  >
-                    <Navigation size={16} />
-                    Continue Trip
-                  </button>
-                </Link>
-              </div>
-            </Link>
-          ))}
+          <div className="flex justify-between items-baseline w-full">
+            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Stops</span>
+            <span className="font-bold text-[12px]" style={{ color: "#5D6A78" }}>3 stops</span>
+          </div>
+          
+          <div className="flex justify-between items-baseline w-full mt-[-2px]">
+            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Load type</span>
+            <span className="font-bold text-[12px]" style={{ color: "#5D6A78" }}>Style</span>
+          </div>
         </div>
 
-        {/* Quick Actions */}
-        <div>
-          <span className="text-xs font-bold uppercase tracking-wide mb-2 block" style={{ color: "#5D6A78" }}>Quick Actions</span>
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { label: "POD", icon: Package, href: "/driver/pod", color: "#163A5F", bg: "#EAF2FF" },
-              { label: "Notifications", icon: Bell, href: "/driver/notifications", color: "#A85D00", bg: "#FFF4D6" },
-              { label: "SOS", icon: AlertTriangle, href: "/driver/sos", color: "#C9363E", bg: "#FDECEF" },
-            ].map((a) => (
-              <Link href={a.href} key={a.label}>
-                <div
-                  className="flex flex-col items-center gap-2 rounded-2xl py-4"
-                  style={{ backgroundColor: "#FFFFFF", border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22,58,95,0.08)" }}
-                >
-                  <div className="flex items-center justify-center rounded-full" style={{ width: 40, height: 40, backgroundColor: a.bg }}>
-                    <a.icon size={18} color={a.color} />
-                  </div>
-                  <span className="text-xs font-semibold" style={{ color: "#12202E" }}>{a.label}</span>
-                </div>
-              </Link>
-            ))}
+        {/* Shift Summary */}
+        <div className="flex w-full gap-2.5 mt-2">
+          <div className="flex-1 flex flex-col p-3.5 rounded-xl gap-1" style={{ backgroundColor: "#0B2743" }}>
+            <span className="font-bold text-[22px] text-white">7</span>
+            <span className="font-normal text-[12px]" style={{ color: "rgba(255, 255, 255, 0.72)" }}>Stops today</span>
+          </div>
+          <div className="flex-1 flex flex-col p-3.5 rounded-xl gap-1 bg-white" style={{ border: "1px solid #D9E1E8" }}>
+            <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>2</span>
+            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Trips assigned</span>
           </div>
         </div>
       </div>
+
+      {/* SOS Button */}
+      <Link href="/driver/sos">
+        <button 
+          className="fixed bottom-[96px] right-5 flex justify-center items-center w-[54px] h-[54px] rounded-full text-white font-extrabold text-[12px]"
+          style={{ backgroundColor: "#C9363E", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
+        >
+          SOS
+        </button>
+      </Link>
 
       {/* Bottom Nav */}
       <div
-        className="fixed bottom-0 left-0 right-0 flex items-center justify-around px-2 py-3"
-        style={{ backgroundColor: "#FFFFFF", boxShadow: "0px -8px 28px 0px rgba(11,39,67,0.16)", height: 72 }}
+        className="fixed bottom-0 left-0 right-0 flex items-center justify-between px-8 py-2.5 bg-white"
+        style={{ borderTop: "1px solid #D9E1E8", boxShadow: "0px -8px 28px 0px rgba(11, 39, 67, 0.16)" }}
       >
-        {[
-          { label: "Home", icon: Truck, href: "/driver", active: true },
-          { label: "Trip", icon: Navigation, href: "/driver/trip", active: false },
-          { label: "Notify", icon: Bell, href: "/driver/notifications", active: false },
-          { label: "Profile", icon: MapPin, href: "/driver/profile", active: false },
-        ].map((item) => (
-          <Link href={item.href} key={item.label}>
-            <div className="flex flex-col items-center gap-1" style={{ width: 72 }}>
-              <item.icon size={22} color={item.active ? "#163A5F" : "#8793A0"} />
-              <span className="text-[10px] font-medium" style={{ color: item.active ? "#163A5F" : "#8793A0" }}>
-                {item.label}
-              </span>
-            </div>
-          </Link>
-        ))}
+        <Link href="/driver" className="flex flex-col items-center gap-1 w-[72px]">
+          <Home size={22} color="#111111" />
+          <span className="text-[10px] font-medium" style={{ color: "#111111" }}>Home</span>
+        </Link>
+        <Link href="/driver/trip" className="flex flex-col items-center gap-1 w-[72px]">
+          <Map size={22} color="#8793A0" />
+          <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Map</span>
+        </Link>
+        <Link href="/driver/sos" className="flex flex-col items-center gap-1 w-[72px]">
+          <TriangleAlert size={22} color="#5D6A78" />
+          <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Report</span>
+        </Link>
+        <Link href="/driver/notifications" className="flex flex-col items-center gap-1 w-[72px]">
+          <Layers size={22} color="#5D6A78" />
+          <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Queue</span>
+        </Link>
       </div>
     </div>
   );
