@@ -5,19 +5,23 @@ responses. Base path: `/api/v1/loader`.
 
 What is built now (merged into `loader`):
 
-- **Built — backend endpoints, tested.** The run read (L4 checklist, with the L7
+- **Built — backend endpoints, tested.** Users and sign-in sessions (L2); the
+  queue and its summary (L3); the run read (L4 checklist, with the L7
   plan diff and release lock, `released_at` / `released_by` and `loaded_units`);
   check · uncheck · recheck (L4); acknowledge · unload (L7); the issue read (L8);
   both activity feeds (L9); the dev simulation endpoints.
-- **Built — service helpers for Sanduni's endpoints**, tested, no routes of
+- **Built — service helpers for the L6 endpoints**, tested, no routes of
   their own: `release_blockers` / `check_release_allowed` (409 `RELEASE_LOCKED`),
   `check_undo_allowed` (409 `UNDO_WINDOW_EXPIRED`), `release_fields`,
   `plan_updated_at` / `dock_plan_updated_at` — all on `LoaderService`. Each
   proposed endpoint below names the helper it should call.
-- **Proposed — Sanduni's endpoints (L2, L3, L5, L6).** Her screens are built
-  against these shapes (the frontend's mock transport stands in for them), but
-  **no backend route exists yet**: users, session, queue, summary, flag,
-  issue list, release-summary, release, undo.
+- **Proposed — L5, L6.** Sanduni's screens are built against these shapes (the
+  frontend's mock transport stands in for them), but **no backend route exists
+  yet**: flag, issue list, release-summary, release, undo.
+
+**Ownership.** Every backend route under `/loader`, and every
+`loader_activities` write, is owned by **Sachintha** — including the L5/L6
+routes still to build. Screens stay with their feature owner (see Page routes).
 
 All enum values are the wire values, lowercase with underscores.
 
@@ -584,7 +588,7 @@ shift goes (02:14 published → 02:16 acknowledged → 02:20 …).
 **Writes must log.** An event shows in the Log only if its write adds a
 `loader_activities` row, through `LoaderService.log(...)` in the same
 transaction as the write, with `actor_kind="loader"` and `actor_id` from the
-session. Sanduni's endpoints need these:
+session. The L5/L6 endpoints need these:
 
 | Endpoint | `event_type` | `order_id` | `message` (Dispatcher's wording) |
 | --- | --- | --- | --- |
@@ -660,6 +664,164 @@ without changing the ordering.
 Options are returned even when unchosen, so the loader sees the trade-off the
 dispatcher weighed rather than just the outcome.
 
+### `GET /loader/users` — L2 sign-in
+
+The sign-in tiles: **active** loaders, sorted by full name. The PIN hash never
+leaves the server.
+
+```jsonc
+[ { "id": 1, "full_name": "Saman Jayawardena", "short_name": "Saman J." } ]
+```
+
+Optional `?q=` matches the full or short name anywhere, case-insensitive (blank
+is ignored). Not filtered by depot: the tablet sends no dock, and
+`loader_users` only has an optional home dock.
+
+### `POST /loader/session` · `DELETE /loader/session/{id}` — L2 sign-in
+
+```jsonc
+// POST request
+{ "loader_user_id": 1, "pin": "4417", "dock_tablet_label": "Dock tablet 3" }
+
+// 200
+{ "session_id": 12, "loader": { "id": 1, "short_name": "Saman J." },
+  "dock": "Dock 3", "depot": "peliyagoda", "started_at": "2026-05-27T20:00:00Z",
+  "ended_at": null, "end_reason": null }
+
+// 401 — wrong PIN
+{ "detail": { "code": "AUTHORIZATION_FAILED", "message": "Incorrect PIN." } }
+```
+
+The tablet is registered to a dock, so there is no depot picker: `dock` (the
+dock's name) and `depot` come from the tablet's registration and tell the
+client which dock's queue to show.
+
+| Case | Response |
+| --- | --- |
+| right PIN, active loader, registered tablet | `200`, a new open session |
+| wrong PIN, or an unknown or inactive `loader_user_id` | `401 AUTHORIZATION_FAILED` "Incorrect PIN." — the same answer either way, so ids are not revealed. A 401, not the shared 403, because the tablet reads anything but 401 as "offline" |
+| unknown or inactive `dock_tablet_label` | `404 NOT_FOUND`, `entity: "DockTablet"` (a setup problem, not the loader's) |
+
+Signing in does **not** end other open sessions on the tablet; the tablet ends
+the old one itself (Switch user).
+
+**`DELETE /loader/session/{id}`** with `{ "end_reason": "idle_timeout" | "switch_user" | "sign_out" }`
+sets `ended_at` and `end_reason` and returns the session in the same shape.
+Ending an already-ended session is a `200` no-op that keeps the **first**
+`ended_at` / `end_reason` — offline sign-outs are replayed. Unknown id →
+`404`, `entity: "LoaderSession"`; an unknown `end_reason` → `422`.
+
+**On the writes.** Every write's `loader_session_id` can be a session from
+here: the server stamps the check (`checked_by`, `loading_checks.actor_id`) or
+the acknowledgement with that session's loader. An **ended** session is still
+accepted, because offline taps replay after the idle timeout. It stays
+optional: `null` applies the write with no loader stamped.
+
+### `GET /loader/runs` — L3 queue
+
+`?dock=` **(required;** `3`, `DOCK3` or `Dock 3`**)** · `&brand=fresh|style|tech`
+(omitted returns all).
+
+The queue is every run at the dock **except `gated_out`** (through the gate it
+is the Driver's), sorted by `departs_at`. It is not narrowed to one day.
+Cards are grouped by brand and wave — `"Fresh · night wave"` — and the groups
+come in order of their first departure. A run with no wave goes in `day`.
+
+```jsonc
+{
+  "groups": [
+    {
+      "label": "Fresh · night wave",
+      "brand": "fresh",
+      "wave": "night",
+      "runs": [
+        {
+          "code": "RUN-021",
+          "vehicle_code": "VEH001",
+          "vehicle_type": "truck",
+          "temp_capability": "reefer",
+          "trip_number": 1,
+          "brand": "fresh",
+          "district": "Gampaha",
+          "departs_at": "2026-05-27T22:00:00Z",
+          "status": "loading",
+          "stop_count": 4,
+          "orders_loaded": 5,     // the card's "5 of 8 loaded" — see Counting rules
+          "orders_checked": 5,
+          "orders_total": 8,
+          "loader": "Saman J.",
+          "released_at": null,              // as on the run read: set only while ready_to_depart / gated_out
+          "released_by": null,              // { "id": 1, "name": "Saman J." }
+          "plan_updated_at": "2026-05-27T20:44:00Z",
+          "pre_stage_note": null,           // source TBD with dispatcher — always null for now
+          "chips": ["Truck", "Reefer", "5,510 kg · 26.4 m³"],
+          "alert": {
+            "tone": "warning",
+            "message": "Plan updated 02:14 · v2 → v3",
+            "action": "Review",
+            "href": "/loader/runs/RUN-021"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Where each field comes from:
+
+| Field | Source |
+| --- | --- |
+| `stop_count`, `orders_*`, `released_at`, `released_by` | the run read itself (`build_run_detail`), so a card never disagrees with the checklist it opens |
+| `loader` | the loader of the run's latest logged action; else who released it; else who checked an order last; else `null` |
+| `plan_updated_at` | `LoaderService.plan_updated_at(db, run)` — the current plan's publish time; `null` if the run has none |
+| `pre_stage_note` | **Source TBD with dispatcher** — no table holds it yet, so always `null` |
+| `chips` | `["Truck" \| "Van", "Reefer" \| "Ambient", third]`. The third is `"van_only"` if a stop's outlet is van-only, else `"2nd trip · reload"` for trip 2+, else the vehicle's capacity `"5,510 kg · 26.4 m³"` |
+
+`alert` is nullable; the first that applies wins:
+
+| When | `tone` | `message` | `action` → `href` |
+| --- | --- | --- | --- |
+| a plan nobody has acknowledged | `warning` | `Plan updated 02:14 · v2 → v3` (depot time) | `Review` → `/loader/runs/{code}` |
+| … and that plan reopened a Ready run | `error` | `Load reopened · RUN-021 · VEH001 · v2 → v3 at 02:14` | `Open` → `/loader/runs/{code}` |
+| a flag waiting on the Dispatcher (sent or seen) | `error` | `ORD0092314 missing · waiting` (latest waiting flag) | `Open` → `/loader/issues/{id}` |
+| `ready_to_depart` | `success` | `Signed off · driver can collect` | `View` → `/loader/runs/{code}/ready` |
+
+The plan alerts use the same wording as the frontend's `planChangeAlert`, which
+replaces the server's while the tablet has taps waiting to sync. There is no
+`neutral` alert yet: it is for the pre-stage note, which has no source.
+
+`?dock=` missing → `422`; unknown dock → `404`, `entity: "Dock"`.
+
+### `GET /loader/summary` — L3 metric cards
+
+`?dock=` (required, as above). Counted from **the same runs** as
+`GET /loader/runs` (no brand filter), so the cards and the queue agree.
+
+```jsonc
+{
+  "dock": "Dock 3",
+  "date": "2026-05-28",
+  "day_label": "Thu 28 May",
+  "next_holiday": { "date": "2026-05-30", "label": "Poson Sat 30 May" },
+  "runs": 6,
+  "loading": { "count": 2, "loaders": ["Saman", "Tharindu"] },
+  "issues": { "count": 1, "label": "Awaiting decision" },
+  "ready": { "count": 1, "run_codes": ["RUN-022"] },
+  "plan_updated_at": "2026-05-27T20:44:00Z"   // latest plan publish across the dock
+}
+```
+
+| Field | Rule |
+| --- | --- |
+| `date`, `day_label` | the depot date of the first departure (a night wave leaving 03:30 belongs to that date), or today when the dock has no runs |
+| `next_holiday` | the first `calendar_days` row on or after `date` with a `holiday_name`; label `"<name> <day_label>"`. `null` if none |
+| `runs` | the runs in the queue |
+| `loading` | runs in `loading`, `issue_flagged` or `loaded`; `loaders` are the first words of their cards' `loader`, unique, in queue order |
+| `issues` | flags waiting on the Dispatcher (`sent` or `seen`) on those runs; label `"Awaiting decision"`, or `"None waiting"` at 0 |
+| `ready` | runs in `ready_to_depart` |
+| `plan_updated_at` | `LoaderService.dock_plan_updated_at(db, dock, run_ids)` for the queue's runs; `null` when none has a plan on record |
+
 ### Dev-only simulation
 
 Mounted only when `LOADER_DEV_ENDPOINTS=true` **and** `ENVIRONMENT != production`.
@@ -706,7 +868,8 @@ Existing domain handlers, so the envelope matches the rest of the API:
 
 | Status | `detail.code` | When |
 | --- | --- | --- |
-| 404 | `NOT_FOUND` | unknown run code, issue id or order number |
+| 401 | `AUTHORIZATION_FAILED` | `POST /session`: wrong PIN, or an unknown or inactive loader (L2) |
+| 404 | `NOT_FOUND` | unknown run code, issue id, order number, dock, dock tablet or session |
 | 409 | `INVALID_STATE_TRANSITION` | resolving a settled issue; plan change after gate-out; an L4 write the row or run state does not allow |
 | 409 | `PLAN_VERSION_STALE` | a write made against a plan version that is no longer current |
 | 409 | `PLAN_NOT_ACKNOWLEDGED` | a row write while the current plan version is unread |
@@ -722,120 +885,12 @@ Existing domain handlers, so the envelope matches the rest of the API:
 
 ---
 
-## Proposed — Sanduni's endpoints (no backend route yet)
+## Proposed — L5, L6 (no backend route yet)
 
 > Sanduni's screens are built against these shapes through the mock transport;
-> the routes are hers to add. Every field exists in the database (no migration
+> the routes are Sachintha's to add. Every field exists in the database (no migration
 > needed), and where a rule is already coded the section names the
 > `LoaderService` helper to call rather than re-deriving it.
-
-### `GET /loader/users` — L2 sign-in
-
-Name search for the tile list. PIN never leaves the server.
-
-```jsonc
-[ { "id": 1, "full_name": "Saman Jayawardena", "short_name": "Saman J." } ]
-```
-
-Optional `?q=` for the search field. `short_name` is what the tiles render, two
-per row at 320px.
-
-### `POST /loader/session` — L2 sign-in
-
-```jsonc
-// request
-{ "loader_user_id": 1, "pin": "4417", "dock_tablet_label": "Dock tablet 3" }
-
-// 200
-{ "session_id": 12, "loader": { "id": 1, "short_name": "Saman J." },
-  "dock": "Dock 3", "depot": "peliyagoda", "started_at": "2026-05-27T20:00:00Z" }
-
-// 401 — wrong PIN
-{ "detail": { "code": "AUTHORIZATION_FAILED", "message": "Incorrect PIN." } }
-```
-
-The tablet is registered to a dock, so there is no depot picker — the response
-tells the client which dock's queue to show. `DELETE /loader/session/{id}` ends
-it with `end_reason` of `idle_timeout`, `switch_user` or `sign_out`.
-
-### `GET /loader/summary` — L3 metric cards
-
-```jsonc
-{
-  "dock": "Dock 3",
-  "date": "2026-05-28",
-  "day_label": "Thu 28 May",
-  "next_holiday": { "date": "2026-05-30", "label": "Poson Sat 30 May" },
-  "runs": 6,
-  "loading": { "count": 2, "loaders": ["Saman", "Tharindu"] },
-  "issues": { "count": 1, "label": "Awaiting decision" },
-  "ready": { "count": 1, "run_codes": ["RUN-022"] },
-  "plan_updated_at": "2026-05-27T20:44:00Z"   // latest plan publish across the dock
-}
-```
-
-`plan_updated_at` (UTC, `Z`, nullable) drives "Plan from Dispatcher · updated
-02:14" on the queue: the latest publish time of any run's **current** plan at
-the dock — `LoaderService.dock_plan_updated_at(db, dock, run_ids)`, passing the
-ids of the runs the queue shows. `null` when none has a plan on record.
-
-### `GET /loader/runs` — L3 queue
-
-`?dock=DOCK3&brand=fresh` — brand omitted returns all. Sorted by `departs_at`.
-
-```jsonc
-{
-  "groups": [
-    {
-      "label": "Fresh · night wave",
-      "brand": "fresh",
-      "wave": "night",
-      "runs": [
-        {
-          "code": "RUN-021",
-          "vehicle_code": "VEH001",
-          "vehicle_type": "truck",
-          "temp_capability": "reefer",
-          "trip_number": 1,
-          "brand": "fresh",
-          "district": "Gampaha",
-          "departs_at": "2026-05-27T22:00:00Z",
-          "status": "loading",
-          "stop_count": 4,
-          "orders_loaded": 5,     // the card's "5 of 8 loaded" — see Counting rules
-          "orders_checked": 5,
-          "orders_total": 8,
-          "loader": "Saman J.",
-          "released_at": null,              // as on the run read: set only while ready_to_depart / gated_out
-          "released_by": null,              // { "id": 1, "name": "Saman J." }
-          "plan_updated_at": "2026-05-27T20:44:00Z",
-          "pre_stage_note": null,           // source TBD with dispatcher — always null for now
-          "chips": ["Truck", "Reefer", "5,510 kg · 26.4 m³"],
-          "alert": {
-            "tone": "warning",
-            "message": "Plan updated 02:14 · v2 → v3",
-            "action": "Review",
-            "href": "/loader/runs/RUN-021"
-          }
-        }
-      ]
-    }
-  ]
-}
-```
-
-`alert` is nullable and drives the coloured row on the card. Suggested tones:
-`warning` for a plan change, `error` for a waiting issue, `success` for signed
-off, `neutral` for a pre-stage note.
-
-The per-card fields, and where each comes from:
-
-| Field | Source |
-| --- | --- |
-| `released_at`, `released_by` | `LoaderService.release_fields(run)` — the same rule as the run read |
-| `plan_updated_at` | `LoaderService.plan_updated_at(db, run)` — the current plan's publish time (UTC, `Z`); `null` if the run has none |
-| `pre_stage_note` | `string \| null`. **Source TBD with dispatcher** — no table holds it yet, so it is always `null` for now |
-| plan-change alert "Plan updated 02:14 · v2 → v3" | `plan_updated_at`, `acknowledged_plan_version` and `current_plan_version` (all on the run read) |
 
 ### `POST /loader/issues` — L5 flag
 

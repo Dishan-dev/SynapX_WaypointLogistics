@@ -13,6 +13,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict
 from app.models.delivery_run import RunOrderState, RunStatus, StopStatus
 from app.models.loader_activity import ActorKind
 from app.models.loader_issue import IssueStatus, IssueType
+from app.models.loader_user import SessionEndReason
 from app.models.plan_revision import PlanChangeKind
 from app.models.reference import Brand, DockType, TempCapability, TemperatureClass, VehicleType
 
@@ -398,3 +399,141 @@ class SimulationResult(BaseModel):
     plan_version: Optional[int] = None
     issue_id: Optional[int] = None
     changes: List[PlanChangeRead] = []
+
+
+# ---------------------------------------------------------------------------
+# L2 sign-in: users and sessions (shapes from frontend/lib/loader/types.ts)
+# ---------------------------------------------------------------------------
+
+
+class LoaderUserRead(BaseModel):
+    """GET /loader/users: a sign-in tile. The PIN hash never leaves the server."""
+
+    id: int
+    full_name: str
+    short_name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SessionRequest(BaseModel):
+    """POST /loader/session. The PIN is checked here only."""
+
+    loader_user_id: int
+    pin: str
+    # The tablet, not the loader, decides the dock: "Dock tablet 3".
+    dock_tablet_label: str
+
+
+class SessionLoaderRead(BaseModel):
+    id: int
+    short_name: str
+
+
+class LoaderSessionRead(BaseModel):
+    """POST /loader/session (200) and DELETE /loader/session/{id}.
+
+    ended_at / end_reason are null while the session is open; the frontend
+    reads neither, so they are extra rather than a different shape.
+    """
+
+    session_id: int
+    loader: SessionLoaderRead
+    dock: str
+    depot: str
+    started_at: UtcDateTime
+    ended_at: Optional[UtcDateTime] = None
+    end_reason: Optional[SessionEndReason] = None
+
+
+class EndSessionRequest(BaseModel):
+    """DELETE /loader/session/{id} body."""
+
+    end_reason: SessionEndReason
+
+
+# ---------------------------------------------------------------------------
+# L3 queue and summary (shapes from frontend/lib/loader/types.ts)
+# ---------------------------------------------------------------------------
+
+
+class RunAlertRead(BaseModel):
+    """The coloured row on a queue card. tone: warning · error · success · neutral."""
+
+    tone: str
+    message: str
+    action: str
+    href: str
+
+
+class RunSummaryRead(BaseModel):
+    """One queue card (RunSummary)."""
+
+    code: str
+    vehicle_code: str
+    vehicle_type: VehicleType
+    temp_capability: TempCapability
+    trip_number: int
+    brand: Brand
+    district: str
+    departs_at: UtcDateTime
+    status: RunStatus
+    stop_count: int
+    orders_loaded: int
+    orders_checked: int
+    orders_total: int
+    loader: Optional[str] = None
+    released_at: Optional[UtcDateTime] = None
+    released_by: Optional[LoaderRefRead] = None
+    plan_updated_at: Optional[UtcDateTime] = None
+    # Source TBD with the dispatcher; no table holds it yet.
+    pre_stage_note: Optional[str] = None
+    chips: List[str]
+    alert: Optional[RunAlertRead] = None
+
+
+class RunGroupRead(BaseModel):
+    label: str
+    brand: Brand
+    wave: str
+    runs: List[RunSummaryRead]
+
+
+class RunQueueRead(BaseModel):
+    """GET /loader/runs?dock=."""
+
+    groups: List[RunGroupRead]
+
+
+class HolidayRead(BaseModel):
+    date: date
+    label: str
+
+
+class LoadingCountRead(BaseModel):
+    count: int
+    loaders: List[str]
+
+
+class IssueCountRead(BaseModel):
+    count: int
+    label: str
+
+
+class ReadyCountRead(BaseModel):
+    count: int
+    run_codes: List[str]
+
+
+class QueueSummaryRead(BaseModel):
+    """GET /loader/summary?dock=: the queue's metric cards (QueueSummary)."""
+
+    dock: str
+    date: date
+    day_label: str
+    next_holiday: Optional[HolidayRead] = None
+    runs: int
+    loading: LoadingCountRead
+    issues: IssueCountRead
+    ready: ReadyCountRead
+    plan_updated_at: Optional[UtcDateTime] = None
