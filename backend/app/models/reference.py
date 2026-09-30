@@ -1,11 +1,7 @@
 import enum
-from sqlalchemy import Boolean, Column, Date, Float, Integer, String, Time, Enum
+from sqlalchemy import Boolean, Column, Date, Float, ForeignKey, Integer, String, Time, Enum
+from sqlalchemy.orm import relationship
 from app.core.database import Base
-
-# Copied from the loader branch (backend/app/models/reference.py, Sachintha) so the Store Manager
-# order rules can use outlets and the operating calendar before loader merges into dev.
-# Only the parts Store Manager needs are here. When loader merges, keep the loader's version of this file
-# (it also has Dock, DockTablet, etc.). Loader's own Vehicle model is dropped in favour of Thisaru's.
 
 
 class Depot(str, enum.Enum):
@@ -17,6 +13,35 @@ class Brand(str, enum.Enum):
     FRESH = "fresh"
     STYLE = "style"
     TECH = "tech"
+
+    @property
+    def label(self) -> str:
+        """How orders.brand (a plain string, Nisith's 0a80c3e0353c) spells it: "Fresh"."""
+        return self.value.title()
+
+
+class VehicleType(str, enum.Enum):
+    """Loader API vocabulary for fleet.Vehicle.vehicle_type (a plain string column)."""
+
+    TRUCK = "truck"
+    VAN = "van"
+
+
+class TempCapability(str, enum.Enum):
+    """Loader API vocabulary for fleet.Vehicle.temperature_mode (a plain string column).
+
+    Chilled orders may only ride on REEFER.
+    """
+
+    REEFER = "reefer"
+    AMBIENT = "ambient"
+
+
+class TemperatureClass(str, enum.Enum):
+    """Temperature class of an order. Drives the Temp badge on the loader screens."""
+
+    CHILLED = "chilled"
+    AMBIENT = "ambient"
 
 
 class DockType(str, enum.Enum):
@@ -39,6 +64,11 @@ class CalendarDay(Base):
     holiday_name = Column(String(100), nullable=True)
 
 
+# Vehicles are Thisaru's model, app.models.fleet.Vehicle (table `vehicles`). The loader
+# reads code, vehicle_type, capacity_kg, capacity_vol_m3, temperature_mode and depot_name
+# from it; see loader_service for how those map onto the loader API.
+
+
 class Outlet(Base):
     """A store the run delivers to. Seeded from outlets.csv.
 
@@ -57,3 +87,34 @@ class Outlet(Base):
     window_start = Column(Time, nullable=True)
     window_end = Column(Time, nullable=True)
     depot = Column(Enum(Depot), default=Depot.PELIYAGODA, nullable=False)
+
+
+class Dock(Base):
+    """A loading dock at a depot. Runs are queued per dock ("Dock 3")."""
+
+    __tablename__ = "docks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(20), unique=True, index=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    depot = Column(Enum(Depot), default=Depot.PELIYAGODA, nullable=False)
+
+    tablets = relationship("DockTablet", back_populates="dock")
+
+
+class DockTablet(Base):
+    """A shared tablet bolted to one dock.
+
+    There is no depot picker at sign-in: the tablet's registration is what tells the
+    app which dock's runs to show.
+    """
+
+    __tablename__ = "dock_tablets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    label = Column(String(100), unique=True, index=True, nullable=False)
+    dock_id = Column(Integer, ForeignKey("docks.id"), nullable=False)
+    device_token = Column(String(255), unique=True, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    dock = relationship("Dock", back_populates="tablets")

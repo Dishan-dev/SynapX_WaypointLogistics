@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum, Boolean, Text
 from sqlalchemy.orm import relationship
 from app.core.database import Base
+from app.models.reference import TemperatureClass
 
 
 class OrderStatus(str, enum.Enum):
@@ -50,7 +51,9 @@ class Order(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Loader order fields (Sachintha, migration 0003_order_loader_fields).
+    # brand and weight_kg above are Nisith's (0a80c3e0353c); the loader reads those.
     outlet_id = Column(Integer, ForeignKey("outlets.id"), nullable=True)
+    temperature_class = Column(Enum(TemperatureClass), nullable=True)
     units = Column(Integer, nullable=True)
     volume_m3 = Column(Float, nullable=True)
 
