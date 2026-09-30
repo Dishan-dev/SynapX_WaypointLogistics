@@ -747,7 +747,18 @@ function mockServerSummary(queue: RunQueue): QueueSummary {
     ready: { count: ready.length, run_codes: ready.map((r) => r.code) },
     // Open flags on the mock server, so a new flag shows on the Issues badge.
     issues: { count: loadMockIssues().filter(WAITING).length, label: mockSummary.issues.label },
+    plan_updated_at: dockPlanUpdatedAt(runs.map((r) => r.code)),
   };
+}
+
+/** Latest current-plan publish among the queue's runs the mock server holds in detail; null if none. */
+function dockPlanUpdatedAt(codes: string[]): string | null {
+  const state = loadMockState();
+  const times = codes.flatMap((code) => {
+    const run = mockServerRun(state, code);
+    return run ? [run.plan.published_at] : [];
+  });
+  return times.sort().at(-1) ?? null;
 }
 
 /**

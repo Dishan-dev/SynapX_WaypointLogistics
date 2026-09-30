@@ -5,6 +5,7 @@ import { ArrowUpRight, Ban, Check, Flag, RefreshCw } from "lucide-react";
 import { cn } from "cn";
 import { formatOrderSize, orderStatusLine } from "@/lib/loader/format";
 import type { OrderState, RunOrder } from "@/lib/loader/types";
+import { useFlagWaiting } from "./flag-status";
 import { LoaderPill } from "./loader-pill";
 import { TempBadge } from "./temp-badge";
 
@@ -94,7 +95,11 @@ interface OrderRowProps {
 export function OrderRow({ order, onToggle, onFlag, disabled = false, className }: OrderRowProps) {
   const style = stateStyles[order.state];
   const isMoved = order.state === "moved";
-  const statusLine = orderStatusLine(order);
+  const flagWaiting = useFlagWaiting(order.order_number);
+  // Figma "6 Order row states": a flag still waiting on the Dispatcher says so.
+  // An answered flag gets no line; no frame defines its wording.
+  const statusLine =
+    orderStatusLine(order) ?? (order.state === "flagged" && flagWaiting ? "Flagged · waiting on Dispatcher" : undefined);
   const canToggle = style.toggleable && !!onToggle && !disabled;
   const canFlag = !isMoved && !!onFlag && !disabled;
 

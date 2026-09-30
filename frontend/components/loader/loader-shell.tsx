@@ -3,6 +3,7 @@
 import * as React from "react";
 import { usePathname } from "next/navigation";
 import { FlagIssueHost } from "./flag-issue-sheet";
+import { WaitingFlagsProvider } from "./flag-status";
 import { LoaderBottomNav, type LoaderTab } from "./loader-bottom-nav";
 import { listOutbox } from "@/lib/loader/offline/db";
 import { loadIssues } from "@/lib/loader/offline/issues-cache";
@@ -159,7 +160,9 @@ export function LoaderShell({ user, dockLabel, dock, sessionId, issueCount, chil
     <LoaderShellContext.Provider value={ctx}>
       <LoaderSyncProvider sessionId={sessionId}>
         <div className="flex min-h-dvh flex-col bg-background">
-          <div className="flex flex-1 flex-col">{children}</div>
+          <WaitingFlagsProvider dock={dock} onRunPage={pathname.startsWith("/loader/runs/")}>
+            <div className="flex flex-1 flex-col">{children}</div>
+          </WaitingFlagsProvider>
           <ShellBottomNav
             active={activeTab(pathname)}
             loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
