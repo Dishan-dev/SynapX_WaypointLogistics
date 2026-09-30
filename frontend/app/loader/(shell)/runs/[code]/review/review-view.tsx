@@ -99,7 +99,7 @@ function Review({ initial }: { initial: Run }) {
           Release needs a connection
         </LoaderButton>
       ) : lockLabel ? (
-        <LoaderButton className="w-full md:w-auto" locked>
+        <LoaderButton className="h-auto min-h-12 w-full py-2.5 whitespace-normal md:w-auto" locked>
           Release locked · {lockLabel}
         </LoaderButton>
       ) : (
@@ -196,7 +196,7 @@ function Review({ initial }: { initial: Run }) {
           <MetricTile label="Spare" value={formatM3(spare)} caption={`of ${formatM3(run.capacity.max_volume_m3)}`} />
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 md:items-start">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-1">
               <CapacityCard {...capacity} />
@@ -219,7 +219,7 @@ function Review({ initial }: { initial: Run }) {
                   {user.initials}
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-sm font-medium text-foreground">Releasing as {user.name}</span>
+                  <span className="text-sm font-medium break-words text-foreground">Releasing as {user.name}</span>
                   <span className="text-xs text-muted-foreground">
                     {formatTime(openedAt)} · {dockName}
                   </span>
