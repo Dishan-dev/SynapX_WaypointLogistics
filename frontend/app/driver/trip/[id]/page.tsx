@@ -191,7 +191,7 @@ export default function TripDetailsPage() {
           <Map size={22} color="#8793A0" />
           <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Map</span>
         </Link>
-        <Link href="/driver/sos" className="flex flex-col items-center gap-1 w-[72px]">
+        <Link href="/driver/report" className="flex flex-col items-center gap-1 w-[72px]">
           <TriangleAlert size={22} color="#5D6A78" />
           <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Report</span>
         </Link>
