@@ -53,7 +53,9 @@ export function LoaderSyncProvider({
   children: React.ReactNode;
 }) {
   const transport = React.useMemo(() => createTransport(), []);
-  const [online, setOnline] = React.useState(true);
+  // Start from the browser's own flag, so a reload while offline shows Offline
+  // at once; the probe below then confirms it either way.
+  const [online, setOnline] = React.useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   const [syncing, setSyncing] = React.useState(false);
   const [counts, setCounts] = React.useState({ pending: 0, stale: 0, failed: 0 });
   const [lastSyncedAt, setLastSyncedAt] = React.useState<string>();

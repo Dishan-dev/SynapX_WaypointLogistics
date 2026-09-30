@@ -41,6 +41,16 @@ import type { LoaderUser, SessionEndReason } from "@/lib/loader/types";
 const PIN_LENGTH = 4;
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "backspace"];
 const PROBE_OFFLINE_MS = 5_000;
+
+/** Browser online / offline events, for useSyncExternalStore. */
+function subscribeOnline(onChange: () => void) {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+}
 const IDLE_MINUTES = IDLE_SIGN_OUT_MS / 60_000;
 
 // Until the tablet has signed someone in once, show the mock dock.
@@ -126,7 +136,11 @@ export function SignInView({
   const [users, setUsers] = React.useState<LoaderUser[]>(() =>
     typeof window === "undefined" ? [] : cachedUsers(),
   );
-  const [online, setOnline] = React.useState(true);
+  // Offline if the browser says so (at once, even on a reload while offline)
+  // or the server could not be reached.
+  const browserOnline = React.useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
+  const [reachable, setReachable] = React.useState(true);
+  const online = browserOnline && reachable;
   const [query, setQuery] = React.useState("");
   const [picked, setPicked] = React.useState<LoaderUser | null>(null);
   const [pin, setPinState] = React.useState("");
@@ -154,7 +168,7 @@ export function SignInView({
           saveUsers(fresh);
           setUsers(fresh);
         } catch (err) {
-          if (!cancelled && err instanceof NetworkError) setOnline(false);
+          if (!cancelled && err instanceof NetworkError) setReachable(false);
         }
       })();
       return () => {
@@ -162,8 +176,8 @@ export function SignInView({
       };
     }
     const id = window.setInterval(() => {
-      void probeConnectivity().then((reachable) => {
-        if (!cancelled && reachable) setOnline(true);
+      void probeConnectivity().then((ok) => {
+        if (!cancelled && ok) setReachable(true);
       });
     }, PROBE_OFFLINE_MS);
     return () => {
@@ -173,7 +187,7 @@ export function SignInView({
   }, [online, transport]);
 
   React.useEffect(() => {
-    const recheck = () => void probeConnectivity().then(setOnline);
+    const recheck = () => void probeConnectivity().then(setReachable);
     window.addEventListener("online", recheck);
     window.addEventListener("offline", recheck);
     return () => {
@@ -223,7 +237,7 @@ export function SignInView({
       setStatus("wrong");
     } catch (err) {
       if (!(err instanceof NetworkError)) throw err;
-      setOnline(false);
+      setReachable(false);
       setStatus("idle");
     } finally {
       checkingRef.current = false;
