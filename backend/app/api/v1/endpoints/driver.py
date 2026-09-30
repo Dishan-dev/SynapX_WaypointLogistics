@@ -1,5 +1,7 @@
+import os
+import uuid
 from typing import List
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, UploadFile, File, HTTPException
 from sqlalchemy.orm import Session
 from app.api import deps
 from app.models.user import User
@@ -106,6 +108,37 @@ def complete_trip(
 
 # --- Group C: Issue Reporting ---
 from app.schemas.driver import IssueReportCreate, IssueReportRead
+
+
+# --- Photo Upload ---
+UPLOAD_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "static", "uploads")
+)
+ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+@router.post("/upload/photo")
+async def upload_photo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(deps.require_driver)
+):
+    """Accepts a multipart image upload, saves to disk, returns its public URL."""
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type: {file.content_type}")
+
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 10 MB.")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "jpg"
+    filename = f"{uuid.uuid4().hex}.{ext}"
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    save_path = os.path.join(UPLOAD_DIR, filename)
+
+    with open(save_path, "wb") as f:
+        f.write(contents)
+
+    return {"photo_url": f"/static/uploads/{filename}"}
 
 @router.post("/trips/{trip_id}/issues", response_model=IssueReportRead)
 def report_issue(

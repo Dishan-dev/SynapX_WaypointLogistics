@@ -73,6 +73,37 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Upload a file (multipart/form-data). Do NOT set Content-Type manually —
+ * the browser must set it so the boundary is included correctly.
+ */
+export async function apiFetchUpload<T>(path: string, formData: FormData): Promise<T> {
+  const token = getToken();
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const endpoint = `api/v1${normalizedPath}`;
+
+  const res = await fetchWithFallback(endpoint, {
+    method: "POST",
+    body: formData,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!res.ok) {
+    let errorMsg = `HTTP Error ${res.status}`;
+    try {
+      const errorData = await res.json();
+      errorMsg = errorData.detail || JSON.stringify(errorData);
+    } catch {
+      errorMsg = (await res.text()) || errorMsg;
+    }
+    throw new ApiError(errorMsg);
+  }
+
+  return res.json();
+}
+
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getToken();
   

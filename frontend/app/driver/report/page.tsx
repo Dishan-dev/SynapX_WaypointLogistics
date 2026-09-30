@@ -7,7 +7,7 @@ import {
   Signal, BatteryFull, Store, DoorClosed, PackageX,
   Ellipsis, Check, Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiFetchUpload } from "@/lib/api";
 
 export default function ReportProblemPage() {
   const router = useRouter();
@@ -18,6 +18,50 @@ export default function ReportProblemPage() {
   const [currentStop, setCurrentStop] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null); // local preview
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);          // server URL
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError("Photo is too large (max 10 MB).");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    // Show local preview immediately
+    const objectUrl = URL.createObjectURL(file);
+    setPhotoDataUrl(objectUrl);
+    setUploadError(null);
+    setUploadingPhoto(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const result = await apiFetchUpload<{ photo_url: string }>("/driver/upload/photo", formData);
+      setPhotoUrl(result.photo_url);
+    } catch (err: any) {
+      setUploadError(err?.message || "Upload failed. Please try again.");
+      setPhotoDataUrl(null);
+      setPhotoUrl(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const removePhoto = () => {
+    if (photoDataUrl) URL.revokeObjectURL(photoDataUrl);
+    setPhotoDataUrl(null);
+    setPhotoUrl(null);
+    setUploadError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
 
   const issues = [
     { label: "Outlet closed", icon: Store, backendType: "customer_unavailable" },
@@ -63,7 +107,7 @@ export default function ReportProblemPage() {
           stop_id: currentStop ? currentStop.id : null,
           issue_type: issueConfig.backendType,
           description: notes || selectedIssue,
-          photo_url: null
+          photo_url: photoUrl   // server-side path, not base64
         })
       });
       router.push("/driver/trip");
@@ -164,23 +208,70 @@ export default function ReportProblemPage() {
           />
         </div>
 
-        {/* Secondary action */}
-        <button 
-          className="w-full flex justify-center items-center h-[40px] rounded-md mt-1"
-          style={{ border: "1px solid #E5E5E2", backgroundColor: "#FFFFFF" }}
-        >
-          <span className="font-semibold text-[13px]" style={{ color: "#171A1F" }}>Add photo +</span>
-        </button>
+        {/* Hidden file input */}
+        <input 
+          type="file" 
+          accept="image/*" 
+          capture="environment" 
+          ref={fileInputRef} 
+          className="hidden" 
+          onChange={handlePhotoUpload} 
+        />
+
+        {/* Secondary action / Photo preview */}
+        {uploadError && (
+          <p className="text-red-500 text-[12px] font-medium mt-1">{uploadError}</p>
+        )}
+
+        {photoDataUrl ? (
+          <div className="flex flex-col gap-2 mt-1">
+            <label className="font-semibold text-[12px]" style={{ color: "#12202E" }}>
+              {uploadingPhoto ? "Uploading…" : "Attached photo"}
+            </label>
+            <div className="relative w-full h-32 rounded-md overflow-hidden border border-[#E0E0E0]">
+              <img src={photoDataUrl} alt="Attached" className="object-cover w-full h-full" />
+              {/* Uploading overlay */}
+              {uploadingPhoto && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                  <svg className="animate-spin h-7 w-7 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                  </svg>
+                </div>
+              )}
+              {/* Uploaded badge */}
+              {!uploadingPhoto && photoUrl && (
+                <div className="absolute bottom-2 left-2 bg-green-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                  ✓ Uploaded
+                </div>
+              )}
+              <button
+                onClick={removePhoto}
+                className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full flex justify-center items-center h-[40px] rounded-md mt-1"
+            style={{ border: "1px solid #E5E5E2", backgroundColor: "#FFFFFF" }}
+          >
+            <span className="font-semibold text-[13px]" style={{ color: "#171A1F" }}>Add photo +</span>
+          </button>
+        )}
 
         {/* Primary action */}
         <div className="w-full mt-1">
-          <button 
+          <button
             onClick={handleSubmit}
-            disabled={submitting || !activeTrip}
+            disabled={submitting || !activeTrip || uploadingPhoto}
             className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
             style={{ backgroundColor: "#092C4C" }}
           >
-            {submitting ? "Submitting..." : "Submit report"}
+            {submitting ? "Submitting..." : uploadingPhoto ? "Waiting for photo…" : "Submit report"}
           </button>
         </div>
       </div>
