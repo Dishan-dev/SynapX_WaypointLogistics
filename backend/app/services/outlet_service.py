@@ -29,9 +29,6 @@ class OutletService:
         if not settings:
             settings = OutletSettings(
                 outlet_id=outlet.id,
-                store_manager="Sarah Jenkins · MGR-88",
-                contact_phone="+94 11 234 5678",
-                emergency_contact="Kamal S. (Backroom Lead) · ext 8802",
                 parking="No restrictions",
                 driver_check_in_call=True,
                 share_dock_gate_code=True,
@@ -115,8 +112,8 @@ class OutletService:
         outlet = cls._find_outlet(db, outlet_id_or_code)
         settings = cls._get_or_create_settings(db, outlet)
 
-        settings.contact_phone = "+94 11 234 5678"
-        settings.emergency_contact = "Kamal S. (Backroom Lead) · ext 8802"
+        settings.contact_phone = None
+        settings.emergency_contact = None
         settings.driver_check_in_call = True
         settings.share_dock_gate_code = True
         settings.email_alerts_issues = True

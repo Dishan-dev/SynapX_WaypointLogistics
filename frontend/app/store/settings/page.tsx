@@ -194,6 +194,7 @@ export default function OutletSettingsPage() {
             <Label className="text-xs md:text-sm font-medium text-muted-foreground">Store manager</Label>
             <Input
               value={settings.storeManager}
+              placeholder="Not set"
               disabled
               className="bg-muted/40 text-foreground font-medium h-10 cursor-not-allowed"
             />

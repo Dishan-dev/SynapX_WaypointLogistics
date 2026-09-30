@@ -11,9 +11,9 @@ class OutletSettings(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     outlet_id = Column(Integer, ForeignKey("outlets.id"), unique=True, nullable=False, index=True)
-    store_manager = Column(String(255), default="Sarah Jenkins · MGR-88", nullable=False)
-    contact_phone = Column(String(50), default="+94 11 234 5678", nullable=False)
-    emergency_contact = Column(String(255), default="Kamal S. (Backroom Lead) · ext 8802", nullable=False)
+    store_manager = Column(String(255), nullable=True)
+    contact_phone = Column(String(50), nullable=True)
+    emergency_contact = Column(String(255), nullable=True)
     parking = Column(String(100), default="No restrictions", nullable=False)
     driver_check_in_call = Column(Boolean, default=True, nullable=False)
     share_dock_gate_code = Column(Boolean, default=True, nullable=False)

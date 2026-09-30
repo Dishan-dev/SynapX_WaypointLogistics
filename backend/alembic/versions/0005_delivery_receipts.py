@@ -50,9 +50,11 @@ def upgrade() -> None:
         'outlet_settings',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('outlet_id', sa.Integer(), nullable=False),
-        sa.Column('store_manager', sa.String(length=255), nullable=False, server_default='Sarah Jenkins · MGR-88'),
-        sa.Column('contact_phone', sa.String(length=50), nullable=False, server_default='+94 11 234 5678'),
-        sa.Column('emergency_contact', sa.String(length=255), nullable=False, server_default='Kamal S. (Backroom Lead) · ext 8802'),
+        # Outlet-specific contact details: nullable with no default, so an outlet that hasn't
+        # set them shows a UI placeholder instead of the same made-up person for every outlet.
+        sa.Column('store_manager', sa.String(length=255), nullable=True),
+        sa.Column('contact_phone', sa.String(length=50), nullable=True),
+        sa.Column('emergency_contact', sa.String(length=255), nullable=True),
         sa.Column('parking', sa.String(length=100), nullable=False, server_default='No restrictions'),
         sa.Column('driver_check_in_call', sa.Boolean(), nullable=False, server_default=sa.text('true')),
         sa.Column('share_dock_gate_code', sa.Boolean(), nullable=False, server_default=sa.text('true')),

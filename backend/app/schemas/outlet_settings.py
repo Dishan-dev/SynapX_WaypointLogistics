@@ -10,9 +10,9 @@ class OutletSettingsRead(BaseModel):
     brand: str
     district: str
     serving_depot: str
-    store_manager: str
-    contact_phone: str
-    emergency_contact: str
+    store_manager: Optional[str] = None
+    contact_phone: Optional[str] = None
+    emergency_contact: Optional[str] = None
     window_start: str
     window_end: str
     dock_type: str

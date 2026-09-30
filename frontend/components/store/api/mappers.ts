@@ -143,9 +143,9 @@ export interface ApiOutletSettings {
   brand: string;
   district: string;
   serving_depot: string;
-  store_manager: string;
-  contact_phone: string;
-  emergency_contact: string;
+  store_manager: string | null;
+  contact_phone: string | null;
+  emergency_contact: string | null;
   window_start: string;
   window_end: string;
   dock_type: string;
@@ -167,9 +167,10 @@ export function toOutletSettings(api: ApiOutletSettings) {
     brand: api.brand,
     district: api.district,
     servingDepot: api.serving_depot,
-    storeManager: api.store_manager,
-    contactPhone: api.contact_phone,
-    emergencyContact: api.emergency_contact,
+    // Unset contact details come back as null; "" lets the inputs show their placeholders.
+    storeManager: api.store_manager ?? "",
+    contactPhone: api.contact_phone ?? "",
+    emergencyContact: api.emergency_contact ?? "",
     windowStart: api.window_start,
     windowEnd: api.window_end,
     dockType: api.dock_type,

@@ -63,6 +63,7 @@ def test_reset_outlet_settings(client, sample_outlet):
     res = client.post(f"/api/v1/outlets/{sample_outlet.code}/settings/reset")
     assert res.status_code == 200, res.text
     data = res.json()
-    assert data["contact_phone"] == "+94 11 234 5678"
+    assert data["contact_phone"] is None
+    assert data["emergency_contact"] is None
     assert data["driver_check_in_call"] is True
     assert data["sms_alerts_priority"] is False
