@@ -4,6 +4,8 @@ from app.models.inventory import InventoryItem, Warehouse
 from app.models.shipment import Shipment, DispatchTrip
 from app.models.fleet import Vehicle, DriverProfile
 from app.models.allocation import Allocation
+from app.models.reference import Outlet, CalendarDay
+from app.models.notification import Notification
 
 __all__ = [
     "User",
@@ -16,4 +18,7 @@ __all__ = [
     "Vehicle",
     "DriverProfile",
     "Allocation",
+    "Outlet",
+    "CalendarDay",
+    "Notification",
 ]
