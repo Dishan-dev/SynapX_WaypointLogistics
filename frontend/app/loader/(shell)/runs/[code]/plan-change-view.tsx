@@ -74,9 +74,9 @@ export function PlanChangeView({
             {loaderInitials}
           </span>
           <span className="text-sm font-medium text-foreground">Acknowledging as {loaderName}</span>
-          {/* TODO(L2): open Sanduni's switch-user flow once the shell exposes it. */}
+          {/* Sign-in ends the open session for reason=switch_user, then returns here. */}
           <Link
-            href="/loader/sign-in"
+            href={switchUserHref(run.code)}
             className="ml-2 flex min-h-12 items-center rounded-md px-1.5 text-sm font-semibold text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             Switch
@@ -205,6 +205,12 @@ export function PlanChangeView({
       </div>
     </LoaderScreen>
   );
+}
+
+/** Sign in as someone else, then come back to this run's takeover. */
+function switchUserHref(runCode: string): string {
+  const next = `/loader/runs/${encodeURIComponent(runCode)}`;
+  return `/loader/sign-in?reason=switch_user&next=${encodeURIComponent(next)}`;
 }
 
 /** A row in a diff group. A new order says where it goes instead of a status. */
