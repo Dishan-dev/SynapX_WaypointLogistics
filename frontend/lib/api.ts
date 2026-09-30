@@ -2,6 +2,7 @@
  * Resilient API client for Waypoint Logistics
  * Automatically resolves between port 8000 (uvicorn default) and port 5000 (custom port)
  */
+import { getToken } from "./auth";
 
 const CANDIDATE_API_URLS = [
   process.env.NEXT_PUBLIC_API_URL,
@@ -63,4 +64,42 @@ export async function fetchWithFallback(
   }
 
   throw lastError || new Error("Failed to connect to backend on either port 8000 or 5000");
+}
+
+export class ApiError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getToken();
+  
+  // ensure path starts with /
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  // attach api/v1 prefix as fetchWithFallback takes the whole endpoint
+  const endpoint = `api/v1${normalizedPath}`;
+
+  const res = await fetchWithFallback(endpoint, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options?.headers,
+    },
+  });
+  
+  if (!res.ok) {
+    let errorMsg = `HTTP Error ${res.status}`;
+    try {
+      const errorData = await res.json();
+      errorMsg = errorData.detail || JSON.stringify(errorData);
+    } catch {
+      errorMsg = await res.text() || errorMsg;
+    }
+    throw new ApiError(errorMsg);
+  }
+  
+  return res.json();
 }

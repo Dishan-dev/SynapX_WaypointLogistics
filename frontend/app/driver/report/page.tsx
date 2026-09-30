@@ -1,21 +1,77 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Signal, BatteryFull, Store, DoorClosed, PackageX,
-  Ellipsis, Check, Map, Home, TriangleAlert, Layers
+  Ellipsis, Check, Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 export default function ReportProblemPage() {
+  const router = useRouter();
+  
   const [selectedIssue, setSelectedIssue] = useState("Outlet closed");
+  const [notes, setNotes] = useState("");
+  const [activeTrip, setActiveTrip] = useState<any>(null);
+  const [currentStop, setCurrentStop] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
   const issues = [
-    { label: "Outlet closed", icon: Store },
-    { label: "Access denied", icon: DoorClosed },
-    { label: "Order mismatch", icon: PackageX },
-    { label: "Other", icon: Ellipsis },
+    { label: "Outlet closed", icon: Store, backendType: "customer_unavailable" },
+    { label: "Access denied", icon: DoorClosed, backendType: "customer_unavailable" },
+    { label: "Order mismatch", icon: PackageX, backendType: "damaged_goods" },
+    { label: "Other", icon: Ellipsis, backendType: "other" },
   ];
+
+  useEffect(() => {
+    async function loadActiveTrip() {
+      try {
+        const trips = await apiFetch<any[]>("/driver/trips/today");
+        const startedTrip = trips.find(t => t.status === "STARTED");
+        
+        if (startedTrip) {
+          const detail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
+          setActiveTrip(detail);
+          
+          const pendingStops = detail.stops?.filter((s: any) => s.status === 'PENDING') || [];
+          if (pendingStops.length > 0) {
+            setCurrentStop(pendingStops[0]);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load active trip:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadActiveTrip();
+  }, []);
+
+  async function handleSubmit() {
+    if (!activeTrip) return;
+    setSubmitting(true);
+    
+    const issueConfig = issues.find(i => i.label === selectedIssue) || issues[3];
+
+    try {
+      await apiFetch(`/driver/trips/${activeTrip.id}/issues`, {
+        method: "POST",
+        body: JSON.stringify({
+          stop_id: currentStop ? currentStop.id : null,
+          issue_type: issueConfig.backendType,
+          description: notes || selectedIssue,
+          photo_url: null
+        })
+      });
+      router.push("/driver/trip");
+    } catch (error) {
+      console.error("Failed to submit issue:", error);
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col font-sans" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
@@ -42,7 +98,7 @@ export default function ReportProblemPage() {
               Report a problem
             </h1>
             <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              Trip R-1042 · Stop 2
+              {loading ? "..." : activeTrip ? `Trip ${activeTrip.id} ${currentStop ? `· Stop ${currentStop.sequence}` : ''}` : "No Active Trip"}
             </p>
           </div>
         </div>
@@ -100,6 +156,8 @@ export default function ReportProblemPage() {
         <div className="flex flex-col gap-1 w-full mt-1">
           <label className="font-semibold text-[12px]" style={{ color: "#12202E" }}>Optional note</label>
           <textarea 
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
             className="w-full h-[120px] p-4 rounded bg-white outline-none resize-none font-normal text-[16px]"
             style={{ border: "1px solid #E0E0E0", color: "#4F4F4F" }}
             placeholder="Add details for dispatch…"
@@ -115,14 +173,16 @@ export default function ReportProblemPage() {
         </button>
 
         {/* Primary action */}
-        <Link href="/driver" className="w-full mt-1">
+        <div className="w-full mt-1">
           <button 
-            className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
+            onClick={handleSubmit}
+            disabled={submitting || !activeTrip}
+            className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
             style={{ backgroundColor: "#092C4C" }}
           >
-            Submit report
+            {submitting ? "Submitting..." : "Submit report"}
           </button>
-        </Link>
+        </div>
       </div>
 
       {/* Bottom Nav */}
@@ -135,7 +195,7 @@ export default function ReportProblemPage() {
           <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Home</span>
         </Link>
         <Link href="/driver/trip" className="flex flex-col items-center gap-1 w-[72px]">
-          <Map size={22} color="#8793A0" />
+          <MapIcon size={22} color="#8793A0" />
           <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Map</span>
         </Link>
         <Link href="/driver/report" className="flex flex-col items-center gap-1 w-[72px]">

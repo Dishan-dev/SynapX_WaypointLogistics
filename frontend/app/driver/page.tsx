@@ -1,12 +1,51 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   MapPin, Signal, BatteryFull, Map, Home, TriangleAlert, Layers, User
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+
+interface UserProfile {
+  id: number;
+  full_name: string;
+  email: string;
+  role: string;
+}
+
+interface DriverTripSummary {
+  id: number;
+  dispatch_trip_id: number;
+  status: string;
+  assigned_date: string;
+}
 
 export default function DriverDashboard() {
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [trips, setTrips] = useState<DriverTripSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadDashboardData() {
+      try {
+        const [profileData, tripsData] = await Promise.all([
+          apiFetch<UserProfile>("/driver/me"),
+          apiFetch<DriverTripSummary[]>("/driver/trips/today"),
+        ]);
+        setProfile(profileData);
+        setTrips(tripsData);
+      } catch (error) {
+        console.error("Failed to load dashboard data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadDashboardData();
+  }, []);
+
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
   return (
     <div className="min-h-screen flex flex-col font-sans" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
       {/* Header */}
@@ -28,10 +67,10 @@ export default function DriverDashboard() {
         <div className="flex px-5 py-2.5 items-center justify-between w-full">
           <div className="flex flex-col gap-0.5">
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
-              Today — Tue, Sep 29
+              Today — {today}
             </h1>
             <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              Good morning, Nimal · VEH014
+              {loading ? "Loading..." : `Good morning, ${profile?.full_name?.split(' ')[0] || 'Driver'} · DRV-${profile?.id?.toString().padStart(4, '0') || '0000'}`}
             </p>
           </div>
           <Link href="/driver/profile">
@@ -44,85 +83,106 @@ export default function DriverDashboard() {
 
       {/* Trips content */}
       <div className="flex flex-col flex-1 px-5 pt-5 pb-24 gap-4">
-        {/* Active Trip Card */}
-        <div 
-          className="flex flex-col p-4 gap-2.5 rounded-xl"
-          style={{ backgroundColor: "#EAF2FF", border: "2px solid #2167D5" }}
-        >
-          {/* Trip Header */}
-          <div className="flex justify-between items-start w-full">
-            <div className="flex flex-col gap-0.5">
-              <span className="font-bold text-[24px]" style={{ color: "#0B2743" }}>Trip R-1042</span>
-              <span className="font-semibold text-[12px]" style={{ color: "#5D6A78" }}>VEH014 · 4 stops to deliver</span>
-            </div>
-            <div className="flex items-center px-2 py-1 rounded-full bg-[#FFF4D6]">
-              <span className="font-bold text-[10px]" style={{ color: "#A85D00" }}>Not started</span>
-            </div>
-          </div>
+        
+        {loading ? (
+          <div className="text-center py-10 text-[#5D6A78] text-sm font-medium">Loading your trips...</div>
+        ) : trips.length === 0 ? (
+          <div className="text-center py-10 text-[#5D6A78] text-sm font-medium">No trips assigned for today.</div>
+        ) : (
+          trips.map((trip, index) => {
+            const isActive = trip.status === "STARTED" || (index === 0 && trip.status === "ASSIGNED");
+            
+            if (isActive) {
+              return (
+                <div 
+                  key={trip.id}
+                  className="flex flex-col p-4 gap-2.5 rounded-xl"
+                  style={{ backgroundColor: "#EAF2FF", border: "2px solid #2167D5" }}
+                >
+                  {/* Trip Header */}
+                  <div className="flex justify-between items-start w-full">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-bold text-[24px]" style={{ color: "#0B2743" }}>Trip R-{trip.id}</span>
+                      <span className="font-semibold text-[12px]" style={{ color: "#5D6A78" }}>Dispatch #{trip.dispatch_trip_id}</span>
+                    </div>
+                    <div className="flex items-center px-2 py-1 rounded-full bg-[#FFF4D6]">
+                      <span className="font-bold text-[10px]" style={{ color: "#A85D00" }}>{trip.status.replace('_', ' ')}</span>
+                    </div>
+                  </div>
 
-          {/* Trip tags */}
-          <div className="flex items-center gap-2 mt-1">
-            <div className="flex items-center px-2.5 py-1.5 rounded-full bg-[#E8F6EF]">
-              <span className="font-bold text-[10px]" style={{ color: "#18794E" }}>Ambient</span>
-            </div>
-            <div className="flex items-center px-2.5 py-1.5 rounded-full bg-[#FFF4D6]">
-              <span className="font-bold text-[10px]" style={{ color: "#A85D00" }}>Depart by 03:45</span>
-            </div>
-          </div>
+                  {/* Trip tags */}
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="flex items-center px-2.5 py-1.5 rounded-full bg-[#E8F6EF]">
+                      <span className="font-bold text-[10px]" style={{ color: "#18794E" }}>Delivery</span>
+                    </div>
+                  </div>
 
-          {/* Region */}
-          <div className="flex items-center gap-2 mt-1">
-            <MapPin size={17} color="#12202E" />
-            <span className="font-semibold text-[14px]" style={{ color: "#12202E" }}>Colombo & Gampaha</span>
-          </div>
+                  {/* Region */}
+                  <div className="flex items-center gap-2 mt-1">
+                    <MapPin size={17} color="#12202E" />
+                    <span className="font-semibold text-[14px]" style={{ color: "#12202E" }}>Assigned Route</span>
+                  </div>
 
-          {/* Action */}
-          <Link href="/driver/trip/TRIP-1042" className="mt-2">
-            <button 
-              className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
-              style={{ backgroundColor: "#092C4C" }}
-            >
-              Open Trip R-1042
-            </button>
-          </Link>
-        </div>
+                  {/* Action */}
+                  <Link href={`/driver/trip/${trip.id}`} className="mt-2">
+                    <button 
+                      className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
+                      style={{ backgroundColor: "#092C4C" }}
+                    >
+                      Open Trip R-{trip.id}
+                    </button>
+                  </Link>
+                </div>
+              );
+            } else {
+              return (
+                <div 
+                  key={trip.id}
+                  className="flex flex-col p-4 gap-2.5 rounded-xl bg-white"
+                  style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
+                >
+                  {/* Trip Header */}
+                  <div className="flex justify-between items-start w-full mb-1">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>Trip R-{trip.id}</span>
+                      <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Status · {trip.status}</span>
+                    </div>
+                    <div className="flex items-center px-2 py-1 rounded-full bg-[#E9EEF3]">
+                      <span className="font-bold text-[10px]" style={{ color: "#5D6A78" }}>Scheduled</span>
+                    </div>
+                  </div>
 
-        {/* Scheduled Trip Card */}
-        <div 
-          className="flex flex-col p-4 gap-2.5 rounded-xl bg-white"
-          style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
-        >
-          {/* Trip Header */}
-          <div className="flex justify-between items-start w-full mb-1">
-            <div className="flex flex-col gap-0.5">
-              <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>Trip R-1043</span>
-              <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Scheduled · 13:00</span>
-            </div>
-            <div className="flex items-center px-2 py-1 rounded-full bg-[#E9EEF3]">
-              <span className="font-bold text-[10px]" style={{ color: "#5D6A78" }}>Later today</span>
-            </div>
-          </div>
-
-          <div className="flex justify-between items-baseline w-full">
-            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Stops</span>
-            <span className="font-bold text-[12px]" style={{ color: "#5D6A78" }}>3 stops</span>
-          </div>
-          
-          <div className="flex justify-between items-baseline w-full mt-[-2px]">
-            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Load type</span>
-            <span className="font-bold text-[12px]" style={{ color: "#5D6A78" }}>Style</span>
-          </div>
-        </div>
+                  <div className="flex justify-between items-baseline w-full mt-[-2px]">
+                    <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Dispatch Ref</span>
+                    <span className="font-bold text-[12px]" style={{ color: "#5D6A78" }}>#{trip.dispatch_trip_id}</span>
+                  </div>
+                  
+                  {/* Action */}
+                  <Link href={`/driver/trip/${trip.id}`} className="mt-2">
+                    <button 
+                      className="w-full flex justify-center items-center h-[40px] rounded-lg text-[#092C4C] font-bold text-[14px]"
+                      style={{ backgroundColor: "#F2F5F8" }}
+                    >
+                      View Details
+                    </button>
+                  </Link>
+                </div>
+              );
+            }
+          })
+        )}
 
         {/* Shift Summary */}
         <div className="flex w-full gap-2.5 mt-2">
           <div className="flex-1 flex flex-col p-3.5 rounded-xl gap-1" style={{ backgroundColor: "#0B2743" }}>
-            <span className="font-bold text-[22px] text-white">7</span>
-            <span className="font-normal text-[12px]" style={{ color: "rgba(255, 255, 255, 0.72)" }}>Stops today</span>
+            <span className="font-bold text-[22px] text-white">{loading ? "-" : trips.length}</span>
+            <span className="font-normal text-[12px]" style={{ color: "rgba(255, 255, 255, 0.72)" }}>Trips today</span>
           </div>
           <div className="flex-1 flex flex-col p-3.5 rounded-xl gap-1 bg-white" style={{ border: "1px solid #D9E1E8" }}>
-            <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>2</span>
-            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Trips assigned</span>
+            <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>
+              {loading ? "-" : trips.filter(t => t.status === "COMPLETED").length}
+            </span>
+            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Completed</span>
           </div>
         </div>
       </div>

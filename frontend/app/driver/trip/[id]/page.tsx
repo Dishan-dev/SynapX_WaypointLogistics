@@ -1,13 +1,60 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChevronLeft, Signal, BatteryFull, CalendarClock,
   ClipboardCheck, Map, Home, TriangleAlert, Layers
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
-export default function TripDetailsPage() {
+interface DeliveryStop {
+  id: number;
+  sequence: number;
+  address: string;
+  customer_name: string;
+  status: string;
+}
+
+interface TripDetail {
+  id: number;
+  dispatch_trip_id: number;
+  status: string;
+  stops: DeliveryStop[];
+}
+
+export default function TripDetailsPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const [trip, setTrip] = useState<TripDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    async function loadTrip() {
+      try {
+        const data = await apiFetch<TripDetail>(`/driver/trips/${params.id}`);
+        setTrip(data);
+      } catch (error) {
+        console.error("Failed to load trip details:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadTrip();
+  }, [params.id]);
+
+  async function handleStartTrip() {
+    setStarting(true);
+    try {
+      await apiFetch(`/driver/trips/${params.id}/start`, { method: "POST" });
+      router.push(`/driver/trip`); // Navigates to active map view
+    } catch (error) {
+      console.error("Failed to start trip:", error);
+      setStarting(false);
+    }
+  }
+
   return (
     <div className="min-h-screen flex flex-col font-sans" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
       {/* Header */}
@@ -32,10 +79,10 @@ export default function TripDetailsPage() {
           </Link>
           <div className="flex flex-col gap-0.5">
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
-              Trip R-1042
+              Trip R-{params.id}
             </h1>
             <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              VEH014 · 4 stops · Ambient
+              {loading ? "Loading..." : `${trip?.stops?.length || 0} stops · Delivery`}
             </p>
           </div>
         </div>
@@ -43,129 +90,92 @@ export default function TripDetailsPage() {
 
       {/* Overview content */}
       <div className="flex flex-col flex-1 px-5 pt-[18px] pb-24 gap-4">
-        {/* Schedule metrics */}
-        <div className="flex w-full gap-2.5">
-          <div 
-            className="flex-1 flex flex-col p-3.5 rounded-xl gap-2.5 bg-white"
-            style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
-          >
-            <span className="font-bold text-[22px]" style={{ color: "#163A5F" }}>03:45</span>
-            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Planned depart</span>
-          </div>
-          <div 
-            className="flex-1 flex flex-col p-3.5 rounded-xl gap-2.5 bg-white"
-            style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
-          >
-            <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>07:55</span>
-            <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Last window closes</span>
-          </div>
-        </div>
-
-        {/* Route title */}
-        <div className="flex justify-between items-center w-full">
-          <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>Stop sequence</span>
-          <div className="flex items-center px-2 py-1 rounded-full bg-[#EAF2FF]">
-            <span className="font-bold text-[10px]" style={{ color: "#2167D5" }}>4 to deliver</span>
-          </div>
-        </div>
-
-        {/* Stop sequence card */}
-        <div 
-          className="flex flex-col p-3.5 gap-2.5 rounded-xl bg-white"
-          style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
-        >
-          {/* Stop 1 */}
-          <div className="flex w-full gap-3">
-            <div className="flex justify-center items-center w-[30px] h-[30px] rounded-full shrink-0" style={{ backgroundColor: "#163A5F" }}>
-              <span className="font-bold text-[12px] text-white">1</span>
-            </div>
-            <div className="flex flex-col w-full pb-3" style={{ borderBottom: "1px solid #D9E1E8" }}>
-              <div className="flex justify-between items-baseline w-full">
-                <span className="font-bold text-[14px]" style={{ color: "#12202E" }}>Green Valley Mart</span>
-                <span className="font-semibold text-[12px]" style={{ color: "#163A5F" }}>06:30–07:00</span>
+        {loading ? (
+          <div className="text-center py-10 text-[#5D6A78] text-sm font-medium">Loading trip details...</div>
+        ) : (
+          <>
+            {/* Schedule metrics */}
+            <div className="flex w-full gap-2.5">
+              <div 
+                className="flex-1 flex flex-col p-3.5 rounded-xl gap-2.5 bg-white"
+                style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
+              >
+                <span className="font-bold text-[22px]" style={{ color: "#163A5F" }}>--:--</span>
+                <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Planned depart</span>
+              </div>
+              <div 
+                className="flex-1 flex flex-col p-3.5 rounded-xl gap-2.5 bg-white"
+                style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
+              >
+                <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>--:--</span>
+                <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Last window closes</span>
               </div>
             </div>
-          </div>
 
-          {/* Stop 2 */}
-          <div className="flex w-full gap-3">
-            <div className="flex justify-center items-center w-[30px] h-[30px] rounded-full shrink-0" style={{ backgroundColor: "#163A5F" }}>
-              <span className="font-bold text-[12px] text-white">2</span>
-            </div>
-            <div className="flex flex-col w-full pb-3" style={{ borderBottom: "1px solid #D9E1E8" }}>
-              <div className="flex justify-between items-baseline w-full">
-                <span className="font-bold text-[14px]" style={{ color: "#12202E" }}>Harbor Fresh Foods</span>
-                <span className="font-semibold text-[12px]" style={{ color: "#163A5F" }}>06:45–07:30</span>
+            {/* Route title */}
+            <div className="flex justify-between items-center w-full">
+              <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>Stop sequence</span>
+              <div className="flex items-center px-2 py-1 rounded-full bg-[#EAF2FF]">
+                <span className="font-bold text-[10px]" style={{ color: "#2167D5" }}>
+                  {trip?.stops?.filter(s => s.status === 'PENDING').length || 0} to deliver
+                </span>
               </div>
             </div>
-          </div>
 
-          {/* Stop 3 */}
-          <div className="flex w-full gap-3">
-            <div className="flex justify-center items-center w-[30px] h-[30px] rounded-full shrink-0" style={{ backgroundColor: "#163A5F" }}>
-              <span className="font-bold text-[12px] text-white">3</span>
+            {/* Stop sequence card */}
+            <div 
+              className="flex flex-col p-3.5 gap-2.5 rounded-xl bg-white"
+              style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
+            >
+              {trip?.stops?.map((stop, index) => (
+                <div key={stop.id} className="flex w-full gap-3">
+                  <div className="flex justify-center items-center w-[30px] h-[30px] rounded-full shrink-0" style={{ backgroundColor: "#163A5F" }}>
+                    <span className="font-bold text-[12px] text-white">{stop.sequence}</span>
+                  </div>
+                  <div className="flex flex-col w-full pb-3" style={{ borderBottom: index < trip.stops.length - 1 ? "1px solid #D9E1E8" : "none" }}>
+                    <div className="flex justify-between items-baseline w-full">
+                      <span className="font-bold text-[14px]" style={{ color: "#12202E" }}>{stop.customer_name}</span>
+                      <span className="font-semibold text-[12px]" style={{ color: "#163A5F" }}>{stop.status}</span>
+                    </div>
+                    <span className="font-normal text-[12px] leading-[1.45em] mt-0.5" style={{ color: "#5D6A78" }}>
+                      {stop.address}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              
+              {trip?.stops?.length === 0 && (
+                <div className="text-center py-4 text-[#5D6A78] text-sm">No stops assigned.</div>
+              )}
             </div>
-            <div className="flex flex-col w-full pb-3" style={{ borderBottom: "1px solid #D9E1E8" }}>
-              <div className="flex justify-between items-baseline w-full">
-                <span className="font-bold text-[14px]" style={{ color: "#12202E" }}>Lakeside Grocers</span>
-                <span className="font-semibold text-[12px]" style={{ color: "#163A5F" }}>07:00–07:45</span>
+
+            {/* Pre-trip check banner */}
+            <div 
+              className="flex p-3 gap-2.5 rounded-xl bg-[#EAF2FF]"
+              style={{ border: "1px solid rgba(33, 103, 213, 0.21)" }}
+            >
+              <ClipboardCheck size={18} color="#2167D5" className="shrink-0 mt-0.5" />
+              <div className="flex flex-col gap-0.5 w-full">
+                <span className="font-bold text-[12px] leading-[1.45em]" style={{ color: "#2167D5" }}>Pre-trip check</span>
+                <span className="font-normal text-[12px] leading-[1.45em]" style={{ color: "#2167D5" }}>
+                  Confirm vehicle is loaded, sealed, and ready to depart.
+                </span>
               </div>
             </div>
-          </div>
 
-          {/* Deferred Stop */}
-          <div className="flex w-full gap-3 opacity-75">
-            <div className="flex justify-center items-center w-[30px] h-[30px] rounded-full bg-[#FFF4D6] shrink-0">
-              <CalendarClock size={15} color="#A85D00" />
+            {/* Action Button */}
+            <div className="w-full">
+              <button 
+                onClick={handleStartTrip}
+                disabled={starting || trip?.status === "COMPLETED"}
+                className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
+                style={{ backgroundColor: "#092C4C" }}
+              >
+                {starting ? "Starting..." : trip?.status === "STARTED" ? "Resume Trip" : "Start trip"}
+              </button>
             </div>
-            <div className="flex flex-col w-full pb-3" style={{ borderBottom: "1px solid #D9E1E8" }}>
-              <div className="flex justify-between items-baseline w-full">
-                <span className="font-bold text-[14px]" style={{ color: "#12202E" }}>Cityview Market</span>
-                <span className="font-semibold text-[12px]" style={{ color: "#A85D00" }}>Deferred</span>
-              </div>
-              <span className="font-normal text-[12px] leading-[1.45em] mt-0.5" style={{ color: "#5D6A78" }}>
-                Removed from today’s run — fleet capacity short. Rescheduled tomorrow.
-              </span>
-            </div>
-          </div>
-
-          {/* Stop 4 */}
-          <div className="flex w-full gap-3">
-            <div className="flex justify-center items-center w-[30px] h-[30px] rounded-full shrink-0" style={{ backgroundColor: "#163A5F" }}>
-              <span className="font-bold text-[12px] text-white">4</span>
-            </div>
-            <div className="flex flex-col w-full pb-3">
-              <div className="flex justify-between items-baseline w-full">
-                <span className="font-bold text-[14px]" style={{ color: "#12202E" }}>Riverside Outlet</span>
-                <span className="font-semibold text-[12px]" style={{ color: "#163A5F" }}>07:20–07:55</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Pre-trip check banner */}
-        <div 
-          className="flex p-3 gap-2.5 rounded-xl bg-[#EAF2FF]"
-          style={{ border: "1px solid rgba(33, 103, 213, 0.21)" }}
-        >
-          <ClipboardCheck size={18} color="#2167D5" className="shrink-0 mt-0.5" />
-          <div className="flex flex-col gap-0.5 w-full">
-            <span className="font-bold text-[12px] leading-[1.45em]" style={{ color: "#2167D5" }}>Pre-trip check</span>
-            <span className="font-normal text-[12px] leading-[1.45em]" style={{ color: "#2167D5" }}>
-              Confirm VEH014 is loaded, sealed, and ready to depart.
-            </span>
-          </div>
-        </div>
-
-        {/* Action Button */}
-        <Link href="/driver/trip" className="w-full">
-          <button 
-            className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
-            style={{ backgroundColor: "#092C4C" }}
-          >
-            Start trip
-          </button>
-        </Link>
+          </>
+        )}
       </div>
 
       {/* SOS Button */}

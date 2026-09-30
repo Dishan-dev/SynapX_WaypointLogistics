@@ -1,24 +1,72 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft, AlertTriangle, HeartPulse, ShieldAlert,
   Car, Flame, MoreHorizontal, MapPin, Camera, Route
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 export default function SOSPage() {
+  const router = useRouter();
+  
   const [selectedType, setSelectedType] = useState("Vehicle Breakdown");
+  const [notes, setNotes] = useState("");
+  const [activeTrip, setActiveTrip] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
   const emergencyTypes = [
     { label: "Accident", icon: AlertTriangle },
     { label: "Medical Emergency", icon: HeartPulse },
     { label: "Safety / Security", icon: ShieldAlert },
     { label: "Vehicle Breakdown", icon: Car },
-    { label: "Dangerous Road", icon: Route }, // Substitute for road-alert
+    { label: "Dangerous Road", icon: Route }, 
     { label: "Vehicle Fire", icon: Flame },
     { label: "Other Emergency", icon: MoreHorizontal }
   ];
+
+  useEffect(() => {
+    async function loadActiveTrip() {
+      try {
+        const trips = await apiFetch<any[]>("/driver/trips/today");
+        const startedTrip = trips.find(t => t.status === "STARTED");
+        
+        if (startedTrip) {
+          const detail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
+          setActiveTrip(detail);
+        }
+      } catch (error) {
+        console.error("Failed to load active trip:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadActiveTrip();
+  }, []);
+
+  async function handleSubmit() {
+    setSubmitting(true);
+    
+    try {
+      await apiFetch("/driver/sos", {
+        method: "POST",
+        body: JSON.stringify({
+          trip_id: activeTrip ? activeTrip.id : null,
+          location: "6.9271, 79.8612",
+          notes: `${selectedType} - ${notes}`
+        })
+      });
+      router.push("/driver/sos/success");
+    } catch (error) {
+      console.error("Failed to submit SOS:", error);
+      setSubmitting(false);
+    }
+  }
+
+  const currentStop = activeTrip?.stops?.find((s: any) => s.status === 'PENDING');
 
   return (
     <div className="h-[100dvh] flex flex-col font-sans overflow-hidden relative" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
@@ -100,19 +148,15 @@ export default function SOSPage() {
             <div className="flex flex-col gap-1">
               <div className="flex items-center gap-2">
                 <span className="font-normal text-[11px]" style={{ color: "#6B7280" }}>Order:</span>
-                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>#ORD-1024</span>
+                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>{loading ? "..." : (activeTrip ? `TRIP-${activeTrip.id}` : "None")}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-normal text-[11px]" style={{ color: "#6B7280" }}>Trip:</span>
-                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>TRIP-024</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="font-normal text-[11px]" style={{ color: "#6B7280" }}>Vehicle:</span>
-                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>WP-AB-1234</span>
+                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>{loading ? "..." : (activeTrip ? `TRIP-${activeTrip.id}` : "None")}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="font-normal text-[11px]" style={{ color: "#6B7280" }}>Stop:</span>
-                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>Outlet #045</span>
+                <span className="font-semibold text-[11px] truncate" style={{ color: "#171A1F" }}>{loading ? "..." : (currentStop ? currentStop.customer_name : "None")}</span>
               </div>
             </div>
           </div>
@@ -143,6 +187,8 @@ export default function SOSPage() {
         <div className="flex flex-col gap-2">
           <span className="font-bold text-[13px]" style={{ color: "#171A1F" }}>Tell us what happened</span>
           <textarea 
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
             className="w-full h-[120px] p-4 rounded bg-white outline-none resize-none font-normal text-[16px]"
             style={{ border: "1px solid #E5E5E2", color: "#4F4F4F" }}
             placeholder="Briefly describe the emergency..."
@@ -166,14 +212,14 @@ export default function SOSPage() {
         className="flex flex-col p-4 gap-3 bg-white shrink-0"
         style={{ borderTop: "1px solid #E5E5E2" }}
       >
-        <Link href="/driver/sos/success">
-          <button 
-            className="w-full flex justify-center items-center py-3.5 rounded-md text-white font-bold text-[15px]"
-            style={{ backgroundColor: "#AD3D3D" }}
-          >
-            SEND EMERGENCY ALERT
-          </button>
-        </Link>
+        <button 
+          onClick={handleSubmit}
+          disabled={submitting || loading}
+          className="w-full flex justify-center items-center py-3.5 rounded-md text-white font-bold text-[15px] disabled:opacity-50"
+          style={{ backgroundColor: "#AD3D3D" }}
+        >
+          {submitting ? "SENDING..." : "SEND EMERGENCY ALERT"}
+        </button>
         <Link href="/driver" className="w-full">
           <button className="w-full flex justify-center items-center py-1">
             <span className="font-semibold text-[14px]" style={{ color: "#6B7280" }}>Cancel</span>

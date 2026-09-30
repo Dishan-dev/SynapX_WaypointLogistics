@@ -1,13 +1,46 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Signal, BatteryFull, Check, CloudCheck, MapPin, CheckCircle2,
-  Map, Home, TriangleAlert, Layers
+  Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 export default function TripSummaryPage() {
+  const [tripDetail, setTripDetail] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const trips = await apiFetch<any[]>("/driver/trips/today");
+        // Prioritize started trip, otherwise take the most recently completed one
+        const targetTrip = trips.find(t => t.status === "STARTED") || trips.find(t => t.status === "COMPLETED");
+        
+        if (targetTrip) {
+          const detail = await apiFetch<any>(`/driver/trips/${targetTrip.id}`);
+          setTripDetail(detail);
+        }
+      } catch (error) {
+        console.error("Failed to load trip summary:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
+  const totalStops = tripDetail?.stops?.length || 0;
+  const processedStops = tripDetail?.stops?.filter((s: any) => s.status === 'COMPLETED').length || 0;
+  // Based on DeliveryStop model and outcome updates:
+  const fullDeliveries = tripDetail?.stops?.filter((s: any) => s.status === 'COMPLETED').length || 0; 
+  const partialDeliveries = 0; // if we tracked partial, we'd count it here
+  const podComplete = processedStops; 
+
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
   return (
     <div className="min-h-screen flex flex-col font-sans relative" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
       
@@ -41,7 +74,7 @@ export default function TripSummaryPage() {
           <div className="flex flex-col items-center gap-[5px] w-full mt-1 text-center">
             <h1 className="font-bold text-[32px]" style={{ color: "#12202E" }}>Trip complete</h1>
             <p className="font-normal text-[14px] leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              Trip R-1042 · Tue, Sep 29
+              {loading ? "..." : tripDetail ? `Trip R-${tripDetail.id} · ${today}` : "No trip data"}
             </p>
           </div>
         </div>
@@ -52,14 +85,18 @@ export default function TripSummaryPage() {
             className="flex-1 flex flex-col p-4 rounded-xl gap-[10px]"
             style={{ backgroundColor: "#E8F6EF", border: "2px solid #18794E" }}
           >
-            <span className="font-bold text-[28px]" style={{ color: "#18794E" }}>4 / 4</span>
+            <span className="font-bold text-[28px]" style={{ color: "#18794E" }}>
+              {loading ? "-" : `${processedStops} / ${totalStops}`}
+            </span>
             <span className="font-normal text-[12px] leading-[1.45em]" style={{ color: "#5D6A78" }}>Stops processed</span>
           </div>
           <div 
             className="flex-1 flex flex-col p-4 rounded-xl gap-[10px]"
             style={{ backgroundColor: "#EAF2FF", border: "2px solid #2167D5" }}
           >
-            <span className="font-bold text-[28px]" style={{ color: "#2167D5" }}>4 / 4</span>
+            <span className="font-bold text-[28px]" style={{ color: "#2167D5" }}>
+              {loading ? "-" : `${podComplete} / ${totalStops}`}
+            </span>
             <span className="font-normal text-[12px] leading-[1.45em]" style={{ color: "#5D6A78" }}>POD complete</span>
           </div>
         </div>
@@ -71,11 +108,11 @@ export default function TripSummaryPage() {
         >
           <div className="flex justify-between items-center py-1.5">
             <span className="font-normal text-[14px]" style={{ color: "#5D6A78" }}>Full deliveries</span>
-            <span className="font-bold text-[18px]" style={{ color: "#18794E" }}>3</span>
+            <span className="font-bold text-[18px]" style={{ color: "#18794E" }}>{loading ? "-" : fullDeliveries}</span>
           </div>
           <div className="flex justify-between items-center py-1.5">
             <span className="font-normal text-[14px]" style={{ color: "#5D6A78" }}>Partial deliveries</span>
-            <span className="font-bold text-[18px]" style={{ color: "#A85D00" }}>1</span>
+            <span className="font-bold text-[18px]" style={{ color: "#A85D00" }}>{loading ? "-" : partialDeliveries}</span>
           </div>
           <div className="flex justify-between items-center py-1.5">
             <span className="font-normal text-[14px]" style={{ color: "#5D6A78" }}>Issues reported</span>
@@ -147,7 +184,7 @@ export default function TripSummaryPage() {
           <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Home</span>
         </Link>
         <Link href="/driver/trip" className="flex flex-col items-center gap-1 w-[72px]">
-          <Map size={22} color="#8793A0" />
+          <MapIcon size={22} color="#8793A0" />
           <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Map</span>
         </Link>
         <Link href="/driver/report" className="flex flex-col items-center gap-1 w-[72px]">

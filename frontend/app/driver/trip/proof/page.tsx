@@ -1,14 +1,76 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Signal, BatteryFull, CloudOff, Camera,
-  Map, Home, TriangleAlert, Layers
+  Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
-export default function ProofOfDeliveryPage() {
+interface DeliveryStop {
+  id: number;
+  sequence: number;
+  address: string;
+  customer_name: string;
+  status: string;
+}
+
+function ProofOfDeliveryContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const stopId = searchParams.get("stop_id");
+
   const [recipientName, setRecipientName] = useState("Malini Perera");
+  const [stop, setStop] = useState<DeliveryStop | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!stopId) return;
+
+    async function loadStopData() {
+      try {
+        const trips = await apiFetch<any[]>("/driver/trips/today");
+        const startedTrip = trips.find(t => t.status === "STARTED");
+        
+        if (startedTrip) {
+          const tripDetail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
+          const foundStop = tripDetail.stops.find((s: any) => s.id.toString() === stopId);
+          if (foundStop) setStop(foundStop);
+        }
+      } catch (error) {
+        console.error("Failed to fetch stop data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    loadStopData();
+  }, [stopId]);
+
+  async function handleSubmit() {
+    if (!stopId) return;
+    setSubmitting(true);
+    
+    try {
+      await apiFetch(`/driver/stops/${stopId}/pod`, {
+        method: "POST",
+        body: JSON.stringify({
+          recipient_name: recipientName,
+          signature_data: "mock-signature.png",
+          photo_url: "mock-photo.jpg",
+          notes: ""
+        })
+      });
+      // The backend pod endpoint automatically completes the stop if successful
+      router.push(`/driver/trip/complete?stop_id=${stopId}`);
+    } catch (error) {
+      console.error("Failed to submit POD:", error);
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col font-sans relative overflow-hidden" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
@@ -34,8 +96,8 @@ export default function ProofOfDeliveryPage() {
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
               Proof of Delivery
             </h1>
-            <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              Order ORD0092308
+            <p className="text-[12px] font-normal leading-[1.45em] truncate max-w-full" style={{ color: "#5D6A78" }}>
+              {loading ? "..." : stop?.customer_name || "Unknown Stop"}
             </p>
           </div>
         </div>
@@ -83,13 +145,7 @@ export default function ProofOfDeliveryPage() {
             <span className="text-[12px] font-bold text-white">✓</span>
           </div>
           <div className="absolute left-[174px] top-[128px] w-[30px] h-[30px] flex justify-center items-center rounded-full border-[3px] border-white shadow-sm z-10" style={{ backgroundColor: "#163A5F" }}>
-            <span className="text-[12px] font-bold text-white">2</span>
-          </div>
-          <div className="absolute left-[270px] top-[76px] w-[30px] h-[30px] flex justify-center items-center rounded-full border-[3px] border-[#163A5F] shadow-sm bg-white z-10">
-            <span className="text-[12px] font-bold" style={{ color: "#163A5F" }}>3</span>
-          </div>
-          <div className="absolute left-[328px] top-[42px] w-[30px] h-[30px] flex justify-center items-center rounded-full border-[3px] border-[#163A5F] shadow-sm bg-white z-10">
-            <span className="text-[12px] font-bold" style={{ color: "#163A5F" }}>4</span>
+            <span className="text-[12px] font-bold text-white">{stop?.sequence || ""}</span>
           </div>
         </div>
       </div>
@@ -107,8 +163,8 @@ export default function ProofOfDeliveryPage() {
         {/* Order summary */}
         <div className="flex justify-between items-center w-full shrink-0">
           <div className="flex flex-col gap-0.5">
-            <span className="font-bold text-[10px]" style={{ color: "#2167D5" }}>FULL DELIVERY</span>
-            <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>ORD0092308</span>
+            <span className="font-bold text-[10px] uppercase" style={{ color: "#2167D5" }}>{stop?.status || "PENDING"}</span>
+            <span className="font-bold text-[18px] truncate max-w-[200px]" style={{ color: "#12202E" }}>{stop?.customer_name || "Unknown"}</span>
           </div>
           <CloudOff size={22} color="#8793A0" />
         </div>
@@ -160,14 +216,14 @@ export default function ProofOfDeliveryPage() {
 
         {/* Primary Action Button */}
         <div className="mt-auto pt-2 shrink-0">
-          <Link href="/driver/trip/complete">
-            <button 
-              className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
-              style={{ backgroundColor: "#092C4C" }}
-            >
-              Submit & complete stop
-            </button>
-          </Link>
+          <button 
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
+            style={{ backgroundColor: "#092C4C" }}
+          >
+            {submitting ? "Saving..." : "Submit & complete stop"}
+          </button>
         </div>
       </div>
 
@@ -181,7 +237,7 @@ export default function ProofOfDeliveryPage() {
           <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Home</span>
         </Link>
         <Link href="/driver/trip" className="flex flex-col items-center gap-1 w-[72px]">
-          <Map size={22} color="#8793A0" />
+          <MapIcon size={22} color="#8793A0" />
           <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Map</span>
         </Link>
         <Link href="/driver/report" className="flex flex-col items-center gap-1 w-[72px]">
@@ -194,5 +250,13 @@ export default function ProofOfDeliveryPage() {
         </Link>
       </div>
     </div>
+  );
+}
+
+export default function ProofOfDeliveryPage() {
+  return (
+    <React.Suspense fallback={<div>Loading...</div>}>
+      <ProofOfDeliveryContent />
+    </React.Suspense>
   );
 }

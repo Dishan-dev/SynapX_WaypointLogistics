@@ -1,14 +1,74 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Signal, BatteryFull, PackageCheck, PackageMinus, TriangleAlert, Check,
-  Map, Home, Layers
+  Map as MapIcon, Home, Layers
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
-export default function DeliveryOutcomePage() {
+interface DeliveryStop {
+  id: number;
+  sequence: number;
+  address: string;
+  customer_name: string;
+  status: string;
+}
+
+function DeliveryOutcomeContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const stopId = searchParams.get("stop_id");
+
   const [selectedOutcome, setSelectedOutcome] = useState("full");
+  const [stop, setStop] = useState<DeliveryStop | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!stopId) return;
+
+    async function loadStopData() {
+      try {
+        const trips = await apiFetch<any[]>("/driver/trips/today");
+        const startedTrip = trips.find(t => t.status === "STARTED");
+        
+        if (startedTrip) {
+          const tripDetail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
+          const foundStop = tripDetail.stops.find((s: any) => s.id.toString() === stopId);
+          if (foundStop) setStop(foundStop);
+        }
+      } catch (error) {
+        console.error("Failed to fetch stop data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    loadStopData();
+  }, [stopId]);
+
+  async function handleContinue() {
+    if (!stopId) return;
+    setSubmitting(true);
+    
+    let backendOutcome = "delivered";
+    if (selectedOutcome === "partial") backendOutcome = "partial";
+    if (selectedOutcome === "issue") backendOutcome = "failed";
+
+    try {
+      await apiFetch(`/driver/stops/${stopId}/outcome`, {
+        method: "PATCH",
+        body: JSON.stringify({ outcome: backendOutcome })
+      });
+      router.push(`/driver/trip/proof?stop_id=${stopId}`);
+    } catch (error) {
+      console.error("Failed to update outcome:", error);
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col font-sans relative overflow-hidden" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
@@ -32,10 +92,10 @@ export default function DeliveryOutcomePage() {
         <div className="flex px-5 py-2.5 items-center w-full">
           <div className="flex flex-col gap-0.5">
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
-              Harbor Fresh Foods
+              {loading ? "Loading..." : stop?.customer_name || "Unknown Stop"}
             </h1>
-            <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              Order ORD0092308
+            <p className="text-[12px] font-normal leading-[1.45em] truncate max-w-full" style={{ color: "#5D6A78" }}>
+              {loading ? "..." : stop?.address}
             </p>
           </div>
         </div>
@@ -70,13 +130,7 @@ export default function DeliveryOutcomePage() {
             <span className="text-[12px] font-bold text-white">✓</span>
           </div>
           <div className="absolute left-[174px] top-[128px] w-[30px] h-[30px] flex justify-center items-center rounded-full border-[3px] border-white shadow-sm z-10" style={{ backgroundColor: "#163A5F" }}>
-            <span className="text-[12px] font-bold text-white">2</span>
-          </div>
-          <div className="absolute left-[270px] top-[76px] w-[30px] h-[30px] flex justify-center items-center rounded-full border-[3px] border-[#163A5F] shadow-sm bg-white z-10">
-            <span className="text-[12px] font-bold" style={{ color: "#163A5F" }}>3</span>
-          </div>
-          <div className="absolute left-[328px] top-[42px] w-[30px] h-[30px] flex justify-center items-center rounded-full border-[3px] border-[#163A5F] shadow-sm bg-white z-10">
-            <span className="text-[12px] font-bold" style={{ color: "#163A5F" }}>4</span>
+            <span className="text-[12px] font-bold text-white">{stop?.sequence || ""}</span>
           </div>
         </div>
       </div>
@@ -194,14 +248,16 @@ export default function DeliveryOutcomePage() {
         </div>
 
         {/* Primary Action Button */}
-        <Link href="/driver/trip/proof" className="mt-auto pt-2">
+        <div className="mt-auto pt-2">
           <button 
-            className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
+            onClick={handleContinue}
+            disabled={submitting}
+            className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
             style={{ backgroundColor: "#092C4C" }}
           >
-            Continue to proof of delivery
+            {submitting ? "Saving..." : "Continue to proof of delivery"}
           </button>
-        </Link>
+        </div>
       </div>
 
       {/* Bottom Nav */}
@@ -214,7 +270,7 @@ export default function DeliveryOutcomePage() {
           <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Home</span>
         </Link>
         <Link href="/driver/trip" className="flex flex-col items-center gap-1 w-[72px]">
-          <Map size={22} color="#163A5F" />
+          <MapIcon size={22} color="#163A5F" />
           <span className="text-[10px] font-medium" style={{ color: "#163A5F" }}>Map</span>
         </Link>
         <Link href="/driver/report" className="flex flex-col items-center gap-1 w-[72px]">
@@ -227,5 +283,13 @@ export default function DeliveryOutcomePage() {
         </Link>
       </div>
     </div>
+  );
+}
+
+export default function DeliveryOutcomePage() {
+  return (
+    <React.Suspense fallback={<div>Loading...</div>}>
+      <DeliveryOutcomeContent />
+    </React.Suspense>
   );
 }

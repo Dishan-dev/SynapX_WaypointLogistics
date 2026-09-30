@@ -1,13 +1,46 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Signal, BatteryFull, User, Truck, Phone, Mail,
-  LogOut, Map, Home, TriangleAlert, Layers, ChevronRight
+  LogOut, Map, Home, TriangleAlert, ChevronRight
 } from "lucide-react";
+import { apiFetch } from "@/lib/api";
+import { clearToken } from "@/lib/auth";
+
+interface UserProfile {
+  id: number;
+  full_name: string;
+  email: string;
+  role: string;
+}
 
 export default function ProfilePage() {
+  const router = useRouter();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadProfile() {
+      try {
+        const data = await apiFetch<UserProfile>("/driver/me");
+        setProfile(data);
+      } catch (error) {
+        console.error("Failed to load profile:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadProfile();
+  }, []);
+
+  function handleLogout() {
+    clearToken();
+    router.push("/driver/login");
+  }
+
   return (
     <div className="min-h-screen flex flex-col font-sans relative" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
       
@@ -55,9 +88,13 @@ export default function ProfilePage() {
               <User size={32} color="#2167D5" />
             </div>
             <div className="flex flex-col gap-1">
-              <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>Amara Silva</span>
+              <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>
+                {loading ? "Loading..." : profile?.full_name || "Unknown Driver"}
+              </span>
               <div className="flex items-center px-2.5 py-0.5 rounded-full w-fit" style={{ backgroundColor: "#F2F5F8" }}>
-                <span className="font-semibold text-[11px]" style={{ color: "#5D6A78" }}>ID: DRV-0012</span>
+                <span className="font-semibold text-[11px]" style={{ color: "#5D6A78" }}>
+                  ID: {loading ? "..." : `DRV-${profile?.id.toString().padStart(4, "0")}`}
+                </span>
               </div>
             </div>
           </div>
@@ -67,11 +104,13 @@ export default function ProfilePage() {
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-3">
               <Phone size={16} color="#8793A0" className="shrink-0" />
-              <span className="font-medium text-[14px]" style={{ color: "#12202E" }}>+94 77 123 4567</span>
+              <span className="font-medium text-[14px]" style={{ color: "#12202E" }}>Not available</span>
             </div>
             <div className="flex items-center gap-3">
               <Mail size={16} color="#8793A0" className="shrink-0" />
-              <span className="font-medium text-[14px]" style={{ color: "#12202E" }}>amara.s@waypoint.com</span>
+              <span className="font-medium text-[14px]" style={{ color: "#12202E" }}>
+                {loading ? "Loading..." : profile?.email || "No email"}
+              </span>
             </div>
           </div>
         </div>
@@ -88,8 +127,8 @@ export default function ProfilePage() {
               <span className="font-bold text-[14px]" style={{ color: "#2167D5" }}>ASSIGNED VEHICLE</span>
             </div>
             <div className="flex flex-col gap-0.5">
-              <span className="font-bold text-[20px]" style={{ color: "#12202E" }}>WP-AB-1234</span>
-              <span className="font-normal text-[14px]" style={{ color: "#5D6A78" }}>Isuzu NQR - Refrigerated Truck</span>
+              <span className="font-bold text-[20px]" style={{ color: "#12202E" }}>Pending</span>
+              <span className="font-normal text-[14px]" style={{ color: "#5D6A78" }}>Awaiting allocation</span>
             </div>
           </div>
         </div>
@@ -108,15 +147,16 @@ export default function ProfilePage() {
         </div>
 
         {/* Logout Action */}
-        <Link href="/driver/login" className="w-full mt-6">
+        <div className="w-full mt-6">
           <button 
+            onClick={handleLogout}
             className="w-full flex justify-center items-center gap-2 h-[55px] rounded-lg bg-white"
             style={{ border: "2px solid #C9363E" }}
           >
             <LogOut size={18} color="#C9363E" />
             <span className="font-bold text-[16px]" style={{ color: "#C9363E" }}>Log out</span>
           </button>
-        </Link>
+        </div>
       </div>
 
       {/* Bottom Nav */}
