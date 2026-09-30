@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import { StoreSidebar } from "@/components/store/store-sidebar";
 import { StoreTopBar } from "@/components/store/store-top-bar";
 import { StoreMobileAppBar } from "@/components/store/store-mobile-app-bar";
@@ -21,6 +22,7 @@ export default function StoreLayout({ children }: LayoutProps<"/store">) {
         {/* Bottom padding on mobile keeps content clear of the fixed bottom nav. */}
         <div className="flex-1 px-4 pt-4 pb-24 md:px-14 md:py-8">{children}</div>
         <StoreBottomNav />
+        <Toaster position="top-center" />
       </SidebarInset>
     </SidebarProvider>
   );

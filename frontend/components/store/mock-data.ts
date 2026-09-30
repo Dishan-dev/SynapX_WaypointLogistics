@@ -231,3 +231,45 @@ export const brandLabels: Record<Brand, string> = {
   style: "Style",
   tech: "Tech",
 };
+
+// ── Depot catalogue (Figma 03b Add Item) — inventory_items + the catalogue columns in contract §2 ──
+
+export type StockLevel = "in_stock" | "low" | "out";
+
+export interface CatalogueItem {
+  sku: string;
+  itemName: string;
+  category: string;
+  temperatureClass: TemperatureClass;
+  unitLabel: string;
+  stock: StockLevel;
+  /** Units left when stock is low. */
+  stockLeft?: number;
+  /** YYYY-MM-DD, when an out-of-stock item is expected back. */
+  restockEta?: string;
+}
+
+export const mockCatalogue: CatalogueItem[] = [
+  { sku: "SKU-014", itemName: "Soft Drinks 1L (12pk)", category: "Beverages · Carbonated", temperatureClass: "chilled", unitLabel: "Cases", stock: "low", stockLeft: 8 },
+  { sku: "SKU-063", itemName: "Greek Yogurt 500g", category: "Dairy", temperatureClass: "chilled", unitLabel: "Cases", stock: "in_stock" },
+  { sku: "SKU-022", itemName: "Oat Milk 1L (6pk)", category: "Beverages · Dairy-free", temperatureClass: "chilled", unitLabel: "Cases", stock: "out", restockEta: "2026-09-30" },
+  { sku: "SKU-070", itemName: "Cheddar Block 250g", category: "Dairy", temperatureClass: "chilled", unitLabel: "Cases", stock: "in_stock" },
+  { sku: "SKU-081", itemName: "Fresh Chicken Breast 1kg", category: "Meat · Poultry", temperatureClass: "chilled", unitLabel: "Crates", stock: "in_stock" },
+  { sku: "SKU-001", itemName: "Bottled Water 500ml", category: "Beverages · Packaged liquids", temperatureClass: "ambient", unitLabel: "Cases", stock: "in_stock" },
+  { sku: "SKU-048", itemName: "Espresso Roast Beans 1kg", category: "Beverages · Coffee", temperatureClass: "ambient", unitLabel: "Bags", stock: "in_stock" },
+  { sku: "SKU-032", itemName: "Paper Cups 8oz (500ct)", category: "Consumables · Disposables", temperatureClass: "ambient", unitLabel: "Boxes", stock: "in_stock" },
+  { sku: "SKU-035", itemName: "Paper Napkins (1000ct)", category: "Consumables · Disposables", temperatureClass: "ambient", unitLabel: "Boxes", stock: "low", stockLeft: 12 },
+  { sku: "SKU-090", itemName: "Basmati Rice 5kg", category: "Grocery · Staples", temperatureClass: "ambient", unitLabel: "Bags", stock: "in_stock" },
+];
+
+export const CATALOGUE_DEPOT = "Peliyagoda Depot";
+export const CATALOGUE_UPDATED_AT = "05:00";
+
+// ── Operating calendar (calendar_days) — Sundays and these dates have no deliveries ──
+
+export const mockHolidays: { date: string; name: string }[] = [
+  { date: "2026-10-01", name: "Poya Day" },
+  { date: "2026-10-26", name: "Poya Day" },
+];
+
+export const OUTLET_UNLOADING = "Rear dock";
