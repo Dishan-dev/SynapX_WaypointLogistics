@@ -83,7 +83,7 @@ export default function DeliveryOutcomePage() {
 
       {/* Bottom Sheet */}
       <div 
-        className="flex flex-col flex-1 bg-white rounded-t-[24px] px-5 pb-5 pt-2.5 gap-[14px] z-20 relative"
+        className="flex flex-col flex-1 bg-white px-5 pb-5 pt-2.5 gap-[14px] z-20 relative"
         style={{ boxShadow: "0px -8px 28px 0px rgba(11, 39, 67, 0.16)", marginTop: "-20px" }}
       >
         {/* Drag Handle */}
