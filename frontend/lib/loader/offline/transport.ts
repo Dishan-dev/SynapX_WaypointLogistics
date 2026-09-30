@@ -605,7 +605,9 @@ function mockServerQueue(): RunQueue {
       runs: group.runs
         .map((card) => {
           const run = mockServerRun(state, card.code);
-          if (!run) return card;
+          // Queue-only runs have no detail on the mock server: keep the alert
+          // text but drop its Open action, which would only reach a dead end.
+          if (!run) return card.alert ? { ...card, alert: { ...card.alert, action: "", href: "" } } : card;
           return {
             ...card,
             status: run.status,
