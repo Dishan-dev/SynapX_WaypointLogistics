@@ -366,6 +366,39 @@ class AcknowledgePlanRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class FlagIssueRequest(BaseModel):
+    """POST /loader/issues (L5): the tablet's FlagActionPayload plus the write
+    fields every tablet write carries.
+
+    units_affected is what the stepper shows; units_total is taken from the
+    order on the server. A flag needs a signed-in loader: loader_issues keeps
+    who reported it, and that column is required.
+    """
+
+    client_action_id: UUID
+    plan_version: int
+    loader_session_id: Optional[int] = None
+    run_code: str
+    order_number: str
+    issue_type: IssueType
+    units_affected: int
+    quick_note_tag: Optional[str] = None
+    note: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class ReleaseRequest(BaseModel):
+    """POST /loader/runs/{code}/release and /release/undo (L6): the write
+    fields only; the run is in the path."""
+
+    client_action_id: UUID
+    plan_version: int
+    loader_session_id: Optional[int] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
 # --- Dev-only simulation payloads ----------------------------------------
 
 

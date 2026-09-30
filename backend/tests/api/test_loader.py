@@ -397,19 +397,12 @@ def test_dev_endpoints_are_not_mounted_in_production(monkeypatch):
             "/runs/{code}/orders/{order_number}/recheck",
             "/runs/{code}/plan/{version}/acknowledge",
             "/runs/{code}/orders/{order_number}/unload",
+            "/issues",
+            "/runs/{code}/release",
+            "/runs/{code}/release/undo",
         }
     finally:
         # Restore the module for the rest of the session.
         monkeypatch.undo()
         importlib.reload(loader_endpoints)
 
-
-def test_the_l5_issue_list_is_not_built_yet(loader_client, db_session):
-    """L2/L3 are built now (test_loader_session.py, test_loader_queue.py); the
-    L5 issue list is still to come, and must not answer until it does."""
-    build_run_021(db_session)
-    db_session.flush()
-
-    for path in ("/issues",):
-        response = loader_client.get(f"{BASE}{path}")
-        assert response.status_code == 404, f"{path} unexpectedly served: {response.text}"

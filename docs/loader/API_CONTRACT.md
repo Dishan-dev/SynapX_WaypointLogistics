@@ -6,22 +6,20 @@ responses. Base path: `/api/v1/loader`.
 What is built now (merged into `loader`):
 
 - **Built — backend endpoints, tested.** Users and sign-in sessions (L2); the
-  queue and its summary (L3); the run read (L4 checklist, with the L7
+  queue and its summary (L3); flag an issue and the issue list (L5); release and
+  undo (L6); the run read (L4 checklist, with the L7
   plan diff and release lock, `released_at` / `released_by` and `loaded_units`);
   check · uncheck · recheck (L4); acknowledge · unload (L7); the issue read (L8);
   both activity feeds (L9); the dev simulation endpoints.
-- **Built — service helpers for the L6 endpoints**, tested, no routes of
-  their own: `release_blockers` / `check_release_allowed` (409 `RELEASE_LOCKED`),
+- **Built — service helpers**, tested, used by the routes above: `release_blockers` / `check_release_allowed` (409 `RELEASE_LOCKED`),
   `check_undo_allowed` (409 `UNDO_WINDOW_EXPIRED`), `release_fields`,
   `plan_updated_at` / `dock_plan_updated_at` — all on `LoaderService`. Each
   proposed endpoint below names the helper it should call.
-- **Proposed — L5, L6.** Sanduni's screens are built against these shapes (the
-  frontend's mock transport stands in for them), but **no backend route exists
-  yet**: flag, issue list, release-summary, release, undo.
+- **Proposed — `GET …/release-summary` only.** No screen calls it yet (the
+  confirm page reads the run), so it is not built.
 
 **Ownership.** Every backend route under `/loader`, and every
-`loader_activities` write, is owned by **Sachintha** — including the L5/L6
-routes still to build. Screens stay with their feature owner (see Page routes).
+`loader_activities` write, is owned by **Sachintha**. Screens stay with their feature owner (see Page routes).
 
 All enum values are the wire values, lowercase with underscores.
 
@@ -588,7 +586,7 @@ shift goes (02:14 published → 02:16 acknowledged → 02:20 …).
 **Writes must log.** An event shows in the Log only if its write adds a
 `loader_activities` row, through `LoaderService.log(...)` in the same
 transaction as the write, with `actor_kind="loader"` and `actor_id` from the
-session. The L5/L6 endpoints need these:
+session. The L5/L6 endpoints write these:
 
 | Endpoint | `event_type` | `order_id` | `message` (Dispatcher's wording) |
 | --- | --- | --- | --- |
@@ -596,9 +594,9 @@ session. The L5/L6 endpoints need these:
 | `POST …/release` (L6) | `run_released` | — | `Ready to depart · Saman Jayawardena` |
 | `POST …/release/undo` (L6) | `run_release_undone` | — | `Ready undone · Saman Jayawardena` |
 
-A replayed `client_action_id` must not log a second row. The Log shows these
-stored messages until a loader wording is added for them in
-`LoaderService._activity_summary`.
+A replayed `client_action_id` logs nothing. In the Log (`summary`), the flag
+shows its stored message; release and undo show the loader's short name, as
+the Change log does: `Ready to depart · Saman J.`, `Ready undone · Saman J.`.
 
 ### `GET /loader/activity` — L9, the dock-wide feed
 
@@ -822,6 +820,96 @@ replaces the server's while the tablet has taps waiting to sync. There is no
 | `ready` | runs in `ready_to_depart` |
 | `plan_updated_at` | `LoaderService.dock_plan_updated_at(db, dock, run_ids)` for the queue's runs; `null` when none has a plan on record |
 
+### `POST /loader/issues` · `GET /loader/issues` — L5 flag and Issues tab
+
+```jsonc
+// POST request: the tablet's FlagActionPayload plus the write fields
+{ "run_code": "RUN-021", "order_number": "ORD0092301",
+  "issue_type": "damaged", "units_affected": 3,
+  "quick_note_tag": "Crushed carton", "note": "",
+  "client_action_id": "…", "plan_version": 3, "loader_session_id": 12 }
+```
+
+Returns the new `IssueDetailRead` (the `GET /loader/issues/{id}` shape).
+
+- **Replay first.** A `client_action_id` already in `loader_issues` returns
+  that issue with `200` and files nothing; the same id on another run or order
+  is `409 CLIENT_ACTION_ID_REUSED`. Then `plan_version` (`409
+  PLAN_VERSION_STALE`) and, like the L4 row writes, `409 PLAN_NOT_ACKNOWLEDGED`
+  while the current plan is unread.
+- **Which rows.** `to_load`, `loaded`, `re_check` or `new`; a row already
+  `flagged`, or `take_off` / `moved`, is `409 INVALID_STATE_TRANSITION`, and so
+  is a run that is `ready_to_depart` or `gated_out` (the checklist is closed).
+- **Needs a signed-in loader.** `loader_issues.reported_by_id` is required, so
+  `loader_session_id` `null` is `422 INVALID_FLAG`; so is `units_affected`
+  outside `0 … units_total`.
+- **What it sets.** `units_total` from the order; `status: "sent"`;
+  `decide_by` = departure − 20 min; the row → `flagged` (its check cleared); the
+  run → `issue_flagged`. The run read's `release_blockers` then carries
+  `issue_waiting` — the release lock, as in the mock server.
+- **Options** the Dispatcher picks from are filed with the issue, the same as
+  the mock server's until the dispatcher module builds its own. The first is
+  the default applied if `decide_by` passes:
+
+| Issue type | Options (default first) |
+| --- | --- |
+| `missing` | Send without it · Hold the vehicle |
+| `short`, `damaged` | Send {total − affected} of {total} · Hold the vehicle |
+| `wont_fit` | Leave the overflow for the next run · Swap to a larger vehicle |
+
+**`GET /loader/issues?dock=<n>&run=<code>`** — every issue on the dock's runs,
+any status, **newest first**, as `IssueDetailRead`. `run` narrows it; a run
+at another dock is `404`, as on the dock-wide activity feed. `dock` is
+required (`422`) and must exist (`404`).
+
+### `POST …/release` · `POST …/release/undo` — L6
+
+Body: `{ "client_action_id", "plan_version", "loader_session_id" }`. Both
+return the run read (`RunDetailRead`).
+
+Order, for both: **replay first** (a `client_action_id` already in
+`run_release_actions` for this run and action returns the run with `200`; on
+the other action or another run it is `409 CLIENT_ACTION_ID_REUSED`), then
+`409 PLAN_VERSION_STALE`.
+
+**`POST /release`** — a run already `ready_to_depart` is a `200` no-op (a
+second tap); `gated_out` is `409 INVALID_STATE_TRANSITION`. Otherwise
+`LoaderService.check_release_allowed(db, run)` refuses it while the run read's
+`release_blockers` lists anything — the unread plan, waiting issues, open
+orders, an order still to take off, re-checks:
+
+```jsonc
+→ 409 { "detail": { "code": "RELEASE_LOCKED",
+                    "message": "RUN-021 cannot be released yet.",
+                    "entity": "DeliveryRun", "entity_id": "RUN-021",
+                    "release_blockers": [ { "code": "unload_pending", "count": 1 },
+                                          { "code": "re_check_pending", "count": 2 } ] } }
+```
+
+Allowed: in one savepoint, `released_at` / `released_by_id` are set and the run
+goes to `ready_to_depart`, a `run_release_actions` row (`release`) keeps the
+`client_action_id`, and the Log gets `run_released`.
+
+**`POST /release/undo`** — `LoaderService.check_undo_allowed(run)`. Undo is
+allowed only while **`status` is `ready_to_depart`** and **within 10 s of
+`released_at`** — the server allows **2 s grace** (12 s in all) so a tap in the
+last second over a slow link still lands.
+
+| Case | Response |
+| --- | --- |
+| inside the window | `200` — back to `loaded`, `released_at` / `released_by_id` cleared (the reads show `null` again), a `run_release_actions` row (`undo`) and `run_release_undone` in the Log |
+| after 12 s | `409 UNDO_WINDOW_EXPIRED`, `detail` carries `released_at` (UTC `Z`) and `window_seconds: 10` |
+| any other status | `409 INVALID_STATE_TRANSITION` — a plan published inside the window has already reopened the run to `loading`, and after `gated_out` it is the Driver's |
+
+`run_release_actions` is append-only because this pair repeats: release → undo
+→ release again is normal, and each is its own action with its own id.
+
+> **Frontend note.** The tablet's `ConflictCode` still has the placeholder
+> `RELEASE_UNDO_EXPIRED`; the server sends `UNDO_WINDOW_EXPIRED`. The outbox
+> files unknown codes as `INVALID_STATE_TRANSITION` (final, not retried), so
+> the undo is refused correctly either way — rename it in `types.ts` /
+> `sync.ts` / the mock to match.
+
 ### Dev-only simulation
 
 Mounted only when `LOADER_DEV_ENDPOINTS=true` **and** `ENVIRONMENT != production`.
@@ -874,6 +962,7 @@ Existing domain handlers, so the envelope matches the rest of the API:
 | 409 | `PLAN_VERSION_STALE` | a write made against a plan version that is no longer current |
 | 409 | `PLAN_NOT_ACKNOWLEDGED` | a row write while the current plan version is unread |
 | 409 | `CLIENT_ACTION_ID_REUSED` | a `client_action_id` sent again for a different action |
+| 422 | `INVALID_FLAG` | `POST /issues` with no signed-in loader, or `units_affected` outside `0 … units_total` (L5) |
 | 422 | `PLAN_VERSION_MISMATCH` | acknowledge body `plan_version` ≠ `{version}` in the path |
 | 409 | `RELEASE_LOCKED` | `POST /release` while `release_blockers` is not empty — the list is in `detail` (L6, from `check_release_allowed`) |
 | 409 | `UNDO_WINDOW_EXPIRED` | `POST /release/undo` more than 10 s (+2 s grace) after `released_at` (L6, from `check_undo_allowed`) |
@@ -885,78 +974,14 @@ Existing domain handlers, so the envelope matches the rest of the API:
 
 ---
 
-## Proposed — L5, L6 (no backend route yet)
+## Proposed — not built yet
 
-> Sanduni's screens are built against these shapes through the mock transport;
-> the routes are Sachintha's to add. Every field exists in the database (no migration
-> needed), and where a rule is already coded the section names the
-> `LoaderService` helper to call rather than re-deriving it.
+### `GET /loader/runs/{code}/release-summary` — L6
 
-### `POST /loader/issues` — L5 flag
-
-```jsonc
-// request
-{ "run_code": "RUN-021", "order_number": "ORD0092301",
-  "issue_type": "damaged", "units_affected": 3,
-  "quick_note_tag": "Crushed carton", "note": "",
-  "client_action_id": "…" }
-```
-
-`units_total` is filled server-side from the order, so the client only sends what
-the stepper shows. Returns the created `IssueDetailRead`. Setting an issue puts
-the run into `issue_flagged` and the row into `flagged`.
-
-`loader_issues.client_action_id` is already there — look it up before inserting
-and return the existing `IssueDetailRead` with 200 if it matches, so a replayed
-offline flag does not file the issue twice.
-
-### `GET /loader/issues` — L5 Issues tab
-
-`?run=RUN-021&status=sent` — a list of `IssueDetailRead`, newest first. The tab
-is not designed yet, so treat the shape as provisional.
-
-### `GET /loader/runs/{code}/release-summary` · `POST …/release` · `POST …/release/undo` — L6
-
-Release is **locked** while the run read's `release_blockers` lists anything
-(`release_locked: true`; see "Release lock" above). That covers the unread plan,
-waiting issues and open orders, plus the two plan-change tasks the older
-`orders_checked < orders_total` rule missed: an order still to take off
-(`take_off` is outside `orders_total`) and re-checks.
-
-**`GET /release-summary`** should carry `release_blockers` in the same
+Not called by any screen yet: the confirm page builds its summary from the run
+read. When it is built it should carry `release_blockers` in the same
 `[{code, count}]` shape (`LoaderService.release_blockers(db, run)`), so the
-screen and the 409 below agree.
-
-**`POST /release`** — call `LoaderService.check_release_allowed(db, run)`
-before writing anything. It raises `409 RELEASE_LOCKED` with the blockers inside
-`detail`:
-
-```jsonc
-→ 409 { "detail": { "code": "RELEASE_LOCKED",
-                    "message": "RUN-021 cannot be released yet.",
-                    "entity": "DeliveryRun", "entity_id": "RUN-021",
-                    "release_blockers": [ { "code": "unload_pending", "count": 1 },
-                                          { "code": "re_check_pending", "count": 2 } ] } }
-```
-
-Allowed: set `released_at` / `released_by_id` and move the run to
-`ready_to_depart`. The reads then send `released_at` / `released_by` (see
-"Released").
-
-**`POST /release/undo`** — call `LoaderService.check_undo_allowed(run)`. Undo is
-allowed only while **`status` is `ready_to_depart`** and **within 10 s of
-`released_at`** — the server allows **2 s grace** (12 s in all) so a tap in the
-last second over a slow link still lands.
-
-| Case | Response |
-| --- | --- |
-| inside the window | allowed — back to `loaded`, and clear `released_at` / `released_by_id` (the reads show `null` again) |
-| after 12 s | `409 UNDO_WINDOW_EXPIRED`, `detail` carries `released_at` (UTC `Z`) and `window_seconds: 10` |
-| any other status | `409 INVALID_STATE_TRANSITION` — a plan published inside the window has already reopened the run to `loading`, and after `gated_out` it is the Driver's |
-
-Both write a row to `run_release_actions` carrying the `client_action_id`. That
-table is append-only precisely because this pair repeats: release → undo →
-release again is normal, and each is its own action with its own id.
+screen and the `409 RELEASE_LOCKED` agree.
 
 ---
 

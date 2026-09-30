@@ -20,7 +20,14 @@ from app.models.delivery_run import (
     RunStopOrder,
     StopStatus,
 )
-from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck
+from app.models.loader_activity import (
+    ActorKind,
+    CheckAction,
+    LoaderActivity,
+    LoadingCheck,
+    ReleaseAction,
+    RunReleaseAction,
+)
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderSession, LoaderUser
 from app.models.order import Order
@@ -109,6 +116,52 @@ class IncorrectPinError(Exception):
         super().__init__(message)
         self.message = message
 
+# Rows a loader can flag (L5): on the plan and not already flagged. take_off
+# and moved are not on this trip any more.
+FLAGGABLE_STATES = {
+    RunOrderState.TO_LOAD,
+    RunOrderState.LOADED,
+    RunOrderState.RE_CHECK,
+    RunOrderState.NEW,
+}
+
+# A flag's decide-by: departure minus 20 minutes (contract, L5/L8).
+DECIDE_BY_LEAD = timedelta(minutes=20)
+
+
+def _issue_options(issue_type: IssueType, affected: int, total: int) -> List[Tuple[str, str, bool]]:
+    """(label, detail, is_default) the Dispatcher picks from, the same as her
+    mock server's, until the dispatcher module builds its own. The default is
+    what the system applies if decide-by passes."""
+    if issue_type == IssueType.MISSING:
+        return [
+            ("Send without it", "Defer it to the next delivery day.", True),
+            ("Hold the vehicle", "Wait for the order to be found.", False),
+        ]
+    if issue_type == IssueType.WONT_FIT:
+        return [
+            ("Leave the overflow for the next run", f"{affected} units wait at the dock.", True),
+            ("Swap to a larger vehicle", "Reload on a bigger truck.", False),
+        ]
+    return [
+        (f"Send {total - affected} of {total}", "Balance on the next delivery day.", True),
+        ("Hold the vehicle", "Wait for replacement stock.", False),
+    ]
+
+
+def _who(actor: Optional[LoaderUser]) -> str:
+    # The stored message is the Dispatcher's wording: the full name.
+    return actor.full_name if actor else "unknown loader"
+
+
+class FlagRequestError(Exception):
+    """POST /loader/issues that cannot be filed as sent: no signed-in loader,
+    or units_affected outside 0..units_total. The endpoint answers 422."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
+
 # Which row states each tablet action may start from. check also clears
 # re_check: the tablet taps the same tile whatever the row says, so a check on a
 # re_check row confirms it exactly as recheck does.
@@ -140,6 +193,13 @@ ACTION_EVENTS = {
 
 # The Log's wording for order events (Figma T1c Change log), by event type.
 # An unload also names where the order went back to: "ORD0092308 unloaded → chiller".
+# The Log's wording for release and undo, followed by the loader's short name
+# (as "Acknowledged · Saman J."). The stored message has the full name.
+RELEASE_SUMMARIES = {
+    "run_released": "Ready to depart",
+    "run_release_undone": "Ready undone",
+}
+
 ORDER_SUMMARIES = {
     "order_checked": "loaded",
     "order_rechecked": "re-checked",
@@ -745,6 +805,9 @@ class LoaderService:
         future types - is shown as stored.
         """
         order_number = row.order.order_number if row.order else None
+        if row.event_type in RELEASE_SUMMARIES:
+            who = row.actor.short_name if row.actor else "unknown loader"
+            return f"{RELEASE_SUMMARIES[row.event_type]} · {who}"
         if row.event_type == "plan_acknowledged":
             # TODO(L2): loader_session_id becomes required; drop "unknown loader".
             return f"Acknowledged · {row.actor.short_name if row.actor else 'unknown loader'}"
@@ -1101,6 +1164,274 @@ class LoaderService:
                 LoaderService.dock_plan_updated_at(db, dock, [run.id for run in runs]) if runs else None
             ),
         )
+
+    # --- L5 flags ---------------------------------------------------------------
+
+    @staticmethod
+    def flag_issue(db: Session, payload: schemas.FlagIssueRequest) -> LoaderIssue:
+        """Flag an order as missing, short, damaged or won't fit (L5).
+
+        Same order as the L4 writes: replay first (the issue already filed
+        under this client_action_id comes back, nothing is filed twice), then
+        the stale plan, then the write in one savepoint. The row goes to
+        flagged, the run to issue_flagged, and release_blockers picks up
+        issue_waiting from the new issue - the lock her mock server applies.
+        """
+        action_id = str(payload.client_action_id)
+        replay = LoaderService._issue_replay(db, payload, action_id)
+        if replay is not None:
+            return replay
+
+        run = LoaderService.get_run(db, payload.run_code)
+        if payload.plan_version != run.current_plan_version:
+            raise StalePlanVersionError(run, payload.plan_version)
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+
+        if run.status in CLOSED_RUN_STATES:
+            raise InvalidStateTransitionError(
+                f"{run.code} is {run.status.value}; the checklist is closed.",
+                current_state=run.status.value,
+                target_state="flagged",
+                entity="DeliveryRun",
+            )
+        current = LoaderService.get_revision(db, run, run.current_plan_version)
+        if current is not None and current.acknowledged_at is None:
+            raise PlanNotAcknowledgedError(run)
+
+        row = LoaderService._current_row(db, run, payload.order_number)
+        if row.state not in FLAGGABLE_STATES:
+            raise InvalidStateTransitionError(
+                f"{payload.order_number} is {row.state.value}; it cannot be flagged.",
+                current_state=row.state.value,
+                target_state=RunOrderState.FLAGGED.value,
+                entity="RunStopOrder",
+            )
+        total = row.units if row.units is not None else payload.units_affected
+        if not 0 <= payload.units_affected <= total:
+            raise FlagRequestError(f"units_affected must be between 0 and {total}.")
+
+        actor = LoaderService._session_actor(db, payload.loader_session_id)
+        if actor is None:
+            raise FlagRequestError("Sign in to flag an issue: loader_session_id is required.")
+
+        now = datetime.now(timezone.utc)
+        try:
+            with db.begin_nested():
+                issue = LoaderIssue(
+                    run_id=run.id,
+                    order_id=row.order_id,
+                    issue_type=payload.issue_type,
+                    units_affected=payload.units_affected,
+                    units_total=total,
+                    quick_note_tag=payload.quick_note_tag,
+                    note=payload.note or None,
+                    reported_by_id=actor.id,
+                    reported_at=now,
+                    client_action_id=action_id,
+                    status=IssueStatus.SENT,
+                    # Contract: the truck cannot wait; departure minus 20 minutes.
+                    decide_by=_naive_utc(run.departs_at) - DECIDE_BY_LEAD,
+                )
+                for position, (label, detail, is_default) in enumerate(
+                    _issue_options(payload.issue_type, payload.units_affected, total)
+                ):
+                    issue.options.append(
+                        LoaderIssueOption(
+                            label=label, detail=detail, is_default=is_default,
+                            is_chosen=False, position=position,
+                        )
+                    )
+                db.add(issue)
+
+                row.state = RunOrderState.FLAGGED
+                row.checked_at = None
+                row.checked_by_id = None
+                db.flush()
+                LoaderService.refresh_stop_status(row.run_stop)
+                LoaderService.recalculate_capacity(db, run)
+                run.status = RunStatus.ISSUE_FLAGGED
+
+                LoaderService.log(
+                    db, run, at=now, actor_kind=ActorKind.LOADER, event_type="issue_flagged",
+                    actor_id=actor.id, order_id=row.order_id,
+                    message=(
+                        f"{payload.order_number}: {ISSUE_WORDS[payload.issue_type]} "
+                        f"{payload.units_affected} of {total} units, sent to Dispatcher"
+                    ),
+                )
+                db.flush()
+        except IntegrityError:
+            replay = LoaderService._issue_replay(db, payload, action_id)
+            if replay is not None:
+                return replay
+            raise
+        return issue
+
+    @staticmethod
+    def _issue_replay(
+        db: Session, payload: schemas.FlagIssueRequest, action_id: str
+    ) -> Optional[LoaderIssue]:
+        """The issue already filed under this client_action_id, if any. The
+        same id on another order or run is a client bug: 409."""
+        issue = db.execute(
+            select(LoaderIssue).filter_by(client_action_id=action_id)
+        ).scalars().first()
+        if issue is None:
+            return None
+        if issue.run.code != payload.run_code or issue.order.order_number != payload.order_number:
+            raise ClientActionIdReusedError(action_id, entity="LoaderIssue")
+        return issue
+
+    @staticmethod
+    def list_issues(db: Session, dock: Dock, run_code: Optional[str] = None) -> List[LoaderIssue]:
+        """GET /loader/issues (L5, the Issues tab): every issue on the dock's
+        runs, newest first, whatever its status. `run_code` narrows it to one
+        run; a run at another dock is a 404, as on the dock-wide activity feed."""
+        query = (
+            select(LoaderIssue)
+            .join(DeliveryRun, LoaderIssue.run_id == DeliveryRun.id)
+            .where(DeliveryRun.dock_id == dock.id)
+        )
+        if run_code is not None:
+            run = LoaderService.get_run(db, run_code)
+            if run.dock_id != dock.id:
+                raise NotFoundError(
+                    f"Run '{run_code}' is not at {dock.name}.", entity="DeliveryRun", entity_id=run_code
+                )
+            query = query.where(LoaderIssue.run_id == run.id)
+        return list(
+            db.execute(query.order_by(LoaderIssue.reported_at.desc(), LoaderIssue.id.desc())).scalars()
+        )
+
+    # --- L6 release and undo -----------------------------------------------------
+
+    @staticmethod
+    def release_run(db: Session, run_code: str, payload: schemas.ReleaseRequest) -> DeliveryRun:
+        """Mark the run ready to depart (L6).
+
+        Replay first, then the stale plan. A run already ready is a 200 no-op
+        (her mock server answers the same). Otherwise check_release_allowed
+        refuses it with 409 RELEASE_LOCKED while anything blocks it. The release
+        is stored three ways in one savepoint: delivery_runs.released_at/by,
+        a run_release_actions row (the idempotency record) and the activity log.
+        """
+        run = LoaderService.get_run(db, run_code)
+        action_id = str(payload.client_action_id)
+        if LoaderService._release_replay(db, run, ReleaseAction.RELEASE, action_id):
+            return run
+        if payload.plan_version != run.current_plan_version:
+            raise StalePlanVersionError(run, payload.plan_version)
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+
+        if run.status == RunStatus.READY_TO_DEPART:
+            return run
+        if run.status == RunStatus.GATED_OUT:
+            raise InvalidStateTransitionError(
+                f"{run.code} is through the gate; it is the Driver's now.",
+                current_state=run.status.value,
+                target_state=RunStatus.READY_TO_DEPART.value,
+                entity="DeliveryRun",
+            )
+        LoaderService.check_release_allowed(db, run)
+
+        actor = LoaderService._session_actor(db, payload.loader_session_id)
+        now = datetime.now(timezone.utc)
+        return LoaderService._record_release(
+            db, run, ReleaseAction.RELEASE, actor, now, action_id,
+            apply=lambda: LoaderService._set_released(run, actor, now),
+            event_type="run_released",
+            message=f"Ready to depart · {_who(actor)}",
+        )
+
+    @staticmethod
+    def undo_release(db: Session, run_code: str, payload: schemas.ReleaseRequest) -> DeliveryRun:
+        """Undo "Mark ready to depart" within the window (L6).
+
+        check_undo_allowed refuses a run that is no longer ready (a plan inside
+        the window reopened it, or it gated out) and a late undo, 409
+        UNDO_WINDOW_EXPIRED. Release needs every order checked, so an undone
+        run is loaded again; released_at/by are cleared.
+        """
+        run = LoaderService.get_run(db, run_code)
+        action_id = str(payload.client_action_id)
+        if LoaderService._release_replay(db, run, ReleaseAction.UNDO, action_id):
+            return run
+        if payload.plan_version != run.current_plan_version:
+            raise StalePlanVersionError(run, payload.plan_version)
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+        LoaderService.check_undo_allowed(run)
+
+        actor = LoaderService._session_actor(db, payload.loader_session_id)
+        now = datetime.now(timezone.utc)
+        return LoaderService._record_release(
+            db, run, ReleaseAction.UNDO, actor, now, action_id,
+            apply=lambda: LoaderService._set_released(run, None, None),
+            event_type="run_release_undone",
+            message=f"Ready undone · {_who(actor)}",
+        )
+
+    @staticmethod
+    def _set_released(
+        run: DeliveryRun, actor: Optional[LoaderUser], at: Optional[datetime]
+    ) -> None:
+        if at is None:
+            run.status = RunStatus.LOADED
+            run.released_at = None
+            run.released_by_id = None
+        else:
+            run.status = RunStatus.READY_TO_DEPART
+            run.released_at = at
+            run.released_by_id = actor.id if actor else None
+
+    @staticmethod
+    def _record_release(
+        db: Session,
+        run: DeliveryRun,
+        action: ReleaseAction,
+        actor: Optional[LoaderUser],
+        now: datetime,
+        action_id: str,
+        *,
+        apply,
+        event_type: str,
+        message: str,
+    ) -> DeliveryRun:
+        try:
+            with db.begin_nested():
+                apply()
+                db.add(
+                    RunReleaseAction(
+                        run_id=run.id, action=action, actor_id=actor.id if actor else None,
+                        at=now, client_action_id=action_id,
+                    )
+                )
+                LoaderService.log(
+                    db, run, at=now, actor_kind=ActorKind.LOADER, event_type=event_type,
+                    actor_id=actor.id if actor else None, message=message,
+                )
+                db.flush()
+        except IntegrityError:
+            # The same id landed between our lookup and our insert.
+            if LoaderService._release_replay(db, run, action, action_id):
+                db.refresh(run)
+                return run
+            raise
+        return run
+
+    @staticmethod
+    def _release_replay(
+        db: Session, run: DeliveryRun, action: ReleaseAction, action_id: str
+    ) -> bool:
+        """True when this release or undo was applied before. The id on the
+        other action, or on another run, is a client bug: 409."""
+        recorded = db.execute(
+            select(RunReleaseAction).filter_by(client_action_id=action_id)
+        ).scalars().first()
+        if recorded is None:
+            return False
+        if recorded.run_id != run.id or recorded.action != action:
+            raise ClientActionIdReusedError(action_id, entity="RunReleaseAction")
+        return True
 
     # --- writes from the tablet -------------------------------------------
 

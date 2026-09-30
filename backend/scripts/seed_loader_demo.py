@@ -47,9 +47,9 @@ from app.models.delivery_run import (
     RunStopOrder,
     StopStatus,
 )
-from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck
+from app.models.loader_activity import ActorKind, CheckAction, LoaderActivity, LoadingCheck, RunReleaseAction
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
-from app.models.loader_user import LoaderUser
+from app.models.loader_user import LoaderSession, LoaderUser
 from app.models.order import Order, OrderStatus
 from app.models.plan_revision import PlanRevision, PlanRevisionChange
 from app.models.reference import (
@@ -242,9 +242,14 @@ def upsert(db: Session, model, match: dict, values: dict):
 
 def reset(db: Session) -> None:
     """Delete loader-owned rows, children first. Leaves other teams' data alone."""
+    # Sessions and release actions exist once the tablet has signed in or
+    # released against this database (L2, L6); they reference tablets, loaders
+    # and runs, so they go first.
     for model in (
         LoadingCheck,
         LoaderActivity,
+        RunReleaseAction,
+        LoaderSession,
         LoaderIssueOption,
         LoaderIssue,
         RunStopOrder,
