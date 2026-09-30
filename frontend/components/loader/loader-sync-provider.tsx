@@ -6,7 +6,7 @@ import { applyAction, enqueue, type NewAction } from "@/lib/loader/offline/outbo
 import { rejectedActions, resolveRun, type RunSource } from "@/lib/loader/offline/run-cache";
 import { flushOutbox } from "@/lib/loader/offline/sync";
 import { createTransport, probeConnectivity, type Transport } from "@/lib/loader/offline/transport";
-import { flushSessionEnds } from "@/lib/loader/session";
+import { flushSessionEnds, readSession } from "@/lib/loader/session";
 import {
   isPlanConflict,
   type ActionInput,
@@ -213,7 +213,7 @@ export function useOfflineRun(initial: Run, actorName?: string) {
         plan_version: current.current_plan_version,
         payload: { ...input, loader_session_id: sessionId } as QueuedActionPayload,
       });
-      const next = applyAction(current, action, actorName);
+      const next = applyAction(current, action, actorName, readSession()?.session.loader.id);
       runRef.current = next;
       setRun(next);
       setSource("local");

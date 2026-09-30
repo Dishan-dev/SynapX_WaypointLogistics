@@ -333,7 +333,7 @@ const RUN_022: Run = {
   release_locked: false,
   release_blockers: [],
   released_at: at("01:48"),
-  released_by: "Nimal S.",
+  released_by: { id: 3, name: "Nimal S." },
   stops: [
     {
       stop_sequence: 2,

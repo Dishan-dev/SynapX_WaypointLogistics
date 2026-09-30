@@ -3,7 +3,7 @@
 // up; set NEXT_PUBLIC_LOADER_TRANSPORT=api to use the real API at
 // NEXT_PUBLIC_API_URL.
 
-import { ISSUE_TYPE_LABELS, planChangeAlert, withRecomputedCounts } from "../format";
+import { ISSUE_TYPE_LABELS, planChangeAlert, UNDO_WINDOW_MS, withRecomputedCounts } from "../format";
 import { findMockRun, mockActivity, mockIssues, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
 import type {
   ActivityEntry,
@@ -351,14 +351,14 @@ const ORDER_WRITES: Partial<Record<QueuedActionType, { from: OrderState[]; noop:
   recheck: { from: ["re_check"], noop: ["loaded"] },
 };
 
-/** The undo window after "Mark ready to depart" (Figma 1e: "Undo for 10 s"). */
-const UNDO_WINDOW_MS = 10_000;
+/** The server's grace on top of the undo window, so a last-second tap over a slow link lands. */
+const UNDO_GRACE_MS = 2_000;
 
 /**
  * How the mock server answers release and undo (contract, L6): release is
  * refused while anything blocks it (409 RELEASE_LOCKED with the blockers);
- * undo only while the run is still ready and within 10 s of released_at
- * (409 RELEASE_UNDO_EXPIRED, a placeholder code).
+ * undo only while the run is still ready (else 409 INVALID_STATE_TRANSITION)
+ * and within 10 s of released_at plus 2 s grace (else 409 UNDO_WINDOW_EXPIRED).
  */
 function releaseOutcome(run: Run, action: QueuedAction): TransportResponse | "noop" | undefined {
   const refuse = (code: string, message: string, extra: object = {}) =>
@@ -377,8 +377,11 @@ function releaseOutcome(run: Run, action: QueuedAction): TransportResponse | "no
   }
   if (action.action_type === "release_undo") {
     if (run.status !== "ready_to_depart") return refuse("INVALID_STATE_TRANSITION", `${run.code} is not ready to depart.`);
-    if (run.released_at && Date.now() - Date.parse(run.released_at) > UNDO_WINDOW_MS) {
-      return refuse("RELEASE_UNDO_EXPIRED", "The 10 s undo window has passed.");
+    if (run.released_at && Date.now() - Date.parse(run.released_at) > UNDO_WINDOW_MS + UNDO_GRACE_MS) {
+      return refuse("UNDO_WINDOW_EXPIRED", "The 10 s undo window has passed.", {
+        released_at: run.released_at,
+        window_seconds: UNDO_WINDOW_MS / 1000,
+      });
     }
   }
   return undefined;
@@ -487,7 +490,7 @@ export function mockTransport(latencyMs = 300): Transport {
         });
       }
       const by = sessionUser?.short_name;
-      state[run.code] = applyAction(run, action, by);
+      state[run.code] = applyAction(run, action, by, sessionUser?.id);
       if (isFlag) {
         const issues = [...loadMockIssues(), newMockIssue(run, request.body as unknown as FlagActionPayload, id, by)];
         saveMockIssues(issues);

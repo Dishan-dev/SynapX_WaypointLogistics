@@ -22,6 +22,8 @@ import {
   ISSUE_TYPE_LABELS,
   isIssueWaiting,
   partialLoads,
+  releasedByName,
+  undoRefusal,
   planSource,
   releaseLockLabel,
   runCapacity,
@@ -67,7 +69,7 @@ function Review({ initial }: { initial: Run }) {
   const status = STATUS_PILL[run.status];
   const capacity = runCapacity(run);
   const spare = Math.max(0, run.capacity.max_volume_m3 - run.capacity.loaded_volume_m3);
-  const partial = partialLoads(issues);
+  const partial = partialLoads(issues, run);
   // A partial order is on the truck: count it as loaded even if its row is still flagged.
   const rows = run.stops.flatMap((s) => s.orders);
   const flaggedPartials = partial.orderNumbers.filter(
@@ -79,6 +81,8 @@ function Review({ initial }: { initial: Run }) {
     .sort((a, b) => (b.decided_at ?? "").localeCompare(a.decided_at ?? ""))[0];
   const lockLabel = releaseLockLabel(run);
   const refusedRelease = rejected.filter((a) => a.action_type === "release" && a.conflict_code === "RELEASE_LOCKED");
+  // Undo sends the loader here straight away, so a refused undo shows here too.
+  const refusedUndo = rejected.find((a) => a.action_type === "release_undo");
   const ready = run.status === "ready_to_depart";
 
   const release = async () => {
@@ -109,7 +113,7 @@ function Review({ initial }: { initial: Run }) {
       )}
       <p className="text-xs leading-[17px] text-muted-foreground">
         {ready
-          ? `Signed off${run.released_by ? ` by ${run.released_by}` : ""}.`
+          ? `Signed off${releasedByName(run) ? ` by ${releasedByName(run)}` : ""}.`
           : !sync.online
             ? "Releasing needs a connection, so the Dispatcher and the driver get it. Your checks are saved on this tablet."
             : lockLabel
@@ -150,6 +154,16 @@ function Review({ initial }: { initial: Run }) {
           </div>
           <p className="text-xs leading-[17px] text-muted-foreground">Check once. This becomes the driver’s run sheet.</p>
         </header>
+
+        {refusedUndo && (
+          <div role="alert" className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive-muted px-4 py-3">
+            <p className="text-sm font-semibold text-destructive">{undoRefusal(refusedUndo.conflict_code).title}</p>
+            <p className="text-sm text-foreground">{undoRefusal(refusedUndo.conflict_code).body}</p>
+            <LoaderButton variant="ghost" className="w-fit" onClick={() => void dismissRejected()}>
+              OK
+            </LoaderButton>
+          </div>
+        )}
 
         {refusedRelease.length > 0 && (
           <div role="alert" className="flex flex-col gap-2 rounded-lg border border-destructive/30 bg-destructive-muted px-4 py-3">
