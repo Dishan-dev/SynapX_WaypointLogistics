@@ -55,7 +55,7 @@ def test_mixed_request_splits_into_one_order_per_zone(client, clock, outlets):
     assert [o["temperature_zone"] for o in orders] == ["Chilled", "Ambient"]
     assert [o["order_number"] for o in orders] == ["ORD0000001", "ORD0000002"]
     chilled = orders[0]
-    assert chilled["status"] == "submitted"
+    assert chilled["status"] == "SUBMITTED"
     assert chilled["units"] == 25
     assert chilled["operating_date"] == "2026-09-30"
     assert chilled["delivery_window"] == "04:00 – 07:45"
@@ -129,7 +129,7 @@ def test_list_filters_and_detail(client, clock, outlets):
     assert [o["order_number"] for o in high] == ["ORD0000001"]
     by_item = client.get("/api/v1/orders/store", params={"outlet_id": fresh_id, "search": "water"}).json()
     assert [o["order_number"] for o in by_item] == ["ORD0000002"]
-    by_status = client.get("/api/v1/orders/store", params=[("outlet_id", fresh_id), ("status", "submitted"), ("status", "processing")]).json()
+    by_status = client.get("/api/v1/orders/store", params=[("outlet_id", fresh_id), ("status", "SUBMITTED"), ("status", "PROCESSING")]).json()
     assert len(by_status) == 2
     none = client.get("/api/v1/orders/store", params={"outlet_id": fresh_id, "date_from": "2026-09-27"}).json()
     assert none == []
@@ -146,7 +146,7 @@ def test_cancel_only_before_cutoff_and_only_early_statuses(client, clock, outlet
 
     res = client.post(f"/api/v1/orders/{chilled_id}/cancel")
     assert res.status_code == 200
-    assert res.json()["status"] == "cancelled"
+    assert res.json()["status"] == "CANCELLED"
 
     clock["now"] = datetime(2026, 9, 29, 16, 30)
     res = client.post(f"/api/v1/orders/{ambient_id}/cancel")
@@ -158,10 +158,10 @@ def test_status_updates_follow_the_lifecycle_and_notify_the_store(client, clock,
     order = place(client, outlets["fresh"].id, "2026-09-30", [item("SKU-001", "Ambient")]).json()[0]
     oid = order["id"]
 
-    assert client.patch(f"/api/v1/orders/{oid}/status", json={"status": "delivered"}).status_code == 409
-    assert client.patch(f"/api/v1/orders/{oid}/status", json={"status": "processing"}).json()["status"] == "processing"
-    res = client.patch(f"/api/v1/orders/{oid}/status", json={"status": "ready_for_dispatch"})
-    assert res.json()["status"] == "ready_for_dispatch"
+    assert client.patch(f"/api/v1/orders/{oid}/status", json={"status": "DELIVERED"}).status_code == 409
+    assert client.patch(f"/api/v1/orders/{oid}/status", json={"status": "PROCESSING"}).json()["status"] == "PROCESSING"
+    res = client.patch(f"/api/v1/orders/{oid}/status", json={"status": "READY_FOR_DISPATCH"})
+    assert res.json()["status"] == "READY_FOR_DISPATCH"
     assert client.post(f"/api/v1/orders/{oid}/cancel").status_code == 409
 
     notifications = client.get("/api/v1/notifications/", params={"outlet_id": outlets["fresh"].id}).json()
@@ -171,18 +171,17 @@ def test_status_updates_follow_the_lifecycle_and_notify_the_store(client, clock,
     assert "Wed 30 Sep, 04:00 – 07:45" in ready[0]["message"]
 
 
-def test_defer_counts_deferrals_and_explains_why(client, clock, outlets):
+def test_defer_counts_deferrals_and_explains_why(client, clock, outlets, db_session):
+    # The route is the Dispatcher's (POST /orders/{id}/defer); order_service.defer_order is what it should call
+    # so the store gets the deferral notice.
+    from app.services.order_service import order_service
+
     oid = place(client, outlets["fresh"].id, "2026-09-30", [item("SKU-001", "Ambient")]).json()[0]["id"]
-    res = client.post(
-        f"/api/v1/orders/{oid}/defer",
-        json={"reason": "No reefer capacity after a breakdown.", "new_delivery_date": "2026-10-02"},
-    )
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["status"] == "deferred"
-    assert body["deferral_count"] == 1
-    assert body["operating_date"] == "2026-10-02"
-    assert body["cutoff_at"] == "2026-10-01T16:00:00"
+    order = order_service.defer_order(db_session, oid, "No reefer capacity after a breakdown.", date(2026, 10, 2))
+    assert order.status.value == "DEFERRED"
+    assert order.deferral_count == 1
+    assert order.operating_date == "2026-10-02"
+    assert order.cutoff_at == datetime(2026, 10, 1, 16, 0)
 
     deferred = [
         n for n in client.get("/api/v1/notifications/", params={"outlet_id": outlets["fresh"].id}).json()
@@ -206,10 +205,10 @@ def test_loader_contract_lists_active_orders_for_a_day(client, clock, outlets):
 def test_notifications_filter_and_mark_read(client, clock, outlets):
     fresh_id = outlets["fresh"].id
     oid = place(client, fresh_id, "2026-09-30", [item("SKU-001", "Ambient")]).json()[0]["id"]
-    client.patch(f"/api/v1/orders/{oid}/status", json={"status": "processing"})
-    client.patch(f"/api/v1/orders/{oid}/status", json={"status": "ready_for_dispatch"})
-    client.patch(f"/api/v1/orders/{oid}/status", json={"status": "dispatched"})
-    client.patch(f"/api/v1/orders/{oid}/status", json={"status": "delivered"})
+    client.patch(f"/api/v1/orders/{oid}/status", json={"status": "PROCESSING"})
+    client.patch(f"/api/v1/orders/{oid}/status", json={"status": "READY_FOR_DISPATCH"})
+    client.patch(f"/api/v1/orders/{oid}/status", json={"status": "DISPATCHED"})
+    client.patch(f"/api/v1/orders/{oid}/status", json={"status": "DELIVERED"})
 
     everything = client.get("/api/v1/notifications/", params={"outlet_id": fresh_id}).json()
     assert everything[0]["type"] == "delivered"

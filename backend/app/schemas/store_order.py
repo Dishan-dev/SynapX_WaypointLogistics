@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import List, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.order import OrderStatus
 from app.schemas.order import OrderItemRead
 
@@ -54,6 +54,11 @@ class OrderStatusUpdate(BaseModel):
     """Contract: order_service.update_order_status — called by the Loader/Driver/Dispatcher flows."""
 
     status: OrderStatus
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def accept_lowercase(cls, value):
+        return value.upper() if isinstance(value, str) else value
 
 
 class OrderDeferral(BaseModel):

@@ -22,7 +22,8 @@ export interface ApiOrderItem {
 export interface ApiStoreOrder {
   id: number;
   order_number: string;
-  status: OrderStatus;
+  /** Uppercase in the API (e.g. READY_FOR_DISPATCH); the screens use lowercase. */
+  status: string;
   outlet_id: number | null;
   brand: string | null;
   temperature_zone: string;
@@ -76,7 +77,7 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
   return {
     id: order.id,
     orderNumber: order.order_number,
-    status: order.status,
+    status: order.status.toLowerCase() as OrderStatus,
     isHighPriority: order.is_priority,
     temperatureClass,
     orderDate: order.operating_date ?? order.created_at.slice(0, 10),

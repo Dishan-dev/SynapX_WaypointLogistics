@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.models.order import OrderStatus
 from app.models.reference import Depot
-from app.schemas.store_order import GoodsRequestCreate, OrderDeferral, OrderStatusUpdate, StoreOrderRead
+from app.schemas.store_order import GoodsRequestCreate, OrderStatusUpdate, StoreOrderRead
 from app.services.order_service import order_service
 
 # Store Manager order routes (docs/store-manager-contract.md §5). Registered before the generic /orders
@@ -62,9 +62,3 @@ def cancel_store_order(order_id: int, db: Session = Depends(deps.get_db), now: d
 def update_order_status(order_id: int, update: OrderStatusUpdate, db: Session = Depends(deps.get_db)):
     """Contract for Loader / Driver / Dispatcher flows. Rejects illegal moves with 409."""
     return order_service.update_order_status(db, order_id, update.status)
-
-
-@router.post("/{order_id}/defer", response_model=StoreOrderRead)
-def defer_order(order_id: int, deferral: OrderDeferral, db: Session = Depends(deps.get_db)):
-    """Dispatcher defers an order and the store is notified with the reason."""
-    return order_service.defer_order(db, order_id, deferral.reason, deferral.new_delivery_date)

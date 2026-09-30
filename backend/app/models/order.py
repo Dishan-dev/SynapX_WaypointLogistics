@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, Column, Integer, String, Float, ForeignKey, DateTime, Enum, Text
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum, Boolean, Text
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -8,22 +8,22 @@ from app.core.database import Base
 class OrderStatus(str, enum.Enum):
     """Order lifecycle (docs/store-manager-contract.md §1).
 
-    The database stores the member *names* (e.g. READY_FOR_DISPATCH), so ALLOCATED and DEFERRED
-    match the labels Nisith's migration 0a80c3e0353c added. SUBMITTED, READY_FOR_DISPATCH and
-    COMPLETED still need adding to the Postgres enum by the Store Manager migration.
+    DRAFT…CANCELLED are in Neon (Nisith's migration 0a80c3e0353c). SUBMITTED, READY_FOR_DISPATCH and
+    COMPLETED are the Store Manager additions and still need adding to the Postgres enum by the
+    Store Manager migration.
     """
 
-    DRAFT = "draft"
-    SUBMITTED = "submitted"
-    CONFIRMED = "confirmed"
-    ALLOCATED = "allocated"
-    PROCESSING = "processing"
-    READY_FOR_DISPATCH = "ready_for_dispatch"
-    DISPATCHED = "dispatched"
-    DELIVERED = "delivered"
-    COMPLETED = "completed"
-    DEFERRED = "deferred"
-    CANCELLED = "cancelled"
+    DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
+    CONFIRMED = "CONFIRMED"
+    PROCESSING = "PROCESSING"
+    ALLOCATED = "ALLOCATED"
+    READY_FOR_DISPATCH = "READY_FOR_DISPATCH"
+    DEFERRED = "DEFERRED"
+    DISPATCHED = "DISPATCHED"
+    DELIVERED = "DELIVERED"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 
 class Order(Base):
@@ -35,21 +35,19 @@ class Order(Base):
     destination_address = Column(String(500), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.DRAFT, nullable=False)
     total_amount = Column(Float, default=0.0)
-    allocation_id = Column(Integer, ForeignKey("allocations.id"), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    # Dispatcher order-management fields (Nisith, migration 0a80c3e0353c — already in Neon).
     brand = Column(String(100), nullable=True)
     district = Column(String(100), nullable=True)
     temperature_zone = Column(String(50), default="Ambient", nullable=False)
     delivery_window = Column(String(50), nullable=True)
     weight_kg = Column(Float, default=0.0, nullable=False)
     is_priority = Column(Boolean, default=False, nullable=False)
+    allocation_id = Column(Integer, ForeignKey("allocations.id"), nullable=True)
     is_late = Column(Boolean, default=False, nullable=False)
-    # Requested delivery date as YYYY-MM-DD.
+    # Requested delivery date as YYYY-MM-DD (Store Manager uses this as the delivery date).
     operating_date = Column(String(50), nullable=True)
     deferral_reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Loader order fields (Sachintha, migration 0003_order_loader_fields).
     outlet_id = Column(Integer, ForeignKey("outlets.id"), nullable=True)

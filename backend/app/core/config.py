@@ -26,13 +26,21 @@ class Settings(BaseSettings):
     @classmethod
     def assemble_db_connection(cls, v: Optional[str]) -> Optional[str]:
         if isinstance(v, str) and v.strip():
-            # Use psycopg (v3) driver — required for Neon SSL compatibility
+            # Check which driver is available: psycopg (v3) or psycopg2 (v2)
+            try:
+                import psycopg  # noqa: F401
+                preferred = "postgresql+psycopg://"
+            except ImportError:
+                preferred = "postgresql+psycopg2://"
+
+            if v.startswith("postgresql+psycopg://") and preferred == "postgresql+psycopg2://":
+                return v.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
             if v.startswith("postgresql+psycopg2://"):
-                return v.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
+                return v
             if v.startswith("postgresql://"):
-                return v.replace("postgresql://", "postgresql+psycopg://", 1)
+                return v.replace("postgresql://", preferred, 1)
             if v.startswith("postgres://"):
-                return v.replace("postgres://", "postgresql+psycopg://", 1)
+                return v.replace("postgres://", preferred, 1)
         return v
 
     # Keycloak Configuration

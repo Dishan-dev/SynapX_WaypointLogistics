@@ -35,7 +35,7 @@ interface DriverOption {
   user: { full_name: string } | null;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001";
+import { fetchWithFallback } from "@/lib/api";
 
 export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: AllocationFormDrawerProps) {
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
@@ -54,8 +54,8 @@ export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: Allocati
     setIsLoadingData(true);
     try {
       const [vehRes, drvRes] = await Promise.all([
-        fetch(`${API_BASE}/api/v1/fleet/vehicles?status=available`),
-        fetch(`${API_BASE}/api/v1/fleet/drivers`),
+        fetchWithFallback("/api/v1/fleet/vehicles?status=AVAILABLE"),
+        fetchWithFallback("/api/v1/fleet/drivers"),
       ]);
       if (vehRes.ok) setVehicles(await vehRes.json());
       if (drvRes.ok) setDrivers(await drvRes.json());
@@ -76,7 +76,7 @@ export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: Allocati
       setRunId("");
       setDepartureTime("");
     }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,10 +91,10 @@ export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: Allocati
         departure_time: departureTime ? new Date(departureTime).toISOString() : null,
         load_percentage: 0,
         volume_percentage: 0,
-        status: "draft",
+        status: "DRAFT",
       };
 
-      const res = await fetch(`${API_BASE}/api/v1/allocations/`, {
+      const res = await fetchWithFallback("/api/v1/allocations/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -106,7 +106,8 @@ export function AllocationFormDrawer({ open, onOpenChange, onSuccess }: Allocati
         onOpenChange(false);
       } else {
         const err = await res.json();
-        toast.error(err.detail || "Failed to create allocation");
+        const errorMessage = Array.isArray(err.detail) ? err.detail[0]?.msg : err.detail;
+        toast.error(errorMessage || "Failed to create allocation");
       }
     } catch (error) {
       toast.error("Network error — check your connection");
