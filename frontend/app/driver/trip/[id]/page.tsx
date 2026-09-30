@@ -158,12 +158,14 @@ export default function TripDetailsPage() {
         </div>
 
         {/* Action Button */}
-        <button 
-          className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
-          style={{ backgroundColor: "#092C4C" }}
-        >
-          Start trip
-        </button>
+        <Link href="/driver/trip" className="w-full">
+          <button 
+            className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
+            style={{ backgroundColor: "#092C4C" }}
+          >
+            Start trip
+          </button>
+        </Link>
       </div>
 
       {/* SOS Button */}

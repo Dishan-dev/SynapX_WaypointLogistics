@@ -134,7 +134,7 @@ export default function ArrivalPage() {
         </div>
 
         {/* Primary Action Button */}
-        <Link href="/driver/trip/TRIP-1042" className="mt-auto pt-2">
+        <Link href="/driver/trip/outcome" className="mt-auto pt-2">
           <button 
             className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
             style={{ backgroundColor: "#092C4C" }}

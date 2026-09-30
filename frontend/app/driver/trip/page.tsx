@@ -145,12 +145,14 @@ export default function RouteMapPage() {
             >
               <span className="font-semibold text-[13px]" style={{ color: "#171A1F" }}>Stop details</span>
             </button>
-            <button 
-              className="flex-[1.3] flex justify-center items-center h-[55px] rounded-lg text-white"
-              style={{ backgroundColor: "#092C4C" }}
-            >
-              <span className="font-bold text-[16px]">I’m here now</span>
-            </button>
+            <Link href="/driver/trip/arrived" className="flex-[1.3] w-full">
+              <button 
+                className="w-full h-[55px] flex justify-center items-center rounded-lg text-white"
+                style={{ backgroundColor: "#092C4C" }}
+              >
+                <span className="font-bold text-[16px]">I’m here now</span>
+              </button>
+            </Link>
           </div>
         </div>
 
