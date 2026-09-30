@@ -2,201 +2,183 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, AlertTriangle, Phone, MapPin, CheckCircle2 } from "lucide-react";
+import {
+  ArrowLeft, AlertTriangle, HeartPulse, ShieldAlert,
+  Car, Flame, MoreHorizontal, MapPin, Camera, Route
+} from "lucide-react";
 
-type SOSState = "idle" | "confirming" | "sent";
+export default function SOSPage() {
+  const [selectedType, setSelectedType] = useState("Vehicle Breakdown");
 
-export default function EmergencySOSPage() {
-  const [sosState, setSosState] = useState<SOSState>("idle");
-  const [holdProgress, setHoldProgress] = useState(0);
-
-  const handleHoldStart = () => {
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += 5;
-      setHoldProgress(progress);
-      if (progress >= 100) {
-        clearInterval(interval);
-        setSosState("sent");
-        setHoldProgress(0);
-      }
-    }, 100);
-    const onEnd = () => {
-      clearInterval(interval);
-      if (progress < 100) setHoldProgress(0);
-      window.removeEventListener("mouseup", onEnd);
-      window.removeEventListener("touchend", onEnd);
-    };
-    window.addEventListener("mouseup", onEnd);
-    window.addEventListener("touchend", onEnd);
-  };
-
-  if (sosState === "sent") {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ backgroundColor: "#FDECEF", fontFamily: "Inter, sans-serif" }}>
-        <div className="w-full max-w-sm flex flex-col items-center gap-6">
-          {/* Alert Sent Icon */}
-          <div
-            className="flex items-center justify-center rounded-full"
-            style={{ width: 96, height: 96, backgroundColor: "#FFFFFF", boxShadow: "0px 5px 24px rgba(201,54,62,0.2)" }}
-          >
-            <CheckCircle2 size={48} color="#C9363E" />
-          </div>
-
-          <div className="text-center">
-            <h1 className="text-2xl font-bold" style={{ color: "#12202E" }}>Emergency Alert Sent</h1>
-            <p className="text-sm mt-2 leading-relaxed" style={{ color: "#5D6A78" }}>
-              The dispatcher has been notified and your current location has been shared.
-            </p>
-          </div>
-
-          {/* Alert Details Card */}
-          <div
-            className="w-full rounded-2xl p-4 flex flex-col gap-3"
-            style={{ backgroundColor: "#FFFFFF", border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22,58,95,0.08)" }}
-          >
-            <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "#5D6A78" }}>ALERT DETAILS</span>
-            {[
-              { label: "Emergency", value: "SOS Triggered", color: "#C9363E" },
-              { label: "Trip", value: "TRIP-024", color: "#12202E" },
-              { label: "Vehicle", value: "WP-AB-1234", color: "#12202E" },
-              { label: "Location", value: "Shared ✓", color: "#18794E" },
-              { label: "Status", value: "Dispatcher Notified ✓", color: "#18794E" },
-            ].map((row, idx) => (
-              <React.Fragment key={row.label}>
-                {idx > 0 && <div className="h-px" style={{ backgroundColor: "#D9E1E8" }} />}
-                <div className="flex items-center justify-between">
-                  <span className="text-xs" style={{ color: "#8793A0" }}>{row.label}</span>
-                  <span className="text-xs font-bold" style={{ color: row.color }}>{row.value}</span>
-                </div>
-              </React.Fragment>
-            ))}
-          </div>
-
-          {/* Actions */}
-          <div className="w-full flex flex-col gap-3">
-            <button
-              className="w-full flex items-center justify-center gap-2 rounded-full font-semibold text-base"
-              style={{ height: 52, backgroundColor: "#163A5F", color: "#FFFFFF" }}
-            >
-              <Phone size={18} />
-              Call Dispatcher
-            </button>
-            <Link href="/driver">
-              <button
-                className="w-full text-center font-semibold text-sm"
-                style={{ color: "#5D6A78", textDecoration: "underline" }}
-              >
-                Return to home
-              </button>
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const emergencyTypes = [
+    { label: "Accident", icon: AlertTriangle },
+    { label: "Medical Emergency", icon: HeartPulse },
+    { label: "Safety / Security", icon: ShieldAlert },
+    { label: "Vehicle Breakdown", icon: Car },
+    { label: "Dangerous Road", icon: Route }, // Substitute for road-alert
+    { label: "Vehicle Fire", icon: Flame },
+    { label: "Other Emergency", icon: MoreHorizontal }
+  ];
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
-      {/* Status Bar */}
-      <div className="flex justify-between items-center px-5" style={{ height: 34, backgroundColor: "#FFFFFF" }}>
-        <span className="text-xs font-semibold" style={{ color: "#12202E" }}>06:58</span>
-      </div>
-
+    <div className="min-h-screen flex flex-col font-sans" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
+      
       {/* Header */}
-      <div className="flex items-center gap-3 px-5 py-3" style={{ backgroundColor: "#FFFFFF", borderBottom: "1px solid #D9E1E8" }}>
-        <Link href="/driver/trip">
-          <button className="flex items-center justify-center rounded-full" style={{ width: 36, height: 36, backgroundColor: "#F2F5F8" }}>
-            <ArrowLeft size={18} color="#163A5F" />
-          </button>
-        </Link>
-        <span className="text-base font-bold" style={{ color: "#C9363E" }}>Emergency SOS</span>
+      <div 
+        className="flex items-center justify-between px-4 h-[60px] bg-white shrink-0"
+        style={{ borderBottom: "1px solid #E5E5E2" }}
+      >
+        <div className="flex items-center gap-2">
+          <Link href="/driver" className="flex justify-center items-center w-5 h-5">
+            <ArrowLeft size={20} color="#171A1F" />
+          </Link>
+          <span className="font-bold text-[18px]" style={{ color: "#171A1F" }}>Emergency</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <AlertTriangle size={18} color="#171A1F" />
+        </div>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-between px-6 py-8">
-
-        {/* Warning Card */}
-        <div
-          className="w-full rounded-2xl p-4 flex items-start gap-3"
-          style={{ backgroundColor: "#FDECEF", border: "1px solid rgba(201,54,62,0.2)" }}
+      {/* Scrollable Content */}
+      <div className="flex flex-col flex-1 p-4 gap-4 overflow-y-auto pb-[100px]">
+        
+        {/* Emergency Alert Banner */}
+        <div 
+          className="flex p-3 gap-3 rounded-r-lg"
+          style={{ backgroundColor: "#FBEFEF", borderLeft: "4px solid #AD3D3D" }}
         >
-          <AlertTriangle size={20} color="#C9363E" className="mt-0.5 shrink-0" />
-          <div>
-            <p className="text-sm font-bold" style={{ color: "#C9363E" }}>Only for genuine emergencies</p>
-            <p className="text-xs mt-1 leading-relaxed" style={{ color: "#5D6A78" }}>
-              Triggering a false alarm may result in disciplinary action. Use only when you are in real danger or need urgent help.
-            </p>
+          <AlertTriangle size={20} color="#AD3D3D" className="shrink-0 mt-0.5" />
+          <div className="flex flex-col gap-1">
+            <span className="font-bold text-[14px]" style={{ color: "#AD3D3D" }}>Emergency Assistance</span>
+            <span className="font-normal text-[12px] leading-[16px]" style={{ color: "#6B7280" }}>
+              For urgent situations only. Your current location will be shared with the dispatcher.
+            </span>
           </div>
         </div>
 
-        {/* SOS Button Area */}
-        <div className="flex flex-col items-center gap-6 my-8">
-          <div
-            className="flex items-center justify-center rounded-2xl px-4 py-3"
-            style={{ backgroundColor: "#FFFFFF", border: "1px solid #D9E1E8" }}
+        {/* Emergency Type Section */}
+        <div className="flex flex-col gap-2">
+          <span className="font-bold text-[14px]" style={{ color: "#171A1F" }}>What's happening?</span>
+          
+          <div className="grid grid-cols-2 gap-2">
+            {emergencyTypes.map((type, idx) => {
+              const Icon = type.icon;
+              const isSelected = selectedType === type.label;
+              const isFullWidth = idx === emergencyTypes.length - 1 && emergencyTypes.length % 2 !== 0;
+
+              return (
+                <div 
+                  key={type.label}
+                  onClick={() => setSelectedType(type.label)}
+                  className={`flex items-center p-[10px] gap-2 rounded-md cursor-pointer ${isFullWidth ? 'col-span-2' : ''}`}
+                  style={{
+                    backgroundColor: isSelected ? "#FBEFEF" : "#FFFFFF",
+                    border: `1px solid ${isSelected ? "#AD3D3D" : "#E5E5E2"}`
+                  }}
+                >
+                  <Icon size={16} color={isSelected ? "#AD3D3D" : "#171A1F"} className="shrink-0" />
+                  <span 
+                    className={`text-[12px] ${isSelected ? 'font-bold' : 'font-semibold'}`}
+                    style={{ color: isSelected ? "#AD3D3D" : "#171A1F" }}
+                  >
+                    {type.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Two Column Details */}
+        <div className="flex gap-3 w-full">
+          {/* Delivery Info Card */}
+          <div 
+            className="flex-1 flex flex-col p-3 gap-2 bg-white rounded-lg"
+            style={{ border: "1px solid #E5E5E2", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
           >
-            <div className="flex items-center gap-2">
-              <MapPin size={14} color="#18794E" />
-              <span className="text-xs font-semibold" style={{ color: "#12202E" }}>Colombo 07 · Location shared</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: "#E8F6EF", color: "#18794E" }}>Live</span>
+            <span className="font-bold text-[12px]" style={{ color: "#171A1F" }}>Current Delivery</span>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <span className="font-normal text-[11px]" style={{ color: "#6B7280" }}>Order:</span>
+                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>#ORD-1024</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-normal text-[11px]" style={{ color: "#6B7280" }}>Trip:</span>
+                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>TRIP-024</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-normal text-[11px]" style={{ color: "#6B7280" }}>Vehicle:</span>
+                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>WP-AB-1234</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="font-normal text-[11px]" style={{ color: "#6B7280" }}>Stop:</span>
+                <span className="font-semibold text-[11px]" style={{ color: "#171A1F" }}>Outlet #045</span>
+              </div>
             </div>
           </div>
 
-          {/* Hold to SOS Button */}
-          <div className="relative flex items-center justify-center">
-            {/* Pulse rings */}
-            <div
-              className="absolute rounded-full animate-ping"
-              style={{ width: 180, height: 180, backgroundColor: "rgba(201,54,62,0.1)", animationDuration: "1.5s" }}
-            />
-            <div
-              className="absolute rounded-full"
-              style={{ width: 160, height: 160, backgroundColor: "rgba(201,54,62,0.08)" }}
-            />
-            {/* Main button */}
-            <button
-              className="relative flex flex-col items-center justify-center rounded-full select-none"
-              style={{
-                width: 140, height: 140,
-                backgroundColor: "#C9363E",
-                color: "#FFFFFF",
-                boxShadow: "0px 8px 32px rgba(201,54,62,0.4)",
-                border: "4px solid rgba(255,255,255,0.3)",
-              }}
-              onMouseDown={handleHoldStart}
-              onTouchStart={handleHoldStart}
-            >
-              {holdProgress > 0 ? (
-                <>
-                  <span className="text-4xl font-black">{holdProgress}%</span>
-                  <span className="text-xs font-semibold mt-1">Hold...</span>
-                </>
-              ) : (
-                <>
-                  <span className="text-4xl font-black">SOS</span>
-                  <span className="text-xs font-semibold mt-1">Hold to send</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          <p className="text-xs text-center" style={{ color: "#8793A0" }}>
-            Hold the button for 2 seconds to send emergency alert
-          </p>
-        </div>
-
-        {/* Alternative: Call dispatcher */}
-        <div className="w-full flex flex-col gap-3">
-          <div className="h-px" style={{ backgroundColor: "#D9E1E8" }} />
-          <p className="text-xs text-center" style={{ color: "#8793A0" }}>Or contact support directly</p>
-          <button
-            className="w-full flex items-center justify-center gap-2 rounded-full font-semibold text-sm"
-            style={{ height: 52, backgroundColor: "#EAF2FF", color: "#163A5F", border: "1px solid rgba(33,103,213,0.2)" }}
+          {/* Location Card */}
+          <div 
+            className="flex-1 flex flex-col p-3 gap-2 bg-white rounded-lg"
+            style={{ border: "1px solid #E5E5E2", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
           >
-            <Phone size={18} />
-            Call Dispatcher
-          </button>
+            <div className="flex flex-col gap-1">
+              <span className="font-bold text-[12px]" style={{ color: "#171A1F" }}>Current Location</span>
+              <div className="flex items-center px-1.5 py-0.5 rounded" style={{ backgroundColor: "#F0F7F2", width: "fit-content" }}>
+                <span className="font-bold text-[9px]" style={{ color: "#3D7954" }}>Location Available</span>
+              </div>
+            </div>
+            <div className="flex justify-center items-center h-[42px] rounded" style={{ backgroundColor: "#DCE3EB" }}>
+              <MapPin size={14} color="#171A1F" />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="font-semibold text-[10px]" style={{ color: "#171A1F" }}>6.9271° N, 79.8612° E</span>
+              <span className="font-normal text-[9px]" style={{ color: "#6B7280" }}>Shared with dispatcher</span>
+              <span className="font-normal text-[9px]" style={{ color: "#6B7280" }}>Location captured automatically</span>
+            </div>
+          </div>
         </div>
+
+        {/* Input Section */}
+        <div className="flex flex-col gap-2">
+          <span className="font-bold text-[13px]" style={{ color: "#171A1F" }}>Tell us what happened</span>
+          <textarea 
+            className="w-full h-[120px] p-4 rounded bg-white outline-none resize-none font-normal text-[16px]"
+            style={{ border: "1px solid #E5E5E2", color: "#4F4F4F" }}
+            placeholder="Briefly describe the emergency..."
+          />
+        </div>
+
+        {/* Photo Upload */}
+        <div className="flex items-center p-3 gap-2.5 bg-white rounded-md cursor-pointer" style={{ border: "1px dashed #E5E5E2" }}>
+          <div className="flex justify-center items-center w-[18px] h-[18px]">
+            <Camera size={18} color="#171A1F" />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="font-semibold text-[12px]" style={{ color: "#171A1F" }}>Add Photo</span>
+            <span className="font-normal text-[10px]" style={{ color: "#6B7280" }}>Optional proof of incident</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Sticky Footer */}
+      <div 
+        className="fixed bottom-0 left-0 right-0 flex flex-col p-4 gap-3 bg-white"
+        style={{ borderTop: "1px solid #E5E5E2" }}
+      >
+        <Link href="/driver">
+          <button 
+            className="w-full flex justify-center items-center py-3.5 rounded-md text-white font-bold text-[15px]"
+            style={{ backgroundColor: "#AD3D3D" }}
+          >
+            SEND EMERGENCY ALERT
+          </button>
+        </Link>
+        <Link href="/driver" className="w-full">
+          <button className="w-full flex justify-center items-center py-1">
+            <span className="font-semibold text-[14px]" style={{ color: "#6B7280" }}>Cancel</span>
+          </button>
+        </Link>
       </div>
     </div>
   );
