@@ -6,6 +6,7 @@ from app.models.fleet import Vehicle, DriverProfile
 from app.models.allocation import Allocation
 from app.models.reference import Outlet, CalendarDay
 from app.models.notification import Notification
+from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, IssueReport, SOSAlert
 
 __all__ = [
     "User",
@@ -21,4 +22,9 @@ __all__ = [
     "Outlet",
     "CalendarDay",
     "Notification",
+    "DriverTrip",
+    "DeliveryStop",
+    "ProofOfDelivery",
+    "IssueReport",
+    "SOSAlert",
 ]
