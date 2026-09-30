@@ -1,13 +1,13 @@
 """Loader endpoints.
 
-Scope: L4 (checklist read, and check / uncheck / recheck), L7 (acknowledge a
-plan change, unload a take-off order), the reads for L8
-(decision) and L9 (activity, per-run and dock-wide), plus the dev-only
-simulation endpoints from L0.
+Scope: L2 (loaders and sign-in sessions), L3 (queue and summary), L4
+(checklist read, and check / uncheck / recheck), L7 (acknowledge a plan change,
+unload a take-off order), the reads for L8 (decision) and L9 (activity,
+per-run and dock-wide), plus the dev-only simulation endpoints from L0.
 
-The queue, sign-in and issue-list endpoints (L2/L3/L5) are Sanduni's features.
-Their proposed response shapes are written up in docs/loader/API_CONTRACT.md
-rather than implemented here.
+Every backend route here is owned by Sachintha (docs/loader/API_CONTRACT.md).
+The flag, issue-list and release endpoints (L5/L6) are still to be built;
+their shapes are in the contract.
 """
 from typing import List
 
@@ -17,10 +17,74 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.core.config import settings
 from app.models.loader_activity import CheckAction
+from app.models.reference import Brand
 from app.schemas import loader as schemas
-from app.services.loader_service import loader_service
+from app.services.loader_service import IncorrectPinError, loader_service
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# L2 sign-in: loaders and sessions
+# ---------------------------------------------------------------------------
+
+
+@router.get("/users", response_model=List[schemas.LoaderUserRead])
+def list_users(
+    q: str | None = Query(None, description="Match the full or short name, case-insensitive"),
+    db: Session = Depends(deps.get_db),
+):
+    """Active loaders for the sign-in tiles, by full name. No PINs."""
+    return loader_service.list_users(db, q)
+
+
+@router.post("/session", response_model=schemas.LoaderSessionRead)
+def start_session(payload: schemas.SessionRequest, db: Session = Depends(deps.get_db)):
+    """Sign a loader in on a dock tablet: 200 with the session, 401 for a wrong
+    PIN (or a loader who cannot sign in), 404 for an unregistered tablet."""
+    try:
+        session = loader_service.start_session(db, payload)
+    except IncorrectPinError as exc:
+        raise HTTPException(
+            status_code=401, detail={"code": "AUTHORIZATION_FAILED", "message": exc.message}
+        )
+    db.commit()
+    return loader_service.session_read(session)
+
+
+@router.delete("/session/{session_id}", response_model=schemas.LoaderSessionRead)
+def end_session(
+    session_id: int, payload: schemas.EndSessionRequest, db: Session = Depends(deps.get_db)
+):
+    """End a session (idle_timeout, switch_user or sign_out). Ending it again
+    returns it unchanged; offline sign-outs are replayed."""
+    session = loader_service.end_session(db, session_id, payload)
+    db.commit()
+    return loader_service.session_read(session)
+
+
+# ---------------------------------------------------------------------------
+# L3 queue and summary
+# ---------------------------------------------------------------------------
+
+
+@router.get("/runs", response_model=schemas.RunQueueRead)
+def get_queue(
+    dock: str = Query(..., description="Dock number, code or name: 3, DOCK3 or 'Dock 3'"),
+    brand: Brand | None = Query(None, description="Only this brand's runs"),
+    db: Session = Depends(deps.get_db),
+):
+    """The dock's loading queue: cards grouped by brand and wave, by departure."""
+    return loader_service.build_queue(db, loader_service.resolve_dock(db, dock), brand)
+
+
+@router.get("/summary", response_model=schemas.QueueSummaryRead)
+def get_summary(
+    dock: str = Query(..., description="Dock number, code or name: 3, DOCK3 or 'Dock 3'"),
+    db: Session = Depends(deps.get_db),
+):
+    """The queue's metric cards, counted from the same runs as GET /loader/runs."""
+    return loader_service.build_summary(db, loader_service.resolve_dock(db, dock))
 
 
 @router.get("/runs/{code}", response_model=schemas.RunDetailRead)

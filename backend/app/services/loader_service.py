@@ -2,14 +2,16 @@
 
 Endpoints stay thin; anything that decides something lives here.
 """
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import quote
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import InvalidStateTransitionError, NotFoundError
+from app.core.security import verify_password
 from app.models.delivery_run import (
     DeliveryRun,
     RunOrderState,
@@ -23,7 +25,15 @@ from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderI
 from app.models.loader_user import LoaderSession, LoaderUser
 from app.models.order import Order
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
-from app.models.reference import Dock, TemperatureClass
+from app.models.reference import (
+    Brand,
+    CalendarDay,
+    Dock,
+    DockTablet,
+    TempCapability,
+    TemperatureClass,
+    VehicleType,
+)
 from app.schemas import loader as schemas
 
 # States that mean the order is physically aboard, for the capacity rollup.
@@ -44,6 +54,60 @@ OFF_PLAN_STATES = {RunOrderState.TAKE_OFF, RunOrderState.MOVED}
 # Once signed off or through the gate, the checklist is closed to the loader.
 # Reopening after Ready is L7's plan-change path, not a plain check.
 CLOSED_RUN_STATES = {RunStatus.READY_TO_DEPART, RunStatus.GATED_OUT}
+
+# Runs the summary counts as "Loading" (L3): someone is working on them.
+LOADING_RUN_STATES = {RunStatus.LOADING, RunStatus.ISSUE_FLAGGED, RunStatus.LOADED}
+
+BRAND_LABELS = {Brand.FRESH: "Fresh", Brand.STYLE: "Style", Brand.TECH: "Tech"}
+
+# How a queue card names a waiting flag: "ORD0092314 missing · waiting".
+ISSUE_WORDS = {
+    IssueType.MISSING: "missing",
+    IssueType.SHORT: "short",
+    IssueType.DAMAGED: "damaged",
+    IssueType.WONT_FIT: "won't fit",
+}
+
+# Asia/Colombo is UTC+05:30 all year (no DST). A fixed offset needs no tz
+# database, which Windows Python does not ship.
+DEPOT_UTC_OFFSET = timedelta(hours=5, minutes=30)
+_DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _depot_time(value: datetime) -> datetime:
+    """A stored datetime (naive UTC) or an aware one, as naive depot time."""
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value + DEPOT_UTC_OFFSET
+
+
+def _depot_date(value: datetime) -> date:
+    return _depot_time(value).date()
+
+
+def _depot_hhmm(value: datetime) -> str:
+    return _depot_time(value).strftime("%H:%M")
+
+
+def _day_label(day: date) -> str:
+    """"Thu 28 May", without depending on the server's locale."""
+    return f"{_DAYS[day.weekday()]} {day.day} {_MONTHS[day.month - 1]}"
+
+
+def _ordinal(n: int) -> str:
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+class IncorrectPinError(Exception):
+    """POST /loader/session with a wrong PIN, or for a loader who cannot sign
+    in. The endpoint answers 401: the shared AuthorizationError handler is a
+    403, which the tablet would read as "offline"."""
+
+    def __init__(self, message: str = "Incorrect PIN."):
+        super().__init__(message)
+        self.message = message
 
 # Which row states each tablet action may start from. check also clears
 # re_check: the tablet taps the same tile whatever the row says, so a check on a
@@ -755,6 +819,288 @@ class LoaderService:
             query.order_by(LoaderActivity.at.desc(), LoaderActivity.id.desc()).limit(limit)
         ).scalars()
         return [LoaderService._to_activity_read(row) for row in rows]
+
+    # --- L2 sign-in: users and sessions ------------------------------------
+
+    @staticmethod
+    def list_users(db: Session, q: Optional[str] = None) -> List[LoaderUser]:
+        """Active loaders for the sign-in tiles, by full name. `q` matches the
+        full or short name anywhere, case-insensitive. Not filtered by depot:
+        the tablet sends no dock, and loader_users only has an optional home dock."""
+        query = select(LoaderUser).where(LoaderUser.is_active.is_(True))
+        needle = (q or "").strip()
+        if needle:
+            like = f"%{needle}%"
+            query = query.where(or_(LoaderUser.full_name.ilike(like), LoaderUser.short_name.ilike(like)))
+        return list(db.execute(query.order_by(LoaderUser.full_name, LoaderUser.id)).scalars())
+
+    @staticmethod
+    def start_session(db: Session, payload: schemas.SessionRequest) -> LoaderSession:
+        """Sign a loader in on a registered tablet.
+
+        The tablet decides the dock, so an unknown or retired tablet is a 404.
+        An unknown or inactive loader gets the same answer as a wrong PIN, so
+        the endpoint does not reveal which ids exist. Other sessions on the
+        tablet are left alone: the tablet ends the old one itself.
+        """
+        label = payload.dock_tablet_label.strip()
+        tablet = db.execute(
+            select(DockTablet).where(DockTablet.label == label, DockTablet.is_active.is_(True))
+        ).scalars().first()
+        if tablet is None:
+            raise NotFoundError(
+                f"Dock tablet '{label}' is not registered.", entity="DockTablet", entity_id=label
+            )
+        user = db.get(LoaderUser, payload.loader_user_id)
+        if user is None or not user.is_active or not verify_password(payload.pin, user.pin_hash):
+            raise IncorrectPinError()
+        session = LoaderSession(loader_user_id=user.id, dock_tablet_id=tablet.id)
+        db.add(session)
+        db.flush()
+        return session
+
+    @staticmethod
+    def end_session(
+        db: Session, session_id: int, payload: schemas.EndSessionRequest
+    ) -> LoaderSession:
+        """End a session. Ending it again is a no-op that keeps the first
+        ended_at / end_reason, because offline sign-outs are replayed."""
+        session = db.get(LoaderSession, session_id)
+        if session is None:
+            raise NotFoundError(
+                f"Loader session {session_id} not found.", entity="LoaderSession", entity_id=session_id
+            )
+        if session.ended_at is None:
+            session.ended_at = datetime.now(timezone.utc)
+            session.end_reason = payload.end_reason
+            db.flush()
+        return session
+
+    @staticmethod
+    def session_read(session: LoaderSession) -> schemas.LoaderSessionRead:
+        dock = session.dock_tablet.dock
+        return schemas.LoaderSessionRead(
+            session_id=session.id,
+            loader=schemas.SessionLoaderRead(
+                id=session.loader_user.id, short_name=session.loader_user.short_name
+            ),
+            dock=dock.name,
+            depot=dock.depot.value,
+            started_at=session.started_at,
+            ended_at=session.ended_at,
+            end_reason=session.end_reason,
+        )
+
+    # --- L3 queue and summary ---------------------------------------------
+
+    @staticmethod
+    def queue_runs(db: Session, dock: Dock, brand: Optional[Brand] = None) -> List[DeliveryRun]:
+        """The dock's runs, by departure. Gated-out runs have left the dock and
+        drop off (they are the driver's now). Not narrowed to one day: the queue
+        is whatever the dock still has to load or hand over."""
+        query = select(DeliveryRun).where(
+            DeliveryRun.dock_id == dock.id, DeliveryRun.status != RunStatus.GATED_OUT
+        )
+        if brand is not None:
+            query = query.where(DeliveryRun.brand == brand)
+        return list(db.execute(query.order_by(DeliveryRun.departs_at, DeliveryRun.code)).scalars())
+
+    @staticmethod
+    def build_queue(db: Session, dock: Dock, brand: Optional[Brand] = None) -> schemas.RunQueueRead:
+        """GET /loader/runs: cards grouped by brand and wave ("Fresh · night
+        wave"), groups in order of their first departure."""
+        groups: Dict[Tuple[Brand, str], schemas.RunGroupRead] = {}
+        for run in LoaderService.queue_runs(db, dock, brand):
+            wave = run.wave or "day"
+            key = (run.brand, wave)
+            if key not in groups:
+                groups[key] = schemas.RunGroupRead(
+                    label=f"{BRAND_LABELS[run.brand]} · {wave} wave", brand=run.brand, wave=wave, runs=[]
+                )
+            groups[key].runs.append(LoaderService.run_card(db, run))
+        return schemas.RunQueueRead(groups=list(groups.values()))
+
+    @staticmethod
+    def run_card(db: Session, run: DeliveryRun) -> schemas.RunSummaryRead:
+        """One queue card. Counts, release fields and the plan alert come from
+        the run read itself, so the card and the checklist never disagree."""
+        detail = LoaderService.build_run_detail(db, run)
+        return schemas.RunSummaryRead(
+            code=run.code,
+            vehicle_code=run.vehicle.code,
+            vehicle_type=run.vehicle.vehicle_type,
+            temp_capability=run.vehicle.temp_capability,
+            trip_number=run.trip_number,
+            brand=run.brand,
+            district=run.district,
+            departs_at=run.departs_at,
+            status=run.status,
+            stop_count=len(detail.stops),
+            orders_loaded=detail.orders_loaded,
+            orders_checked=detail.orders_checked,
+            orders_total=detail.orders_total,
+            loader=LoaderService._run_loader(db, run),
+            released_at=detail.released_at,
+            released_by=detail.released_by,
+            plan_updated_at=LoaderService.plan_updated_at(db, run),
+            pre_stage_note=None,
+            chips=LoaderService._run_chips(db, run),
+            alert=LoaderService._run_alert(db, run, detail),
+        )
+
+    @staticmethod
+    def _run_loader(db: Session, run: DeliveryRun) -> Optional[str]:
+        """Who is on the run: the loader of its latest logged action, else who
+        released it, else who checked an order last."""
+        latest = db.execute(
+            select(LoaderActivity)
+            .where(
+                LoaderActivity.run_id == run.id,
+                LoaderActivity.actor_kind == ActorKind.LOADER,
+                LoaderActivity.actor_id.is_not(None),
+            )
+            .order_by(LoaderActivity.at.desc(), LoaderActivity.id.desc())
+        ).scalars().first()
+        if latest is not None:
+            return latest.actor.short_name
+        if run.released_by is not None:
+            return run.released_by.short_name
+        checked = db.execute(
+            select(RunStopOrder)
+            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+            .where(RunStop.run_id == run.id, RunStopOrder.checked_by_id.is_not(None))
+            .order_by(RunStopOrder.checked_at.desc())
+        ).scalars().first()
+        return checked.checked_by.short_name if checked is not None else None
+
+    @staticmethod
+    def _run_chips(db: Session, run: DeliveryRun) -> List[str]:
+        """["Truck", "Reefer", third]: the third is the one thing the loader
+        most needs to know - van-only access, a reload trip, or capacity."""
+        vehicle = run.vehicle
+        chips = [
+            "Van" if vehicle.vehicle_type == VehicleType.VAN else "Truck",
+            "Reefer" if vehicle.temp_capability == TempCapability.REEFER else "Ambient",
+        ]
+        if any(stop.outlet.van_only for stop in LoaderService.current_stops(db, run)):
+            chips.append("van_only")
+        elif run.trip_number > 1:
+            chips.append(f"{_ordinal(run.trip_number)} trip · reload")
+        else:
+            chips.append(f"{vehicle.max_weight_kg:,.0f} kg · {vehicle.max_volume_m3:.1f} m³")
+        return chips
+
+    @staticmethod
+    def _run_alert(
+        db: Session, run: DeliveryRun, detail: schemas.RunDetailRead
+    ) -> Optional[schemas.RunAlertRead]:
+        """The card's alert row, most urgent first: an unread plan (the same
+        wording as the frontend's planChangeAlert), a flag waiting on the
+        dispatcher, then signed off. The tablet replaces the plan alert with its
+        own while it has taps waiting to sync."""
+        href = f"/loader/runs/{quote(run.code)}"
+        to = detail.unacknowledged_plan_version
+        if to is not None:
+            change = detail.plan_change
+            since = detail.acknowledged_plan_version
+            if since is None and change is not None:
+                since = change.from_version
+            versions = f"v{since} → v{to}" if since is not None and since != to else f"v{to}"
+            published = change.published_at if change else detail.plan.published_at
+            at = _depot_hhmm(published)
+            if change is not None and change.was_ready_at is not None:
+                return schemas.RunAlertRead(
+                    tone="error",
+                    message=f"Load reopened · {run.code} · {run.vehicle.code} · {versions} at {at}",
+                    action="Open",
+                    href=href,
+                )
+            return schemas.RunAlertRead(
+                tone="warning", message=f"Plan updated {at} · {versions}", action="Review", href=href
+            )
+
+        waiting = LoaderService._waiting_issues(db, [run.id])
+        if waiting:
+            issue = waiting[-1]
+            return schemas.RunAlertRead(
+                tone="error",
+                message=f"{issue.order.order_number} {ISSUE_WORDS[issue.issue_type]} · waiting",
+                action="Open",
+                href=f"/loader/issues/{issue.id}",
+            )
+        if run.status == RunStatus.READY_TO_DEPART:
+            return schemas.RunAlertRead(
+                tone="success",
+                message="Signed off · driver can collect",
+                action="View",
+                href=f"{href}/ready",
+            )
+        return None
+
+    @staticmethod
+    def _waiting_issues(db: Session, run_ids: List[int]) -> List[LoaderIssue]:
+        """Issues the dispatcher has not answered (sent or seen), oldest first."""
+        if not run_ids:
+            return []
+        return list(
+            db.execute(
+                select(LoaderIssue)
+                .where(
+                    LoaderIssue.run_id.in_(run_ids),
+                    LoaderIssue.status.in_([IssueStatus.SENT, IssueStatus.SEEN]),
+                )
+                .order_by(LoaderIssue.reported_at, LoaderIssue.id)
+            ).scalars()
+        )
+
+    @staticmethod
+    def build_summary(db: Session, dock: Dock) -> schemas.QueueSummaryRead:
+        """GET /loader/summary: the queue's metric cards, counted from the same
+        runs and cards as GET /loader/runs so the two agree.
+
+        The day is the depot date of the first departure (a night wave leaving
+        03:30 belongs to that date), or today when the dock has no runs.
+        """
+        runs = LoaderService.queue_runs(db, dock)
+        cards = [LoaderService.run_card(db, run) for run in runs]
+        day = _depot_date(runs[0].departs_at if runs else datetime.now(timezone.utc))
+
+        holiday = db.execute(
+            select(CalendarDay)
+            .where(CalendarDay.date >= day, CalendarDay.holiday_name.is_not(None))
+            .order_by(CalendarDay.date)
+        ).scalars().first()
+
+        loading = [c for c in cards if c.status in LOADING_RUN_STATES]
+        loaders: List[str] = []
+        for card in loading:
+            first = card.loader.split(" ")[0] if card.loader else None
+            if first and first not in loaders:
+                loaders.append(first)
+        waiting = LoaderService._waiting_issues(db, [run.id for run in runs])
+        ready = [c.code for c in cards if c.status == RunStatus.READY_TO_DEPART]
+
+        return schemas.QueueSummaryRead(
+            dock=dock.name,
+            date=day,
+            day_label=_day_label(day),
+            next_holiday=(
+                schemas.HolidayRead(
+                    date=holiday.date, label=f"{holiday.holiday_name} {_day_label(holiday.date)}"
+                )
+                if holiday is not None
+                else None
+            ),
+            runs=len(cards),
+            loading=schemas.LoadingCountRead(count=len(loading), loaders=loaders),
+            issues=schemas.IssueCountRead(
+                count=len(waiting), label="Awaiting decision" if waiting else "None waiting"
+            ),
+            ready=schemas.ReadyCountRead(count=len(ready), run_codes=ready),
+            plan_updated_at=(
+                LoaderService.dock_plan_updated_at(db, dock, [run.id for run in runs]) if runs else None
+            ),
+        )
 
     # --- writes from the tablet -------------------------------------------
 
