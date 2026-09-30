@@ -64,15 +64,20 @@ export function RequestDetailView({
   manager,
   unloading,
   now,
+  initialNoteSku,
 }: {
   order: StoreOrder;
   outlet: StoreOutlet;
   manager: StoreManager;
   unloading: string;
   now: Date;
+  /** Opens this item's dispatcher note on load. */
+  initialNoteSku?: string;
 }) {
   const [order, setOrder] = useState(initialOrder);
-  const [noteItem, setNoteItem] = useState<StoreOrderItem | null>(null);
+  const [noteItem, setNoteItem] = useState<StoreOrderItem | null>(
+    () => initialOrder.items.find((item) => item.sku === initialNoteSku && item.dispatcherNote) ?? null
+  );
   const [cancelOpen, setCancelOpen] = useState(false);
 
   const deliveryDate = parseISO(order.orderDate);

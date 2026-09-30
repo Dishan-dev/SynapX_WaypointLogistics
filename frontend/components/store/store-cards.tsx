@@ -71,14 +71,17 @@ export function StoreArrowLink({
   href,
   children,
   className,
+  onClick,
 }: {
   href: string;
   children: React.ReactNode;
   className?: string;
+  onClick?: () => void;
 }) {
   return (
     <Link
       href={href}
+      onClick={onClick}
       className={cn(
         "inline-flex min-h-11 items-center gap-1 text-sm font-bold text-primary underline-offset-4 hover:underline md:min-h-0",
         className

@@ -1,14 +1,12 @@
-import Link from "next/link";
-import { Bell, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   brandLabels,
   currentManager,
   currentOutlet,
-  unreadNotificationCount,
 } from "@/components/store/mock-data";
+import { NotificationBell } from "@/components/store/notifications/notification-bell";
 
 // Desktop top bar (Figma: Components / Top Bar). Hidden on mobile, where StoreMobileAppBar takes over.
 export function StoreTopBar() {
@@ -40,17 +38,7 @@ export function StoreTopBar() {
           />
         </div>
 
-        <Button asChild variant="ghost" size="icon-lg" className="relative text-foreground">
-          <Link
-            href="/store/notifications"
-            aria-label={`Notifications, ${unreadNotificationCount} unread`}
-          >
-            <Bell className="size-6" aria-hidden="true" />
-            {unreadNotificationCount > 0 && (
-              <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-destructive" />
-            )}
-          </Link>
-        </Button>
+        <NotificationBell />
 
         <span
           className="flex size-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground"

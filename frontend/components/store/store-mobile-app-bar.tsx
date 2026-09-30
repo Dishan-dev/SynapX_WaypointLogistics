@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { getStorePageTitle } from "@/components/store/store-nav";
-import { currentOutlet, unreadNotificationCount } from "@/components/store/mock-data";
+import { currentOutlet } from "@/components/store/mock-data";
+import { NotificationBell } from "@/components/store/notifications/notification-bell";
 
 // Mobile app bar (Figma: Components / Mobile App Bar). Hidden from md up.
 export function StoreMobileAppBar() {
@@ -31,21 +31,7 @@ export function StoreMobileAppBar() {
         </p>
       </div>
 
-      <Button
-        asChild
-        variant="ghost"
-        className="relative size-11 text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"
-      >
-        <Link
-          href="/store/notifications"
-          aria-label={`Notifications, ${unreadNotificationCount} unread`}
-        >
-          <Bell className="size-6" aria-hidden="true" />
-          {unreadNotificationCount > 0 && (
-            <span className="absolute top-2 right-2.5 size-2 rounded-full bg-destructive" />
-          )}
-        </Link>
-      </Button>
+      <NotificationBell tone="inverse" />
     </header>
   );
 }

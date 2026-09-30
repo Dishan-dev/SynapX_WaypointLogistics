@@ -312,8 +312,6 @@ export const mockIssues: StoreIssue[] = [
   },
 ];
 
-export const unreadNotificationCount = 4;
-
 export const brandLabels: Record<Brand, string> = {
   fresh: "Fresh",
   style: "Style",
@@ -361,3 +359,116 @@ export const mockHolidays: { date: string; name: string }[] = [
 ];
 
 export const OUTLET_UNLOADING = "Rear dock";
+
+// ── Notifications (contract §2 notifications table, §4 types) ──────────────────
+
+export type NotificationType =
+  | "order_submitted"
+  | "order_confirmed"
+  | "dispatcher_note"
+  | "shortfall_warning"
+  | "deferred"
+  | "ready_for_dispatch"
+  | "eta_updated"
+  | "delivered"
+  | "issue_logged"
+  | "order_closed";
+
+export type NotificationCategory = "request" | "delivery" | "issue";
+
+export interface StoreNotification {
+  id: string;
+  type: NotificationType;
+  category: NotificationCategory;
+  title: string;
+  message: string;
+  createdAt: string;
+  isRead: boolean;
+  orderNumber?: string;
+  links: { label: string; href: string }[];
+}
+
+export const mockNotifications: StoreNotification[] = [
+  {
+    id: "ntf-7",
+    type: "issue_logged",
+    category: "issue",
+    title: "Delivery issue logged: ISS0000001",
+    message:
+      "Damaged goods reported for 2 boxes of Paper Cups (SKU-032) on ORD0000001. Sent to the Peliyagoda depot supervisor.",
+    createdAt: "2026-09-26T05:59:00",
+    isRead: false,
+    orderNumber: "ORD0000001",
+    links: [
+      { label: "View Issue", href: "/store/issues/ISS0000001" },
+      { label: "View Order", href: "/store/requests/ORD0000001" },
+    ],
+  },
+  {
+    id: "ntf-6",
+    type: "eta_updated",
+    category: "delivery",
+    title: "ORD0000001 is approaching — ETA 06:10",
+    message: "VEH001 (Marcus Vance) left Peliyagoda Depot at 05:15 with 3 items (33 units).",
+    createdAt: "2026-09-26T05:45:00",
+    isRead: false,
+    orderNumber: "ORD0000001",
+    links: [{ label: "Open Delivery", href: "/store/deliveries/ORD0000001" }],
+  },
+  {
+    id: "ntf-5",
+    type: "dispatcher_note",
+    category: "request",
+    title: "Dispatcher note on ORD0000001",
+    message: "Soft Drinks 1L: 8 of 10 cases sent due to a depot stock shortage. The rest follows on Mon 28 Sep.",
+    createdAt: "2026-09-26T05:10:00",
+    isRead: false,
+    orderNumber: "ORD0000001",
+    links: [{ label: "View Note", href: "/store/requests/ORD0000001?note=SKU-014" }],
+  },
+  {
+    id: "ntf-4",
+    type: "delivered",
+    category: "delivery",
+    title: "ORD0000004 arrived at the rear dock",
+    message: "VEH035 (Carlos Mendes) is waiting at the rear dock. Count the items to confirm.",
+    createdAt: "2026-09-26T04:35:00",
+    isRead: false,
+    orderNumber: "ORD0000004",
+    links: [{ label: "Receive Delivery", href: "/store/deliveries/ORD0000004" }],
+  },
+  {
+    id: "ntf-3",
+    type: "order_closed",
+    category: "request",
+    title: "ORD0000005 closed",
+    message: "Order closed after ISS0000003 was resolved.",
+    createdAt: "2026-09-25T18:02:00",
+    isRead: true,
+    orderNumber: "ORD0000005",
+    links: [],
+  },
+  {
+    id: "ntf-2",
+    type: "ready_for_dispatch",
+    category: "request",
+    title: "ORD0000002 is ready for dispatch",
+    message: "The depot packed 4 items (18 units). Scheduled for Mon 28 Sep, 04:00 – 07:45.",
+    createdAt: "2026-09-25T16:30:00",
+    isRead: true,
+    orderNumber: "ORD0000002",
+    links: [{ label: "View Order", href: "/store/requests/ORD0000002" }],
+  },
+  {
+    id: "ntf-1",
+    type: "deferred",
+    category: "request",
+    title: "ORD0000009 deferred to Fri 18 Sep",
+    message:
+      "No reefer vehicle had space on Thu 17 Sep after a breakdown at Peliyagoda Depot, so dispatch moved this request to the next operating day. Nothing to do on your side.",
+    createdAt: "2026-09-16T17:20:00",
+    isRead: true,
+    orderNumber: "ORD0000009",
+    links: [{ label: "View Order", href: "/store/requests/ORD0000009" }],
+  },
+];

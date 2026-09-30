@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { currentOutlet, unreadNotificationCount } from "@/components/store/mock-data";
+import { currentOutlet } from "@/components/store/mock-data";
+import { UnreadCountText } from "@/components/store/notifications/notification-bell";
 
 // Mobile "More" tab (Figma: Mobile / 12 More): pages that don't fit in the bottom nav.
 const moreLinks = [
@@ -22,7 +23,7 @@ const moreLinks = [
   },
   {
     title: "Notifications",
-    description: `${unreadNotificationCount} unread`,
+    description: <UnreadCountText />,
     href: "/store/notifications",
   },
 ];
