@@ -12,7 +12,9 @@ export type RunActivity =
   | { status: "loading" }
   | { status: "not_found" }
   | { status: "unavailable" }
-  | { status: "ready"; events: ActivityEntry[]; fetchedAt: string; source: ActivitySource };
+  // "checking": this tablet's last copy, shown while the server is asked. It
+  // only becomes "cache" (the offline chip) once the server cannot be reached.
+  | { status: "ready"; events: ActivityEntry[]; fetchedAt: string; source: ActivitySource | "checking" };
 
 /**
  * One run's log (GET /loader/runs/{code}/activity), newest first: this
@@ -44,7 +46,7 @@ export function useRunActivity(code: string): RunActivity {
     void cachedActivity(code).then((cached) => {
       if (cancelled || !cached) return;
       setState((s) =>
-        s.status === "ready" ? s : { status: "ready", events: cached.events, fetchedAt: cached.fetched_at, source: "cache" },
+        s.status === "ready" ? s : { status: "ready", events: cached.events, fetchedAt: cached.fetched_at, source: "checking" },
       );
     });
     return () => {
