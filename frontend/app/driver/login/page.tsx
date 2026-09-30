@@ -1,11 +1,60 @@
 "use client";
 
-import React, { useState } from "react";
-import Link from "next/link";
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, User, Navigation, CloudOff, BatteryFull, Signal } from "lucide-react";
+import { setToken, isAuthenticated } from "@/lib/auth";
+import { apiFetch, ApiError } from "@/lib/api";
+
+interface LoginResponse {
+  access_token: string;
+  token_type: string;
+}
 
 export default function DriverLoginPage() {
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (isAuthenticated()) {
+      router.replace("/driver");
+    }
+  }, [router]);
+
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      // Backend expects form data for OAuth2 password flow
+      const formData = new URLSearchParams();
+      formData.append("username", username);
+      formData.append("password", password);
+
+      const data = await apiFetch<LoginResponse>("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: formData.toString(),
+      });
+
+      setToken(data.access_token);
+      router.push("/driver");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError("Could not connect to server. Check your internet connection.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="min-h-screen w-full flex flex-col font-sans" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
@@ -63,7 +112,8 @@ export default function DriverLoginPage() {
       </div>
 
       {/* Login Card */}
-      <div 
+      <form
+        onSubmit={handleLogin}
         className="flex flex-col flex-1 px-5 pt-7 pb-5 gap-5 -mt-6 z-10"
         style={{
           backgroundColor: "#FFFFFF",
@@ -74,6 +124,16 @@ export default function DriverLoginPage() {
         <div className="flex justify-center w-full">
           <div className="w-9 h-1 rounded-full" style={{ backgroundColor: "#D9E1E8" }}></div>
         </div>
+
+        {/* Error Message */}
+        {error && (
+          <div
+            className="flex items-center px-3.5 py-2.5 rounded-xl text-[13px] font-medium"
+            style={{ backgroundColor: "#FEF2F2", border: "1px solid #FECACA", color: "#C9363E" }}
+          >
+            {error}
+          </div>
+        )}
 
         {/* Fields */}
         <div className="flex flex-col w-full gap-[14px]">
@@ -88,8 +148,12 @@ export default function DriverLoginPage() {
             >
               <User size={18} color="#6B7280" />
               <input
+                id="driver-username"
                 type="text"
                 placeholder="e.g. DRV-214"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
                 className="flex-1 bg-transparent outline-none text-[13px] placeholder-[#6B7280]"
                 style={{ color: "#111827" }}
               />
@@ -107,8 +171,12 @@ export default function DriverLoginPage() {
             >
               <Lock size={18} color="#6B7280" />
               <input
+                id="driver-password"
                 type={showPassword ? "text" : "password"}
                 placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
                 className="flex-1 bg-transparent outline-none text-[13px] placeholder-[#6B7280]"
                 style={{ color: "#111827" }}
               />
@@ -121,22 +189,24 @@ export default function DriverLoginPage() {
 
         {/* Actions */}
         <div className="flex flex-col w-full gap-2.5 mt-1">
-          <Link href="/driver" className="w-full">
-            <button 
-              className="w-full flex justify-center items-center h-[54px] rounded-xl text-white font-bold text-base"
-              style={{ backgroundColor: "#092C4C" }}
-            >
-              Log in →
-            </button>
-          </Link>
+          <button
+            id="driver-login-btn"
+            type="submit"
+            disabled={loading}
+            className="w-full flex justify-center items-center h-[54px] rounded-xl text-white font-bold text-base disabled:opacity-60"
+            style={{ backgroundColor: "#092C4C" }}
+          >
+            {loading ? "Signing in…" : "Log in →"}
+          </button>
           <button 
+            type="button"
             className="w-full flex justify-start items-center h-9 rounded-md font-semibold text-[13px]"
             style={{ color: "rgba(24, 56, 95, 0.75)" }}
           >
             Forgot password
           </button>
         </div>
-      </div>
+      </form>
 
       {/* Offline Info */}
       <div className="flex flex-col px-5 pb-7 pt-2 w-full" style={{ backgroundColor: "#F2F5F8" }}>
