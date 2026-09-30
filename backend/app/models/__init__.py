@@ -2,6 +2,10 @@ from app.models.user import User
 from app.models.order import Order, OrderItem
 from app.models.inventory import InventoryItem, Warehouse
 from app.models.shipment import Shipment, DispatchTrip
+from app.models.fleet import Vehicle, DriverProfile
+from app.models.allocation import Allocation
+from app.models.notification import Notification
+from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, IssueReport, SOSAlert
 from app.models.reference import (
     Brand,
     CalendarDay,
@@ -10,10 +14,7 @@ from app.models.reference import (
     DockTablet,
     DockType,
     Outlet,
-    TempCapability,
     TemperatureClass,
-    Vehicle,
-    VehicleType,
 )
 from app.models.loader_user import LoaderSession, LoaderUser, SessionEndReason
 from app.models.delivery_run import (
@@ -43,6 +44,15 @@ __all__ = [
     "Warehouse",
     "Shipment",
     "DispatchTrip",
+    "Vehicle",
+    "DriverProfile",
+    "Allocation",
+    "Notification",
+    "DriverTrip",
+    "DeliveryStop",
+    "ProofOfDelivery",
+    "IssueReport",
+    "SOSAlert",
     # Loader reference data
     "Brand",
     "CalendarDay",
@@ -51,10 +61,7 @@ __all__ = [
     "DockTablet",
     "DockType",
     "Outlet",
-    "TempCapability",
     "TemperatureClass",
-    "Vehicle",
-    "VehicleType",
     # Loader users
     "LoaderSession",
     "LoaderUser",
@@ -70,7 +77,7 @@ __all__ = [
     "PlanChangeKind",
     "PlanRevision",
     "PlanRevisionChange",
-    # Loader issues and decisions
+    # Loader issues and decisions (Postgres types loaderissuetype / loaderissuestatus)
     "IssueStatus",
     "IssueType",
     "LoaderIssue",

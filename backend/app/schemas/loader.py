@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timezone
 from typing import Annotated, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import AfterValidator, BaseModel, ConfigDict
+from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field
 
 from app.models.delivery_run import RunOrderState, RunStatus, StopStatus
 from app.models.loader_activity import ActorKind
@@ -36,12 +36,32 @@ def _as_utc(value: datetime) -> datetime:
 UtcDateTime = Annotated[datetime, AfterValidator(_as_utc)]
 
 
+def _lower(value):
+    """fleet.Vehicle stores vehicle_type / temperature_mode as free strings; Neon
+    has them lower case, but the column default is "Ambient"."""
+    return value.lower() if isinstance(value, str) else value
+
+
+# Vehicle columns as the loader API names them. Read from fleet.Vehicle
+# (Thisaru's `vehicles` table), whose own names are the second alias.
+LoaderVehicleType = Annotated[VehicleType, BeforeValidator(_lower)]
+LoaderTempCapability = Annotated[TempCapability, BeforeValidator(_lower)]
+
+
 class VehicleRead(BaseModel):
+    """The run's vehicle, read from fleet.Vehicle.
+
+    temperature_mode -> temp_capability, capacity_kg -> max_weight_kg,
+    capacity_vol_m3 -> max_volume_m3. The API keeps the loader names.
+    """
+
     code: str
-    vehicle_type: VehicleType
-    temp_capability: TempCapability
-    max_weight_kg: float
-    max_volume_m3: float
+    vehicle_type: LoaderVehicleType
+    temp_capability: LoaderTempCapability = Field(
+        validation_alias=AliasChoices("temp_capability", "temperature_mode")
+    )
+    max_weight_kg: float = Field(validation_alias=AliasChoices("max_weight_kg", "capacity_kg"))
+    max_volume_m3: float = Field(validation_alias=AliasChoices("max_volume_m3", "capacity_vol_m3"))
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,7 +1,19 @@
 """loader foundation
 
+Sits on top of the dev chain (0001_baseline -> bbb8d4327f93 -> 552931e83b93 ->
+af60e6fa37a0 -> 0a80c3e0353c -> c9228f7f0a72 -> 50ff454ecd63), so it only creates
+what the shared database does not already have:
+
+- No `vehicles` table: that is Thisaru's (bbb8d4327f93, app.models.fleet.Vehicle).
+  delivery_runs.vehicle_id points at it. The loader reads temperature_mode and
+  depot_name for what it used to call temp_capability and depot, so no columns
+  are added to it.
+- The loader issue enums are named loaderissuetype / loaderissuestatus, because
+  the driver team's issue_reports (50ff454ecd63) already created the Postgres
+  types issuetype and issuestatus.
+
 Revision ID: 0002_loader_foundation
-Revises: 0001_baseline
+Revises: 50ff454ecd63
 Create Date: 2026-09-29 16:33:37.028402
 
 """
@@ -13,7 +25,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '0002_loader_foundation'
-down_revision: Union[str, Sequence[str], None] = '0001_baseline'
+down_revision: Union[str, Sequence[str], None] = '50ff454ecd63'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -54,18 +66,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_outlets_code'), 'outlets', ['code'], unique=True)
     op.create_index(op.f('ix_outlets_id'), 'outlets', ['id'], unique=False)
-    op.create_table('vehicles',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code', sa.String(length=20), nullable=False),
-    sa.Column('vehicle_type', sa.Enum('TRUCK', 'VAN', name='vehicletype'), nullable=False),
-    sa.Column('temp_capability', sa.Enum('REEFER', 'AMBIENT', name='tempcapability'), nullable=False),
-    sa.Column('max_weight_kg', sa.Float(), nullable=False),
-    sa.Column('max_volume_m3', sa.Float(), nullable=False),
-    sa.Column('depot', sa.Enum('PELIYAGODA', 'KANDY', name='depot'), nullable=False),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_vehicles_code'), 'vehicles', ['code'], unique=True)
-    op.create_index(op.f('ix_vehicles_id'), 'vehicles', ['id'], unique=False)
     op.create_table('dock_tablets',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('label', sa.String(length=100), nullable=False),
@@ -153,7 +153,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('run_id', sa.Integer(), nullable=False),
     sa.Column('order_id', sa.Integer(), nullable=False),
-    sa.Column('issue_type', sa.Enum('MISSING', 'SHORT', 'DAMAGED', 'WONT_FIT', name='issuetype'), nullable=False),
+    sa.Column('issue_type', sa.Enum('MISSING', 'SHORT', 'DAMAGED', 'WONT_FIT', name='loaderissuetype'), nullable=False),
     sa.Column('units_affected', sa.Integer(), nullable=True),
     sa.Column('units_total', sa.Integer(), nullable=True),
     sa.Column('quick_note_tag', sa.String(length=100), nullable=True),
@@ -161,7 +161,7 @@ def upgrade() -> None:
     sa.Column('photo_path', sa.String(length=500), nullable=True),
     sa.Column('reported_by_id', sa.Integer(), nullable=False),
     sa.Column('reported_at', sa.DateTime(), nullable=False),
-    sa.Column('status', sa.Enum('SENT', 'SEEN', 'DECIDED', 'DEFAULT_APPLIED', name='issuestatus'), nullable=False),
+    sa.Column('status', sa.Enum('SENT', 'SEEN', 'DECIDED', 'DEFAULT_APPLIED', name='loaderissuestatus'), nullable=False),
     sa.Column('seen_at', sa.DateTime(), nullable=True),
     sa.Column('decide_by', sa.DateTime(), nullable=True),
     sa.Column('decided_at', sa.DateTime(), nullable=True),
@@ -319,9 +319,6 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_dock_tablets_label'), table_name='dock_tablets')
     op.drop_index(op.f('ix_dock_tablets_id'), table_name='dock_tablets')
     op.drop_table('dock_tablets')
-    op.drop_index(op.f('ix_vehicles_id'), table_name='vehicles')
-    op.drop_index(op.f('ix_vehicles_code'), table_name='vehicles')
-    op.drop_table('vehicles')
     op.drop_index(op.f('ix_outlets_id'), table_name='outlets')
     op.drop_index(op.f('ix_outlets_code'), table_name='outlets')
     op.drop_table('outlets')
@@ -341,16 +338,14 @@ def downgrade() -> None:
             "actorkind",
             "releaseaction",
             "checkaction",
-            "issuestatus",
-            "issuetype",
+            "loaderissuestatus",
+            "loaderissuetype",
             "planchangekind",
             "runorderstate",
             "runstatus",
             "stopstatus",
             "sessionendreason",
             "docktype",
-            "tempcapability",
-            "vehicletype",
             "brand",
             "depot",
         ):
