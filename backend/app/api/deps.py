@@ -39,3 +39,13 @@ def get_current_user(
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
+
+
+def require_driver(current_user: User = Depends(get_current_user)) -> User:
+    from app.models.user import UserRole
+    if current_user.role != UserRole.DRIVER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Driver access only"
+        )
+    return current_user
