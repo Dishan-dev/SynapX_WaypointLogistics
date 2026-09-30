@@ -9,9 +9,12 @@ sys.path.append(os.path.dirname(__file__))
 from app.models.user import User, UserRole
 from app.models.fleet import Vehicle, DriverProfile, VehicleStatus
 from app.models.allocation import Allocation, AllocationStatus
+from app.models.shipment import DispatchTrip
+from app.models.order import Order, OrderItem, OrderStatus
 
-load_dotenv()
-url = os.environ["DATABASE_URL_UNPOOLED"].replace("postgresql://", "postgresql+psycopg://", 1)
+from app.core.config import settings
+
+url = settings.DATABASE_URL_UNPOOLED or settings.DATABASE_URL
 engine = sa.create_engine(url)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -24,6 +27,9 @@ def today_at(hour: int, minute: int = 0) -> datetime:
 def wipe(db):
     """Delete all seed data cleanly so re-seeding is idempotent."""
     print("Wiping existing seed data...")
+    db.execute(sa.text("DELETE FROM dispatch_trips"))
+    db.execute(sa.text("DELETE FROM order_items"))
+    db.execute(sa.text("DELETE FROM orders"))
     db.execute(sa.text("DELETE FROM allocations"))
     db.execute(sa.text("DELETE FROM driver_profiles"))
     db.execute(sa.text("DELETE FROM vehicles"))
@@ -147,16 +153,154 @@ def seed():
 
         db.add_all(allocations)
         db.commit()
+        for a in allocations:
+            db.refresh(a)
 
-        print("\n✅ Seeding complete! All statuses covered:")
-        print("  DRAFT        — VEH014 · RUN-029 · Kasun Perera   (94% load, needs review)")
-        print("  ALLOCATED    — VEH022 · RUN-024 · Nimal Perera   (82% load, mark as ready)")
-        print("  READY        — VEH031 · RUN-018 · Amal Fernando  (71% load, dispatch vehicle)")
-        print("  LOADING      — VEH041 · RUN-011 · No driver       (58% load, being loaded)")
-        print("  DISPATCHED   — VEH008 · RUN-005 · Ruwan Silva     (65% load, on road)")
-        print("  COMPLETED    — VEH033 · RUN-001 · Kasun Perera   (78% load, done)")
-        print("  UNAVAILABLE  — VEH019 · Under maintenance         (blocked)")
-        print("  AVAILABLE    — VEH055 · Spare vehicle             (free, no allocation)")
+        # ── 4. Delivery Runs (Dispatch Trips) ─────────────────────────────────
+        runs_seed = [
+            {
+                "trip_code": "RUN-024",
+                "vehicle_number": "VEH014",
+                "driver_name": "Kasun Perera",
+                "origin": "peliyagoda",
+                "destination": "nugegoda",
+                "depot_name": "peliyagoda",
+                "status": "ready",
+                "stop_count": 6,
+                "stops_completed": 0,
+                "total_weight_kg": 3280.0,
+                "total_volume_m3": 14.5,
+                "open_shortfalls": 0,
+                "departure_time": today_at(6),
+                "estimated_arrival": today_at(8, 10),
+                "stop_sequence": ["Nugegoda", "Maharagama", "Kottawa", "Homagama", "Panadura", "Piliyandala"],
+                "loading_events": [
+                    {"event": "Plan published", "time": "04:30", "note": "06:00 departure · 6 stops", "status": "ok"},
+                    {"event": "Loading started", "time": "05:12", "note": "loading dock confirmed", "status": "ok"},
+                    {"event": "Shortfall reported", "time": "05:20", "note": "OUT033 · 2 cartons unavailable", "status": "error"},
+                    {"event": "Shortfall resolved", "time": "05:28", "note": "Order adjusted by dispatcher", "status": "ok"},
+                    {"event": "Ready to depart", "time": None, "note": "Waiting for final dock confirmation", "status": "pending"},
+                ],
+            },
+            {
+                "trip_code": "RUN-029", 
+                "vehicle_number": "VEH031", 
+                "driver_name": "Amal Fernando", 
+                "origin": "peliyagoda", 
+                "destination": "gampaha", 
+                "depot_name": "peliyagoda", 
+                "status": "en_route", 
+                "stop_count": 5, 
+                "stops_completed": 3, 
+                "total_weight_kg": 4100.0, 
+                "total_volume_m3": 18.2, 
+                "open_shortfalls": 1, 
+                "departure_time": today_at(9),
+                "estimated_arrival": today_at(13, 40),
+                "stop_sequence": ["Kelaniya", "Wattala", "Ja-Ela", "Gampaha", "Nittambuwa"], 
+                "loading_events": []
+            },
+            {
+                "trip_code": "RUN-018", 
+                "vehicle_number": "VEH022", 
+                "driver_name": "Nimal Perera", 
+                "origin": "kandy", 
+                "destination": "matale", 
+                "depot_name": "kandy", 
+                "status": "en_route", 
+                "stop_count": 4, 
+                "stops_completed": 2, 
+                "total_weight_kg": 2900.0, 
+                "total_volume_m3": 12.0, 
+                "open_shortfalls": 0, 
+                "departure_time": today_at(8, 30),
+                "estimated_arrival": today_at(12, 15),
+                "stop_sequence": ["Katugastota", "Matale", "Dambulla", "Sigiriya"], 
+                "loading_events": []
+            },
+            {
+                "trip_code": "RUN-031", 
+                "vehicle_number": "VEH041", 
+                "driver_name": "Unassigned", 
+                "origin": "peliyagoda", 
+                "destination": "colombo-07", 
+                "depot_name": "peliyagoda", 
+                "status": "scheduled", 
+                "stop_count": 6, 
+                "stops_completed": 0, 
+                "total_weight_kg": 5200.0, 
+                "total_volume_m3": 22.0, 
+                "open_shortfalls": 0, 
+                "departure_time": today_at(11, 30),
+                "estimated_arrival": today_at(16, 45),
+                "stop_sequence": ["Colombo 7", "Colombo 3", "Colombo 1", "Pettah", "Grandpass", "Maradana"], 
+                "loading_events": []
+            },
+        ]
+        
+        for run_data in runs_seed:
+            db.add(DispatchTrip(**run_data))
+        db.commit()
+
+        # ── 4. Orders ─────────────────────────────────────────────────────────
+        orders_raw = [
+            # num, client, addr, brand, district, temp, window, kg, status, is_prio, is_late, alloc_idx, def_reason
+            ("ORD-1001", "Fresh Mart - Nugegoda", "High Level Rd, Nugegoda", "Fresh", "Colombo", "Chilled", "05:30–07:30", 420.0, OrderStatus.CONFIRMED, False, False, None, None),
+            ("ORD-1002", "Fresh Mart - Kandy", "Peradeniya Rd, Kandy", "Fresh", "Kandy", "Chilled", "06:00–08:00", 380.0, OrderStatus.CONFIRMED, False, False, None, None),
+            ("ORD-1003", "Style Hub - OGF", "Galle Face, Colombo 03", "Style", "Colombo", "Ambient", "10:00–12:00", 240.0, OrderStatus.CONFIRMED, False, False, None, None),
+            ("ORD-1004", "Waypoint Tech - Maharagama", "Old Road, Maharagama", "Tech", "Colombo", "Ambient", "09:00–11:00", 510.0, OrderStatus.CONFIRMED, True, False, None, None),
+            ("ORD-1005", "Fresh Mart - Kiribathgoda", "Kandy Rd, Kiribathgoda", "Fresh", "Gampaha", "Chilled", "05:30–07:30", 450.0, OrderStatus.DEFERRED, False, False, None, "Previous capacity shortfall"),
+            ("ORD-1006", "Style Hub - Kandy", "Dalada Veediya, Kandy", "Style", "Kandy", "Ambient", "10:00–13:00", 280.0, OrderStatus.CONFIRMED, False, False, None, None),
+            ("ORD-1007", "Fresh Mart - Wattala", "Negombo Rd, Wattala", "Fresh", "Gampaha", "Chilled", "06:00–08:00", 360.0, OrderStatus.CONFIRMED, False, False, None, None),
+            ("ORD-1008", "Waypoint Tech - Kandy City", "Kings St, Kandy", "Tech", "Kandy", "Ambient", "11:00–13:00", 410.0, OrderStatus.CONFIRMED, True, False, None, None),
+            ("ORD-1009", "Style Hub - Negombo", "Main St, Negombo", "Style", "Gampaha", "Ambient", "13:00–15:00", 320.0, OrderStatus.CONFIRMED, False, False, None, None),
+            ("ORD-1010", "Fresh Mart - Moratuwa", "Galle Rd, Moratuwa", "Fresh", "Colombo", "Chilled", "06:30–08:30", 490.0, OrderStatus.ALLOCATED, False, False, 1, None),
+            ("ORD-1011", "Waypoint Tech - Galle Road", "Galle Rd, Colombo 04", "Tech", "Colombo", "Ambient", "14:00–16:00", 190.0, OrderStatus.ALLOCATED, False, False, 2, None),
+            ("ORD-1012", "Fresh Mart - Dehiwala", "Station Rd, Dehiwala", "Fresh", "Colombo", "Chilled", "07:00–09:00", 390.0, OrderStatus.CONFIRMED, False, False, None, None),
+            ("ORD-1013", "Fresh Mart - Panadura", "Arthur V Dias Mawatha, Panadura", "Fresh", "Colombo", "Chilled", "07:30–09:30", 310.0, OrderStatus.CONFIRMED, False, False, None, None),
+            ("ORD-1014", "Style Hub - Colombo 03", "R. A. De Mel Mawatha, Colombo 03", "Style", "Colombo", "Ambient", "10:30–12:30", 260.0, OrderStatus.CONFIRMED, False, False, None, None),
+            # Late orders queued for next operating day (cutoff 4:00 PM)
+            ("ORD-1015", "Fresh Mart - Kelaniya", "Peliyagoda Rd, Kelaniya", "Fresh", "Gampaha", "Chilled", "05:30–07:30", 220.0, OrderStatus.CONFIRMED, False, True, None, "Order received after 4:00 PM cutoff"),
+            ("ORD-1016", "Waypoint Tech - Battaramulla", "Pannipitiya Rd, Battaramulla", "Tech", "Colombo", "Ambient", "09:00–11:00", 180.0, OrderStatus.CONFIRMED, False, True, None, "Order received after 4:00 PM cutoff"),
+            ("ORD-1017", "Style Hub - Rajagiriya", "Parliament Rd, Rajagiriya", "Style", "Colombo", "Ambient", "10:00–12:00", 310.0, OrderStatus.CONFIRMED, False, True, None, "Order received after 4:00 PM cutoff"),
+            ("ORD-1018", "Fresh Mart - Malabe", "Athurugiriya Rd, Malabe", "Fresh", "Colombo", "Chilled", "06:00–08:00", 270.0, OrderStatus.CONFIRMED, False, True, None, "Order received after 4:00 PM cutoff"),
+            ("ORD-1019", "Style Hub - Mount Lavinia", "Hotel Rd, Mount Lavinia", "Style", "Colombo", "Ambient", "11:00–13:00", 190.0, OrderStatus.CONFIRMED, False, True, None, "Order received after 4:00 PM cutoff"),
+            ("ORD-1020", "Fresh Mart - Kottawa", "High Level Rd, Kottawa", "Fresh", "Colombo", "Chilled", "07:00–09:00", 340.0, OrderStatus.CONFIRMED, False, True, None, "Order received after 4:00 PM cutoff"),
+            ("ORD-1021", "Waypoint Tech - Ja-Ela", "Negombo Rd, Ja-Ela", "Tech", "Gampaha", "Ambient", "13:00–15:00", 250.0, OrderStatus.CONFIRMED, False, True, None, "Order received after 4:00 PM cutoff"),
+        ]
+
+        for num, client, addr, brand, dist, temp, win, kg, stat, is_prio, is_late, alloc_idx, def_rsn in orders_raw:
+            alloc_id = allocations[alloc_idx].id if alloc_idx is not None else None
+            o = Order(
+                order_number=num,
+                client_name=client,
+                destination_address=addr,
+                brand=brand,
+                district=dist,
+                temperature_zone=temp,
+                delivery_window=win,
+                weight_kg=kg,
+                status=stat,
+                is_priority=is_prio,
+                is_late=is_late,
+                allocation_id=alloc_id,
+                operating_date="2026-09-26",
+                deferral_reason=def_rsn,
+                total_amount=kg * 450.0,
+            )
+            db.add(o)
+        db.commit()
+
+        print("\n[OK] Seeding complete! All statuses covered:")
+        print("  DRAFT        - VEH014 . RUN-029 . Kasun Perera   (94% load, needs review)")
+        print("  ALLOCATED    - VEH022 . RUN-024 . Nimal Perera   (82% load, mark as ready)")
+        print("  READY        - VEH031 . RUN-018 . Amal Fernando  (71% load, dispatch vehicle)")
+        print("  LOADING      - VEH041 . RUN-011 . No driver       (58% load, being loaded)")
+        print("  DISPATCHED   - VEH008 . RUN-005 . Ruwan Silva     (65% load, on road)")
+        print("  COMPLETED    - VEH033 . RUN-001 . Kasun Perera   (78% load, done)")
+        print("  UNAVAILABLE  - VEH019 . Under maintenance         (blocked)")
+        print("  AVAILABLE    - VEH055 . Spare vehicle             (free, no allocation)")
+        print("  ORDERS       - 14 Active orders (Confirmed, Priority, Deferred, Allocated) + 7 Late queued orders")
 
     except Exception as e:
         print(f"Error seeding: {e}")
