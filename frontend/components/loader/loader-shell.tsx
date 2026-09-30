@@ -6,6 +6,7 @@ import { FlagIssueHost } from "./flag-issue-sheet";
 import { LoaderBottomNav, type LoaderTab } from "./loader-bottom-nav";
 import { listOutbox } from "@/lib/loader/offline/db";
 import { loadIssues } from "@/lib/loader/offline/issues-cache";
+import { warmRunPages } from "@/lib/loader/offline/run-pages";
 import { LoaderSyncProvider, useLoaderSync } from "./loader-sync-provider";
 
 export interface LoaderShellUser {
@@ -41,6 +42,11 @@ function activeTab(pathname: string): LoaderTab | undefined {
   if (pathname.startsWith("/loader/log")) return "log";
   if (pathname.startsWith("/loader/more")) return "more";
   return undefined;
+}
+
+/** The run code on a checklist page (/loader/runs/RUN-021), not on its sub-pages. */
+function checklistCodeFrom(pathname: string): string | undefined {
+  return /^\/loader\/runs\/([^/]+)\/?$/.exec(pathname)?.[1];
 }
 
 function runCodeFrom(pathname: string): string | undefined {
@@ -107,6 +113,24 @@ function ShellBottomNav({
   );
 }
 
+/**
+ * While a run's checklist is open online, fetch its Review, Ready and Log
+ * pages once so they open offline later (the service worker keeps them until
+ * sign-out).
+ */
+function RunPageWarmer({ checklistCode }: { checklistCode?: string }) {
+  const { sync } = useLoaderSync();
+  const warmed = React.useRef(new Set<string>());
+
+  React.useEffect(() => {
+    if (!checklistCode || !sync.online || warmed.current.has(checklistCode)) return;
+    warmed.current.add(checklistCode);
+    void warmRunPages(checklistCode);
+  }, [checklistCode, sync.online]);
+
+  return null;
+}
+
 interface LoaderShellProps {
   user: LoaderShellUser;
   dockLabel: string;
@@ -145,6 +169,7 @@ export function LoaderShell({ user, dockLabel, dock, sessionId, issueCount, chil
           />
         </div>
         <FlagIssueHost />
+        <RunPageWarmer checklistCode={checklistCodeFrom(pathname)} />
       </LoaderSyncProvider>
     </LoaderShellContext.Provider>
   );

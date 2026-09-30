@@ -6,9 +6,13 @@
 
 // v2: adds the sign-in and More pages (sign-in and sign-out work offline).
 // v3: adds the Issues tab.
-const VERSION = "loader-v3";
+// v4: run pages (checklist, review, ready, log) go in their own cache, which
+//     the tablet empties on sign-out so the next loader cannot open them offline.
+const VERSION = "loader-v4";
 const PAGES = `${VERSION}-pages`;
 const STATIC = `${VERSION}-static`;
+// Name must end in "-runs": lib/loader/offline/run-pages.ts clears caches by that suffix.
+const RUNS = `${VERSION}-runs`;
 const PRECACHE = ["/loader", "/loader/sign-in", "/loader/more", "/loader/issues", "/loader.webmanifest", "/loader-icons/icon-192.png", "/loader-icons/icon-512.png"];
 
 // Cache the shell pages plus the build assets the queue, sign-in, More and
@@ -44,8 +48,8 @@ self.addEventListener("activate", (event) => {
 // Network first; on failure use the cached copy (for pages, fall back to the
 // cached queue so the shell still opens). Pages match without their query
 // (?next=, ?reason=): the page is the same, and sign-in reads it client-side.
-async function networkFirst(request, fallbackUrl) {
-  const cache = await caches.open(PAGES);
+async function networkFirst(request, fallbackUrl, cacheName = PAGES) {
+  const cache = await caches.open(cacheName);
   try {
     const response = await fetch(request);
     if (response.ok) cache.put(request, response.clone());
@@ -54,7 +58,7 @@ async function networkFirst(request, fallbackUrl) {
     const cached = await cache.match(request, { ignoreSearch: request.mode === "navigate" });
     if (cached) return cached;
     if (fallbackUrl) {
-      const fallback = await cache.match(fallbackUrl);
+      const fallback = await (await caches.open(PAGES)).match(fallbackUrl);
       if (fallback) return fallback;
     }
     throw err;
@@ -86,12 +90,14 @@ self.addEventListener("fetch", (event) => {
   }
 
   const isLoaderPath = url.pathname === "/loader" || url.pathname.startsWith("/loader/");
+  // A run's pages and their navigation data: kept apart so sign-out can drop them.
+  const cacheName = url.pathname.startsWith("/loader/runs/") ? RUNS : PAGES;
   if (request.mode === "navigate" && isLoaderPath) {
-    event.respondWith(networkFirst(request, "/loader"));
+    event.respondWith(networkFirst(request, "/loader", cacheName));
     return;
   }
   // Client-side navigation data (RSC payloads) and the manifest.
   if (isLoaderPath || url.pathname === "/loader.webmanifest") {
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkFirst(request, undefined, cacheName));
   }
 });

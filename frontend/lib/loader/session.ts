@@ -3,7 +3,7 @@
 // server. Also keeps the last user list (names work offline) and session ends
 // that could not be sent yet.
 
-import { clearCachedActivity } from "./offline/db";
+import { clearSessionCaches } from "./offline/run-pages";
 import { NetworkError, type Transport } from "./offline/transport";
 import type { LoaderSession, LoaderUser, SessionEndReason } from "./types";
 
@@ -152,7 +152,8 @@ export async function endSession(transport: Transport, reason: SessionEndReason)
   const stored = readSession();
   lastEndReason = reason;
   clearSession();
-  void clearCachedActivity().catch(() => {}); // L9: the saved logs go with the session; no IndexedDB is fine.
+  // The saved logs (L9) and cached run pages go with the session; the outbox stays.
+  void clearSessionCaches();
   if (!stored) return;
   const end = { session_id: stored.session.session_id, reason };
   try {
