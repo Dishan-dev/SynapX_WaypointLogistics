@@ -133,7 +133,7 @@ function Ready({ initial }: { initial: Run }) {
               role="status"
               className="w-full rounded-lg bg-success-muted px-4 py-3 text-sm font-semibold text-success"
             >
-              {sync.pending > 0 ? "Sending to the driver and the Dispatcher…" : "Driver will see this load"}
+              {sync.pending > 0 ? "Saving…" : "Release saved"}
             </p>
           </section>
         ) : (
