@@ -21,7 +21,7 @@ def get_vehicles(
     """
     query = db.query(Vehicle)
     if status:
-        query = query.filter(Vehicle.status == status.lower())
+        query = query.filter(Vehicle.status == status.upper())
     vehicles = query.offset(skip).limit(limit).all()
     return vehicles
 
