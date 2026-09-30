@@ -14,6 +14,8 @@ interface LoaderScreenProps {
   /** Defaults to "Loader · <depot> · <dock>". */
   subtitle?: string;
   plan?: PlanSource;
+  /** Replaces the strip's "Plan from …" text, e.g. on Ready to depart. */
+  stripText?: string;
   hasUnread?: boolean;
   /** Sticky action bar above the bottom nav, e.g. "Review & confirm · 5 of 7". */
   footer?: React.ReactNode;
@@ -26,6 +28,7 @@ export function LoaderScreen({
   title,
   subtitle,
   plan,
+  stripText,
   hasUnread,
   footer,
   className,
@@ -44,7 +47,7 @@ export function LoaderScreen({
           hasUnread={hasUnread}
           onMenu={() => router.push("/loader/more")}
         />
-        <PlanSourceStrip plan={plan} sync={sync} />
+        <PlanSourceStrip plan={plan} text={stripText} sync={sync} />
       </div>
       <main className={cn("flex-1 px-4 py-5 md:px-6 md:py-6", className)}>{children}</main>
       {footer && (

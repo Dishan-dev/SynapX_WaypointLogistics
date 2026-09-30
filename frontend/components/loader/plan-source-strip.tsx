@@ -51,6 +51,8 @@ function syncLabel(tone: SyncTone, sync: SyncState): React.ReactNode {
 interface PlanSourceStripProps {
   /** Omit version on dock-wide screens (queue). */
   plan?: PlanSource;
+  /** Shown instead of "Plan from …" when a screen has its own line, e.g. "Ready to depart · released by …". */
+  text?: string;
   sync: SyncState;
   className?: string;
 }
@@ -59,7 +61,7 @@ interface PlanSourceStripProps {
  * Strip under the app bar: where the plan came from and whether this tablet
  * is live, offline with queued actions, syncing, or failing to sync.
  */
-export function PlanSourceStrip({ plan, sync, className }: PlanSourceStripProps) {
+export function PlanSourceStrip({ plan, text, sync, className }: PlanSourceStripProps) {
   const tone = syncTone(sync);
   const style = toneStyles[tone];
 
@@ -72,24 +74,32 @@ export function PlanSourceStrip({ plan, sync, className }: PlanSourceStripProps)
     >
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", style.dot)} />
       <p className="min-w-0 flex-1 truncate text-muted-foreground">
-        Plan from {plan?.source ?? "Dispatcher"}
-        {plan?.version !== undefined && ` · v${plan.version}`}
-        {plan?.updatedAt && (
-          <>
-            {" · "}
-            <span className="hidden sm:inline">updated </span>
-            {formatTime(plan.updatedAt)}
-          </>
-        )}
-        {plan?.acknowledgedBy && plan.acknowledgedAt && (
-          <span className="hidden md:inline">
-            {` · acknowledged by ${plan.acknowledgedBy} ${formatTime(plan.acknowledgedAt)}`}
-          </span>
-        )}
+        {text ?? <PlanText plan={plan} />}
       </p>
       <p role="status" className={cn("flex shrink-0 items-center gap-1 whitespace-nowrap", style.text)}>
         {syncLabel(tone, sync)}
       </p>
     </div>
+  );
+}
+
+function PlanText({ plan }: { plan?: PlanSource }) {
+  return (
+    <>
+      Plan from {plan?.source ?? "Dispatcher"}
+      {plan?.version !== undefined && ` · v${plan.version}`}
+      {plan?.updatedAt && (
+        <>
+          {" · "}
+          <span className="hidden sm:inline">updated </span>
+          {formatTime(plan.updatedAt)}
+        </>
+      )}
+      {plan?.acknowledgedBy && plan.acknowledgedAt && (
+        <span className="hidden md:inline">
+          {` · acknowledged by ${plan.acknowledgedBy} ${formatTime(plan.acknowledgedAt)}`}
+        </span>
+      )}
+    </>
   );
 }

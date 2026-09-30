@@ -16,6 +16,19 @@ import { RunGate } from "../review/run-gate";
 
 const BRAND_LABELS = { fresh: "Fresh", style: "Style", tech: "Tech" } as const;
 
+/**
+ * The strip on a released run: "Ready to depart · released by Saman J. · 03:06"
+ * from the run read, or just "Ready to depart" without both. It carries who and
+ * when, so the card below does not repeat them. Figma 1f says "Sent to Driver
+ * and Dispatcher" here; nothing tells them yet, so that is not claimed.
+ */
+function readyStripText(run: Run): string {
+  const by = releasedByName(run);
+  return by && run.released_at
+    ? `Ready to depart · released by ${by} · ${formatTime(run.released_at)}`
+    : "Ready to depart";
+}
+
 export function ReadyView({ code }: { code: string }) {
   return (
     <RunGate code={code} title="Confirm & release">
@@ -81,6 +94,7 @@ function Ready({ initial }: { initial: Run }) {
       title="Confirm & release"
       subtitle={`${run.code} · ${dockName} · ${user.shortName}`}
       plan={planSource(run)}
+      stripText={ready ? readyStripText(run) : undefined}
       footer={footer}
     >
       <div className="mx-auto flex max-w-xl flex-col gap-4">
@@ -125,10 +139,6 @@ function Ready({ initial }: { initial: Run }) {
               <Check className="size-8" aria-hidden />
             </span>
             <h2 className="text-xl font-semibold text-primary">Ready to depart</h2>
-            <p className="text-sm text-muted-foreground">
-              Signed off{releasedByName(run) ? ` by ${releasedByName(run)}` : ""}
-              {run.released_at ? ` · ${formatTime(run.released_at)}` : ""}
-            </p>
             <p
               role="status"
               className="w-full rounded-lg bg-success-muted px-4 py-3 text-sm font-semibold text-success"
