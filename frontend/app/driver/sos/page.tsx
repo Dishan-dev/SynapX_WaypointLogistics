@@ -21,7 +21,7 @@ export default function SOSPage() {
   ];
 
   return (
-    <div className="min-h-screen flex flex-col font-sans" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
+    <div className="h-[100dvh] flex flex-col font-sans overflow-hidden relative" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
       
       {/* Header */}
       <div 
@@ -40,7 +40,7 @@ export default function SOSPage() {
       </div>
 
       {/* Scrollable Content */}
-      <div className="flex flex-col flex-1 p-4 gap-4 overflow-y-auto pb-[100px]">
+      <div className="flex flex-col flex-1 p-4 gap-4 overflow-y-auto">
         
         {/* Emergency Alert Banner */}
         <div 
@@ -163,7 +163,7 @@ export default function SOSPage() {
 
       {/* Sticky Footer */}
       <div 
-        className="fixed bottom-0 left-0 right-0 flex flex-col p-4 gap-3 bg-white"
+        className="flex flex-col p-4 gap-3 bg-white shrink-0"
         style={{ borderTop: "1px solid #E5E5E2" }}
       >
         <Link href="/driver/sos/success">
