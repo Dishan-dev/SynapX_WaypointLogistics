@@ -34,7 +34,7 @@ function ArrivalContent() {
 
     async function loadDataAndArrive() {
       try {
-        // Find the active trip to get stop details for display
+        // Step 1: Load stop details for display (always do this first)
         const trips = await apiFetch<any[]>("/driver/trips/today");
         const startedTrip = trips.find(t => t.status === "STARTED");
         
@@ -43,11 +43,16 @@ function ArrivalContent() {
           const foundStop = tripDetail.stops.find(s => s.id.toString() === stopId);
           if (foundStop) setStop(foundStop);
         }
+      } catch (error) {
+        console.error("Failed to load stop details:", error);
+      }
 
-        // Fire arrival API
+      // Step 2: Mark arrival — idempotent on backend (safe to call even if already arrived)
+      try {
         await apiFetch(`/driver/stops/${stopId}/arrive`, { method: "PATCH" });
       } catch (error) {
-        console.error("Failed to process arrival:", error);
+        // Swallow — backend returns the stop cleanly if already arrived
+        console.warn("Arrive call skipped (stop may already be arrived):", error);
       } finally {
         setLoading(false);
       }
@@ -55,6 +60,7 @@ function ArrivalContent() {
     
     loadDataAndArrive();
   }, [stopId]);
+
 
   return (
     <div className="min-h-screen flex flex-col font-sans relative overflow-hidden" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>

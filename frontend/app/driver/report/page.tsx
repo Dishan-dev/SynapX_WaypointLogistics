@@ -8,9 +8,12 @@ import {
   Ellipsis, Check, Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
 import { apiFetch, apiFetchUpload } from "@/lib/api";
+import { useSyncContext } from "@/components/SyncProvider";
 
 export default function ReportProblemPage() {
   const router = useRouter();
+  const { enqueue, enqueueWithPhoto, online } = useSyncContext();
+  const [offlinePhotoBlob, setOfflinePhotoBlob] = useState<Blob | null>(null);
   
   const [selectedIssue, setSelectedIssue] = useState("Outlet closed");
   const [notes, setNotes] = useState("");
@@ -33,6 +36,9 @@ export default function ReportProblemPage() {
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
+
+    // Keep the raw file blob for offline queuing
+    setOfflinePhotoBlob(file);
 
     // Show local preview immediately
     const objectUrl = URL.createObjectURL(file);
@@ -60,6 +66,7 @@ export default function ReportProblemPage() {
     setPhotoDataUrl(null);
     setPhotoUrl(null);
     setUploadError(null);
+    setOfflinePhotoBlob(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -99,21 +106,57 @@ export default function ReportProblemPage() {
     setSubmitting(true);
     
     const issueConfig = issues.find(i => i.label === selectedIssue) || issues[3];
+    const basePayload = {
+      stop_id: currentStop ? currentStop.id : null,
+      issue_type: issueConfig.backendType,
+      description: notes || selectedIssue,
+      photo_url: photoUrl ?? undefined,
+    };
 
+    // ── Offline path ──────────────────────────────────────────────────────────
+    if (!online) {
+      if (offlinePhotoBlob) {
+        await enqueueWithPhoto(
+          {
+            action_type: "issue",
+            trip_id: activeTrip.id,
+            stop_id: currentStop?.id,
+            payload: basePayload,
+            label: selectedIssue,
+          },
+          offlinePhotoBlob
+        );
+      } else {
+        await enqueue({
+          action_type: "issue",
+          trip_id: activeTrip.id,
+          stop_id: currentStop?.id,
+          payload: basePayload,
+          label: selectedIssue,
+        });
+      }
+      router.push("/driver/queue");
+      return;
+    }
+
+    // ── Online path ───────────────────────────────────────────────────────────
     try {
       await apiFetch(`/driver/trips/${activeTrip.id}/issues`, {
         method: "POST",
-        body: JSON.stringify({
-          stop_id: currentStop ? currentStop.id : null,
-          issue_type: issueConfig.backendType,
-          description: notes || selectedIssue,
-          photo_url: photoUrl   // server-side path, not base64
-        })
+        body: JSON.stringify(basePayload),
       });
       router.push("/driver/trip");
     } catch (error) {
-      console.error("Failed to submit issue:", error);
-      setSubmitting(false);
+      // Network error while online — queue for later
+      await enqueue({
+        action_type: "issue",
+        trip_id: activeTrip.id,
+        stop_id: currentStop?.id,
+        payload: basePayload,
+        label: selectedIssue,
+      });
+      console.error("Failed to submit issue, queued for sync:", error);
+      router.push("/driver/queue");
     }
   }
 

@@ -4,18 +4,23 @@ import { useState } from "react";
 import { ChevronDown, ChevronUp, MapPin, Package } from "lucide-react";
 import Link from "next/link";
 import NavigationButton from "./NavigationButton";
-import type { DeliveryStop } from "@/types/driver-map";
+import type { DeliveryStop, GPSPosition } from "@/types/driver-map";
+import type { Map as MapLibreMap } from "maplibre-gl";
 
 interface NextDeliveryCardProps {
   stop: DeliveryStop;
   tripId: number;
   totalStops: number;
+  mapRef: React.MutableRefObject<MapLibreMap | null>;
+  gpsPosition: GPSPosition | null;
 }
 
 export default function NextDeliveryCard({
   stop,
   tripId,
   totalStops,
+  mapRef,
+  gpsPosition,
 }: NextDeliveryCardProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -116,7 +121,7 @@ export default function NextDeliveryCard({
 
           {/* Action buttons */}
           <div className="flex flex-col gap-2 mt-1">
-            <NavigationButton stop={stop} className="w-full" />
+            <NavigationButton stop={stop} mapRef={mapRef} gpsPosition={gpsPosition} className="w-full" />
 
             <Link href={`/driver/trip/arrived?stop_id=${stop.id}`} className="w-full">
               <button
@@ -138,7 +143,7 @@ export default function NextDeliveryCard({
       {/* When collapsed: quick navigate button always visible */}
       {!expanded && (
         <div className="px-4 pb-3 pt-1">
-          <NavigationButton stop={stop} className="w-full" />
+          <NavigationButton stop={stop} mapRef={mapRef} gpsPosition={gpsPosition} className="w-full" />
         </div>
       )}
     </div>

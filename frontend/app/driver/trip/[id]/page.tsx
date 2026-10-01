@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { use, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -24,7 +24,8 @@ interface TripDetail {
   stops: DeliveryStop[];
 }
 
-export default function TripDetailsPage({ params }: { params: { id: string } }) {
+export default function TripDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id: tripId } = use(params);          // ← unwrap the Promise
   const router = useRouter();
   const [trip, setTrip] = useState<TripDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -33,7 +34,7 @@ export default function TripDetailsPage({ params }: { params: { id: string } }) 
   useEffect(() => {
     async function loadTrip() {
       try {
-        const data = await apiFetch<TripDetail>(`/driver/trips/${params.id}`);
+        const data = await apiFetch<TripDetail>(`/driver/trips/${tripId}`);
         setTrip(data);
       } catch (error) {
         console.error("Failed to load trip details:", error);
@@ -42,13 +43,13 @@ export default function TripDetailsPage({ params }: { params: { id: string } }) 
       }
     }
     loadTrip();
-  }, [params.id]);
+  }, [tripId]);
 
   async function handleStartTrip() {
     setStarting(true);
     try {
-      await apiFetch(`/driver/trips/${params.id}/start`, { method: "POST" });
-      router.push(`/driver/trip`); // Navigates to active map view
+      await apiFetch(`/driver/trips/${tripId}/start`, { method: "POST" });
+      router.push(`/driver/trip`);
     } catch (error) {
       console.error("Failed to start trip:", error);
       setStarting(false);
@@ -79,7 +80,7 @@ export default function TripDetailsPage({ params }: { params: { id: string } }) 
           </Link>
           <div className="flex flex-col gap-0.5">
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
-              Trip R-{params.id}
+              Trip R-{tripId}
             </h1>
             <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
               {loading ? "Loading..." : `${trip?.stops?.length || 0} stops · Delivery`}
@@ -171,7 +172,7 @@ export default function TripDetailsPage({ params }: { params: { id: string } }) 
                 className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
                 style={{ backgroundColor: "#092C4C" }}
               >
-                {starting ? "Starting..." : trip?.status === "STARTED" ? "Resume Trip" : "Start trip"}
+                {starting ? "Starting..." : trip?.status === "STARTED" ? "Resume Trip →" : "Start trip"}
               </button>
             </div>
           </>

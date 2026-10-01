@@ -1,7 +1,8 @@
 "use client";
 
 import { X, MapPin, Phone } from "lucide-react";
-import type { DeliveryStop } from "@/types/driver-map";
+import type { DeliveryStop, GPSPosition } from "@/types/driver-map";
+import type { Map as MapLibreMap } from "maplibre-gl";
 import NavigationButton from "./NavigationButton";
 import Link from "next/link";
 
@@ -9,6 +10,8 @@ interface DeliveryStopSheetProps {
   stop: DeliveryStop;
   tripId: number;
   onClose: () => void;
+  mapRef: React.MutableRefObject<MapLibreMap | null>;
+  gpsPosition: GPSPosition | null;
 }
 
 const STATUS_CONFIG: Record<
@@ -27,6 +30,8 @@ export default function DeliveryStopSheet({
   stop,
   tripId,
   onClose,
+  mapRef,
+  gpsPosition,
 }: DeliveryStopSheetProps) {
   const statusCfg = STATUS_CONFIG[stop.status] ?? STATUS_CONFIG.pending;
   const isNextOrActive = stop.status === "pending" || stop.status === "arrived";
@@ -134,7 +139,7 @@ export default function DeliveryStopSheet({
         {/* Actions */}
         {isNextOrActive && (
           <div className="flex flex-col gap-2 mt-1">
-            <NavigationButton stop={stop} className="w-full" />
+            <NavigationButton stop={stop} mapRef={mapRef} gpsPosition={gpsPosition} className="w-full" />
             <Link
               href={`/driver/trip/arrived?stop_id=${stop.id}`}
               className="w-full"

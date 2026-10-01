@@ -26,6 +26,9 @@ def get_trip_detail(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
 
 def start_trip(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
     trip = get_trip_detail(db, trip_id, driver_id)
+    # Idempotent: already started → just return it (handles "Resume Trip" button)
+    if trip.status == DriverTripStatus.STARTED:
+        return trip
     if trip.status != DriverTripStatus.ASSIGNED:
         raise HTTPException(status_code=400, detail=f"Cannot start trip with status {trip.status}")
     
@@ -66,6 +69,9 @@ def get_stop(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
 
 def record_arrival(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
     stop = get_stop(db, stop_id, driver_id)
+    # Idempotent: if already arrived, just return the stop as-is
+    if stop.status == DeliveryStopStatus.ARRIVED:
+        return stop
     if stop.status != DeliveryStopStatus.PENDING:
         raise HTTPException(status_code=400, detail="Stop is not pending")
     

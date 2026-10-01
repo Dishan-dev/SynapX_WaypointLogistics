@@ -361,6 +361,8 @@ export default function DriverRouteMapPage() {
                 stop={selectedStop}
                 tripId={trip?.id ?? 0}
                 onClose={() => setSelectedStop(null)}
+                mapRef={mapRef}
+                gpsPosition={gpsPosition}
               />
             )}
 
@@ -370,6 +372,8 @@ export default function DriverRouteMapPage() {
                 stop={nextStop}
                 tripId={trip!.id}
                 totalStops={stops.length}
+                mapRef={mapRef}
+                gpsPosition={gpsPosition}
               />
             )}
 
@@ -421,6 +425,8 @@ export default function DriverRouteMapPage() {
               stop={selectedStop}
               tripId={trip?.id ?? 0}
               onClose={() => setSelectedStop(null)}
+              mapRef={mapRef}
+              gpsPosition={gpsPosition}
             />
           )}
 
@@ -429,6 +435,8 @@ export default function DriverRouteMapPage() {
               stop={nextStop}
               tripId={trip!.id}
               totalStops={stops.length}
+              mapRef={mapRef}
+              gpsPosition={gpsPosition}
             />
           )}
 
