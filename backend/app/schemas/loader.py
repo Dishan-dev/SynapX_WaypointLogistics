@@ -705,8 +705,9 @@ class IssueDecisionRequest(BaseModel):
     client_action_id: UUID
     decided_by: str = "Dispatcher"
     # For an option that defers the order ("Send without it", a whole-order
-    # "Leave the overflow ..."): the new delivery day. Default: the next
-    # operating day after the run's day.
+    # "Leave the overflow ..."): the new delivery day. Default:
+    # LoaderService.deferral_day (next operating day after the run's day, or
+    # after today if that has passed).
     deferred_to: Optional[date] = None
     # The final number of units NOT sent, when it differs from what the option
     # implies - e.g. a partial top-up from stock: 3 short, 2 found -> 1.

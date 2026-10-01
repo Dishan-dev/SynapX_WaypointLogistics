@@ -3334,16 +3334,30 @@ class LoaderService:
         return False
 
     @staticmethod
+    def deferral_day(db: Session, run: DeliveryRun, now: Optional[datetime] = None) -> date:
+        """The delivery day an order deferred off this run moves to: the first
+        operating day after the run's delivery day - or after today, when the
+        run's day has already passed - both in depot time. Never today or a
+        day gone by.
+
+        Operating days are calendar_service's: calendar_days when it has the
+        date (holidays, festival closures), otherwise every day but Sunday.
+        """
+        today = _depot_date(now or datetime.now(timezone.utc))
+        after = max(_depot_date(run.departs_at), today)
+        return calendar_service.get_next_operating_day(db, after)
+
+    @staticmethod
     def _defer_order_for_decision(
         db: Session, issue: LoaderIssue, chosen: LoaderIssueOption, deferred_to: Optional[date]
     ) -> None:
         """The decision defers the order: order_service.defer_order with the
-        decision's date, else the next operating day after the run's day. An
-        order already DEFERRED (deferred upstream) is left alone."""
+        decision's date, else deferral_day. An order already DEFERRED
+        (deferred upstream) is left alone."""
         order = issue.order
         if order.status == OrderStatus.DEFERRED:
             return
-        day = deferred_to or calendar_service.get_next_operating_day(db, _depot_date(issue.run.departs_at))
+        day = deferred_to or LoaderService.deferral_day(db, issue.run)
         reason = f"{ISSUE_WORDS[issue.issue_type].capitalize()} at the loading dock ({issue.run.code}): {chosen.label}"
         try:
             order_service.defer_order(db, order.id, reason, day)

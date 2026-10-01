@@ -649,7 +649,12 @@ Same option again → `200`, nothing written.
 
 **Deferring options.** "Send without it", any "Defer …" option, and "Leave the overflow for the next run" when the
 overflow is the whole order, defer the order through `order_service.defer_order`. The new day is `deferred_to`
-if sent, otherwise the next operating day after the run's day; the reason reads
+if sent, otherwise the **deferral day**: the first operating day after the run's delivery day, or after today
+when the run's day has already passed (depot time; never today or a past day). Operating days come from
+`calendar_days` where it has the date, otherwise every day but Sunday. **Calendar coverage:** Neon's
+`calendar_days` ends 2026-06-28 and local has two rows, and `docs/calendar.csv` is not in the repo, so beyond
+that only Sundays are skipped — holidays (Poya days etc.) need the calendar extended (Devmith,
+`scripts/seed_reference_data.py`). The reason reads
 `"Missing at the loading dock (RUN-0024): Send without it"`. The store gets its usual deferral notification.
 An order already `DEFERRED` (deferred upstream) is left alone. The decide-by default does the same.
 

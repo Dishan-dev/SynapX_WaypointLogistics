@@ -296,14 +296,17 @@ def test_send_without_defers_the_order_to_the_next_operating_day(loader_client, 
     order = s.orders["ORD1002"]
     s.db.refresh(order)
     assert order.status == OrderStatus.DEFERRED
-    assert order.operating_date == "2026-05-29"  # run day Thu 28 May -> Fri 29 May
+    # The run's day (Thu 28 May) has passed, so: the next operating day after today.
+    expected = LoaderService.deferral_day(s.db, s.run)
+    assert expected > datetime.now(timezone.utc).date() - timedelta(days=1)
+    assert order.operating_date == expected.isoformat()
     assert order.deferral_count == 1
     assert order.deferral_reason == f"Missing at the loading dock ({s.run.code}): Send without it"
     # The tablet's checklist reads the new day back.
     detail = loader_client.get(f"{BASE}/runs/{s.run.code}").json()
     row = next(o for st in detail["stops"] for o in st["orders"] if o["order_number"] == "ORD1002")
     assert row["state"] == "moved"
-    assert row["deferred_to"] == "2026-05-29"
+    assert row["deferred_to"] == expected.isoformat()
 
 
 def test_the_decision_date_wins(loader_client, setup):
@@ -402,3 +405,34 @@ def test_released_at_is_stored_as_naive_utc():
 
     assert run.released_at == datetime(2026, 10, 1, 11, 0)
     assert run.released_at.tzinfo is None
+
+
+# --- the deferral day ----------------------------------------------------------------
+# 2026-10-01 is a Thursday; Sun 4 Oct is the only Sunday in these cases.
+NOW = datetime(2026, 10, 1, 4, 30, tzinfo=timezone.utc)  # 10:00 depot time, Thu 1 Oct
+
+
+def run_on(day: str):
+    """A run departing 03:30 depot time on `day` (22:00 UTC the evening before)."""
+    departs = datetime.fromisoformat(f"{day}T03:30") - timedelta(hours=5, minutes=30)
+    return SimpleNamespace(departs_at=departs)
+
+
+@pytest.mark.parametrize("run_day, now, expected", [
+    ("2026-10-01", NOW, "2026-10-02"),   # a run today -> tomorrow (Fri)
+    ("2026-10-09", NOW, "2026-10-10"),   # a future run (Fri) -> its next day (Sat)
+    ("2026-05-28", NOW, "2026-10-02"),   # a run in the past -> after TODAY, not 29 May
+    ("2026-10-03", NOW, "2026-10-05"),   # Sat run -> Sunday skipped -> Mon
+    ("2026-10-01", datetime(2026, 10, 1, 19, 0, tzinfo=timezone.utc), "2026-10-03"),  # 00:30 depot Fri 2 Oct
+])
+def test_deferral_day_is_the_next_working_day(trip_setup, run_day, now, expected):
+    day = LoaderService.deferral_day(trip_setup["db"], run_on(run_day), now=now)
+    assert day == date.fromisoformat(expected)
+
+
+def test_deferral_day_skips_calendar_closures(trip_setup):
+    db = trip_setup["db"]
+    db.add(loader_module.CalendarDay(date=date(2026, 10, 2), is_operating=False, holiday_name="Test closure"))
+    db.flush()
+
+    assert LoaderService.deferral_day(db, run_on("2026-10-01"), now=NOW) == date(2026, 10, 3)
