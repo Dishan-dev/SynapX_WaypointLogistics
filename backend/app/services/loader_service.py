@@ -1572,7 +1572,10 @@ class LoaderService:
             run.released_by_id = None
         else:
             run.status = RunStatus.READY_TO_DEPART
-            run.released_at = at
+            # Naive UTC, like the column. An aware value is converted by the
+            # Postgres session time zone, which on a Colombo session stored it
+            # 5:30 ahead and kept the undo window open for hours.
+            run.released_at = _naive_utc(at)
             run.released_by_id = actor.id if actor else None
 
     @staticmethod
