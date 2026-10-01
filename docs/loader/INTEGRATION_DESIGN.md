@@ -775,7 +775,7 @@ without a new column: it only touches orders still in `SUBMITTED`/`CONFIRMED`/`A
 
 **`quantity_sent`.** A loader flag is per order (`units_affected`), not per item. `_quantity_sent_for_order`:
 - fully loaded → every item's `quantity`;
-- one item → the loaded units ("43 of 46");
+- one item → the loaded units ("43 of 46"), i.e. ordered − the issue's final `units_affected` (§11);
 - short with several items → **null on every item** (rule C). Switch `SHORT_MULTI_ITEM_RULE` to `"B"` to put the
   whole shortfall on the last item (by `order_items.id`) instead. Rule D (exact, per item) is on the later list (§5).
 
@@ -786,3 +786,57 @@ status. Finalizing commits once per order; a failure halfway is picked up by the
 
 **Known gap.** A plan change after the window (a reopened Ready run) can take an order off the truck that is
 already `READY_FOR_DISPATCH`; there is no move back. The dispatcher's own defer/re-plan handles that order.
+
+---
+
+## 11. For the Store Manager page — shortfalls from `loader_issues`
+
+Devmith's store page reads shortfalls straight from `loader_issues` by `order_id`. What the loader guarantees:
+
+**Which rows.** `issue_type` in short / missing / wont_fit (damaged exists too and follows the same rules).
+Show the number only when `status` is decided or default_applied; before that it is the loader's first count
+and may still change.
+
+**Real stored values (Postgres enums store the member NAME, upper case).** The API shows lower case; raw SQL
+must use these:
+
+| Column (Postgres type) | Stored values |
+|---|---|
+| `status` (`loaderissuestatus`) | `SENT`, `SEEN`, `DECIDED`, `DEFAULT_APPLIED` |
+| `issue_type` (`loaderissuetype`) | `MISSING`, `SHORT`, `DAMAGED`, `WONT_FIT` |
+
+```sql
+SELECT order_id, issue_type, units_affected, units_total
+FROM loader_issues
+WHERE order_id = :order_id
+  AND issue_type IN ('SHORT', 'MISSING', 'WONT_FIT')
+  AND status IN ('DECIDED', 'DEFAULT_APPLIED');
+```
+
+(Through the ORM: `IssueStatus.DECIDED`, `IssueType.SHORT`, … compare correctly.)
+
+**`units_affected` once decided = the final number of units NOT sent; `units_total` = the order's units on the run.**
+Both are always set (never null) once decided: a flag without a count becomes the whole order. Sent = `units_total − units_affected`.
+
+| Issue | Decision (option) | Final `units_affected` |
+|---|---|---|
+| any | "Send without it" (order deferred), "Defer …", "Move to …" (another vehicle) | `units_total` |
+| missing / short / damaged | "Hold the vehicle" (the truck waits for the goods / stock) | `0` |
+| won't fit | "Swap to a larger vehicle" | `0` |
+| short / damaged | "Send N of M" | as flagged (`M − N`) |
+| won't fit | "Leave the overflow for the next run" | as flagged (the overflow); the whole order → also deferred |
+| missing | (default "Send without it") | `units_total` |
+| any | dispatcher sends `units_not_sent` (a partial top-up: 3 short, 2 found → 1) | that number |
+
+The decide-by default (`DEFAULT_APPLIED`) sets it the same way as a dispatcher choosing that option.
+The same number drives `loaded_units` on the tablet, the driver hand-off and `order_items.quantity_sent` (§10),
+so the store page, the hand-off and "sent" never disagree.
+
+**One issue per order per run.** Enforced by the loader (no DB constraint, no migration): a second flag for an
+order on the same run is `409 ORDER_ALREADY_FLAGGED`, including when the order comes back on the plan after a
+plan change. Across runs an order can have more than one issue (e.g. moved to another vehicle and flagged
+there): take the latest decided one (`decided_at`), or sum per run if both runs carried part of it.
+
+**A moved order is not a shortfall for the store.** "Move to …" means not sent *on this run*
+(`units_affected = units_total`), but the order goes on another vehicle. If that matters on the page, show it
+only when the order is not on another run (or rely on the order's own status: a deferred order is `DEFERRED`).

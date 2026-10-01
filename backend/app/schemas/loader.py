@@ -708,6 +708,10 @@ class IssueDecisionRequest(BaseModel):
     # "Leave the overflow ..."): the new delivery day. Default: the next
     # operating day after the run's day.
     deferred_to: Optional[date] = None
+    # The final number of units NOT sent, when it differs from what the option
+    # implies - e.g. a partial top-up from stock: 3 short, 2 found -> 1.
+    # 0..units_total. Default: from the option (see INTEGRATION_DESIGN.md §11).
+    units_not_sent: Optional[int] = Field(default=None, ge=0)
 
 
 class GateOutRequest(BaseModel):

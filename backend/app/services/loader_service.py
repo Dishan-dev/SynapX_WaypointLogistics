@@ -466,6 +466,27 @@ class _TripRef:
         self.trip_code = run.code
 
 
+class OrderAlreadyFlaggedError(InvalidStateTransitionError):
+    """A second flag for an order on the same run. 409; details.issue_id is
+    the issue it already has."""
+
+    def __init__(self, run: DeliveryRun, order_number: str, issue: LoaderIssue):
+        super().__init__(
+            f"{order_number} already has issue {issue.id} on {run.code}.",
+            current_state="flagged",
+            target_state=RunOrderState.FLAGGED.value,
+            entity="LoaderIssue",
+        )
+        self.code = "ORDER_ALREADY_FLAGGED"
+        self.details = {
+            "entity": "LoaderIssue",
+            "issue_id": issue.id,
+            "run_code": run.code,
+            "order_number": order_number,
+            "status": issue.status.value,
+        }
+
+
 class PlanLockedError(InvalidStateTransitionError):
     """A dispatcher plan change on a run that has gone through the gate. 409."""
 
@@ -510,13 +531,14 @@ class PlanChangeInvalidError(AllocationError):
 class InvalidOptionError(AllocationError):
     """A decision naming an option the issue does not have. 422."""
 
-    def __init__(self, issue: LoaderIssue, option):
+    def __init__(self, issue: LoaderIssue, option, *, message: Optional[str] = None,
+                 code: str = "INVALID_OPTION"):
         super().__init__(
-            f"Option {option!r} is not one of issue {issue.id}'s options.",
-            code="INVALID_OPTION",
+            message or f"Option {option!r} is not one of issue {issue.id}'s options.",
+            code=code,
             violations=[{
-                "code": "INVALID_OPTION",
-                "message": "Choose one of the issue's options.",
+                "code": code,
+                "message": message or "Choose one of the issue's options.",
                 "options": [{"id": o.id, "label": o.label} for o in issue.options],
             }],
         )
@@ -719,15 +741,21 @@ class LoaderService:
         """Units of this order actually on the truck.
 
         - loaded, re_check, take_off (not yet unloaded): every unit is aboard.
-        - flagged: missing -> 0; short, damaged or won't fit -> units minus the
-          units flagged; a flag without a count means the whole order is affected (0).
+        - flagged: units minus the issue's units_affected, for every issue type
+          (missing included: the tablet sends how many are missing, the whole
+          order by default). Once decided, units_affected is the final number
+          not sent (_final_units_not_sent), so a hold or a top-up shows the
+          order full again. No count: the whole order is affected (0).
         - to_load, new, moved: nothing aboard.
+
+        The hand-off, quantity_sent and the Store Manager page all read this
+        same number (INTEGRATION_DESIGN.md §11).
         """
         units = row.units or 0
         if row.state in (RunOrderState.LOADED, RunOrderState.RE_CHECK, RunOrderState.TAKE_OFF):
             return units
         if row.state == RunOrderState.FLAGGED and issue is not None:
-            if issue.issue_type == IssueType.MISSING or issue.units_affected is None:
+            if issue.units_affected is None:
                 return 0
             return max(units - issue.units_affected, 0)
         return 0
@@ -1450,6 +1478,14 @@ class LoaderService:
             raise PlanNotAcknowledgedError(run)
 
         row = LoaderService._current_row(db, run, payload.order_number)
+        earlier = db.execute(
+            select(LoaderIssue).filter_by(run_id=run.id, order_id=row.order_id)
+        ).scalars().first()
+        if earlier is not None:
+            # One issue per order per run (the Store Manager page reads
+            # loader_issues by order). A row back on the plan after a plan change
+            # keeps the issue it had; the loader ticks it or the dispatcher re-plans.
+            raise OrderAlreadyFlaggedError(run, payload.order_number, earlier)
         if row.state not in FLAGGABLE_STATES:
             raise InvalidStateTransitionError(
                 f"{payload.order_number} is {row.state.value}; it cannot be flagged.",
@@ -2896,11 +2932,19 @@ class LoaderService:
         message = f"{issue.order.order_number}: {chosen.label}"
         if payload.note:
             message += f" · {payload.note}"
+        if payload.units_not_sent is not None:
+            total = LoaderService._issue_units_total(issue)
+            if payload.units_not_sent > total:
+                raise InvalidOptionError(
+                    issue, payload.option,
+                    message=f"units_not_sent must be between 0 and {total}.",
+                    code="INVALID_UNITS_NOT_SENT",
+                )
         LoaderService._record_decision(
             db, issue, chosen,
             status=IssueStatus.DECIDED, decided_by=payload.decided_by,
             actor_kind=ActorKind.DISPATCHER, event_type="issue_decided", message=message,
-            deferred_to=payload.deferred_to,
+            deferred_to=payload.deferred_to, units_not_sent=payload.units_not_sent,
         )
         return issue, False
 
@@ -2927,6 +2971,7 @@ class LoaderService:
         event_type: str,
         message: str,
         deferred_to: Optional[date] = None,
+        units_not_sent: Optional[int] = None,
     ) -> None:
         """Mark the option chosen, apply the outcome to the run (which lifts
         the release lock once nothing waits) and log it. Shared by the real
@@ -2940,6 +2985,13 @@ class LoaderService:
         issue.decided_by = decided_by
         if issue.seen_at is None and status == IssueStatus.DECIDED:
             issue.seen_at = now
+        if issue.units_total is None:
+            issue.units_total = LoaderService._issue_units_total(issue)
+        issue.units_affected = (
+            units_not_sent
+            if units_not_sent is not None
+            else LoaderService._final_units_not_sent(issue, chosen)
+        )
         LoaderService._apply_issue_outcome(db, issue, chosen)
         LoaderService.log(
             db, issue.run, at=now, actor_kind=actor_kind, event_type=event_type,
@@ -2949,6 +3001,49 @@ class LoaderService:
         db.flush()
         if LoaderService._decision_defers_order(issue, chosen):
             LoaderService._defer_order_for_decision(db, issue, chosen, deferred_to)
+
+    @staticmethod
+    def _issue_units_total(issue: LoaderIssue) -> int:
+        """The order's units on this run: the issue's units_total, else the
+        planned row's units, else the order's."""
+        if issue.units_total is not None:
+            return issue.units_total
+        row = next(
+            (
+                r
+                for stop in issue.run.stops
+                if stop.plan_version == issue.run.current_plan_version
+                for r in stop.orders
+                if r.order_id == issue.order_id
+            ),
+            None,
+        )
+        if row is not None and row.units is not None:
+            return row.units
+        return issue.order.units or issue.units_affected or 0
+
+    @staticmethod
+    def _final_units_not_sent(issue: LoaderIssue, chosen: LoaderIssueOption) -> int:
+        """The units of the order that do NOT go, once this option is chosen.
+        Becomes issue.units_affected, which loaded_units, the hand-off,
+        quantity_sent and the Store Manager page all read.
+
+        - "Send without it", "Defer ...", "Move to ...": the order does not go
+          on this run - every unit (units_total).
+        - "Hold ...", "Swap to a larger vehicle": the truck waits for the stock
+          or a bigger truck takes it all - 0.
+        - "Send N of M", "Leave the overflow ...", anything else: as flagged
+          (units_affected; every unit when the flag had no count).
+        A partial top-up is sent explicitly as units_not_sent on the decision.
+        """
+        total = LoaderService._issue_units_total(issue)
+        flagged = issue.units_affected if issue.units_affected is not None else total
+        label = chosen.label.strip().lower()
+        if label.startswith(("send without", "defer", "move to")):
+            return total
+        if label.startswith(("hold", "swap")):
+            return 0
+        return min(flagged, total)
 
     @staticmethod
     def apply_default_decision(db: Session, issue: LoaderIssue) -> LoaderIssue:
