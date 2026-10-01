@@ -704,6 +704,10 @@ class IssueDecisionRequest(BaseModel):
     note: Optional[str] = None
     client_action_id: UUID
     decided_by: str = "Dispatcher"
+    # For an option that defers the order ("Send without it", a whole-order
+    # "Leave the overflow ..."): the new delivery day. Default: the next
+    # operating day after the run's day.
+    deferred_to: Optional[date] = None
 
 
 class GateOutRequest(BaseModel):

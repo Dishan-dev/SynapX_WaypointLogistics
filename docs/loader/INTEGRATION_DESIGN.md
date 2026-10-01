@@ -376,7 +376,12 @@ Each slice is shippable and demoable on its own.
 | Minidu | `ensure_trip_for_run` (upsert trip + stops); `start_trip` → 409 unless released, then calls `mark_gated_out`; `GET /driver/trips/{id}/manifest`; trip screens show loaded vs ordered; migrations #5/#6 if approved |
 | Thisaru | `dispatch_trips.status = en_route` at gate-out (replaces "Publish Run" setting it by hand) |
 
-**Later:** #4 moved/deferred text; websocket/SSE instead of polling; auth on the dispatcher-facing loader endpoints.
+**Later:**
+- #4 moved/deferred text stored on the plan change (today it is read from where the order went).
+- **Item-level shortfalls (rule D):** a nullable `loader_issues.order_item_id` (FK `order_items`) plus picking
+  the item on the tablet's flag sheet, so a short multi-item order gets an exact `quantity_sent` per item
+  instead of null (§10). Needs a migration (Devmith) and a tablet change.
+- websocket/SSE instead of polling; auth on the dispatcher-facing loader endpoints.
 
 ---
 
@@ -622,7 +627,7 @@ Retry: the same body after a timeout returns `200` with `"replayed": true` and t
 
 ```json
 {"option": 102, "note": "Replacement on the 03:00 shuttle", "decided_by": "Kasun P.",
- "client_action_id": "0b7d…"}
+ "client_action_id": "0b7d…", "deferred_to": null}
 ```
 
 `option` is the option's `id` (preferred) or its exact label. Response `200`: the issue as above with
@@ -641,6 +646,12 @@ activity row only. "Hold" does not move the departure: send a `departs_at` plan 
 | `409 INVALID_STATE_TRANSITION` | the run has gone through the gate |
 
 Same option again → `200`, nothing written.
+
+**Deferring options.** "Send without it", any "Defer …" option, and "Leave the overflow for the next run" when the
+overflow is the whole order, defer the order through `order_service.defer_order`. The new day is `deferred_to`
+if sent, otherwise the next operating day after the run's day; the reason reads
+`"Missing at the loading dock (RUN-0024): Send without it"`. The store gets its usual deferral notification.
+An order already `DEFERRED` (deferred upstream) is left alone. The decide-by default does the same.
 
 **Decide-by.** `decide_by` = departure − 20 min. When it passes with no decision, the default option is applied
 (`status: "default_applied"`, `decided_by: "System (decide-by passed)"`, activity `issue_default_applied`).
@@ -733,3 +744,45 @@ Response `200`:
 | `409 RUN_NOT_RELEASED` | not released yet (`not_started` … `loaded`): the driver cannot leave |
 
 Already gated out → `200` with `"replayed": true` and the original `gated_out_at`.
+
+---
+
+## 10. Order status from the loader (agreed with Devmith)
+
+The loader moves orders through `order_service` only (no HTTP, no direct writes to `orders.status`):
+
+```python
+from app.services.order_service import order_service
+from app.models.order import OrderStatus
+order_service.update_order_status(db, order_id, OrderStatus.PROCESSING)
+```
+
+| Loader action | Order effect |
+|---|---|
+| First tick of an order (check → loaded) | `ALLOCATED → PROCESSING`. Already `PROCESSING` or later: nothing. Untick / re-tick: nothing |
+| Acknowledge a plan | nothing |
+| Release (`ready_to_depart`) | nothing yet: the loader may undo within 10 s (+ 2 s grace) |
+| Undo within the window | nothing |
+| Undo window closed | every order on the current plan → `READY_FOR_DISPATCH` (through `PROCESSING` if never ticked), `order_items.quantity_sent` filled. Orders taken off / moved, and orders `DEFERRED` upstream, are left alone |
+| Gate-out | the same, at once (leaving the gate ends the undo window) |
+| Decision that defers the order | `order_service.defer_order(db, order_id, reason, new_date)` (see 8.4) |
+
+**When "after the window" happens.** There is no worker. The first loader or dispatcher read after the window
+finalizes: the queue, summary, run read, issues, `…/loading`, `dispatcher_view`, `…/handoff` (only once the window
+has closed; reading the hand-off inside the window must not defeat undo) and `…/gate-out` (always).
+`LoaderService.finalize_due_releases(db)` / `finalize_release(db, run)` are the functions. Finalizing is idempotent
+without a new column: it only touches orders still in `SUBMITTED`/`CONFIRMED`/`ALLOCATED`/`PROCESSING`.
+
+**`quantity_sent`.** A loader flag is per order (`units_affected`), not per item. `_quantity_sent_for_order`:
+- fully loaded → every item's `quantity`;
+- one item → the loaded units ("43 of 46");
+- short with several items → **null on every item** (rule C). Switch `SHORT_MULTI_ITEM_RULE` to `"B"` to put the
+  whole shortfall on the last item (by `order_items.id`) instead. Rule D (exact, per item) is on the later list (§5).
+
+**Transactions.** `order_service` commits inside each call, so every call comes last in its loader action and its
+commit writes the loader's change with it. A refused move (`InvalidStateTransitionError`) is raised before
+anything commits; the loader logs it and carries on — a tick, read or decision never fails because of the order's
+status. Finalizing commits once per order; a failure halfway is picked up by the next read.
+
+**Known gap.** A plan change after the window (a reopened Ready run) can take an order off the truck that is
+already `READY_FOR_DISPATCH`; there is no move back. The dispatcher's own defer/re-plan handles that order.
