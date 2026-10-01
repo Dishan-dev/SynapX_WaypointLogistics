@@ -30,10 +30,10 @@ def get_order_metrics(
         query = query.filter(Order.operating_date == operating_date)
 
     total_orders = query.count()
-    confirmed = query.filter(Order.status == OrderStatus.CONFIRMED).count()
+    confirmed = query.filter(Order.status.in_([OrderStatus.CONFIRMED, OrderStatus.SUBMITTED])).count()
     unallocated = query.filter(
         and_(
-            Order.status == OrderStatus.CONFIRMED,
+            Order.status.in_([OrderStatus.CONFIRMED, OrderStatus.SUBMITTED]),
             Order.allocation_id == None,
             Order.is_late == False,
         )
@@ -97,7 +97,7 @@ def list_orders(
         s_upper = status.upper()
         if s_upper == "UNALLOCATED":
             query = query.filter(
-                Order.status == OrderStatus.CONFIRMED,
+                Order.status.in_([OrderStatus.CONFIRMED, OrderStatus.SUBMITTED]),
                 Order.allocation_id == None,
                 Order.is_late == False,
             )
@@ -140,10 +140,10 @@ def bulk_allocate_orders(req: BulkAllocateRequest, db: Session = Depends(deps.ge
         raise HTTPException(status_code=404, detail="No matching orders found")
 
     for order in orders:
-        order.status = OrderStatus.ALLOCATED
         if req.allocation_id:
             order.allocation_id = req.allocation_id
-    db.commit()
+        db.commit()
+        order_service.update_order_status(db, order.id, OrderStatus.ALLOCATED)
     return {"message": f"Successfully allocated {len(orders)} orders", "count": len(orders)}
 
 
@@ -152,12 +152,8 @@ def defer_order(order_id: int, req: DeferOrderRequest, db: Session = Depends(dep
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    order.status = OrderStatus.DEFERRED
-    order.deferral_reason = req.reason
-    order.allocation_id = None
-    db.commit()
-    db.refresh(order)
-    return order
+    
+    return order_service.defer_order(db, order_id, req.reason)
 
 
 @router.get("/{order_id}", response_model=OrderRead)
