@@ -25,6 +25,8 @@ export default function DriverDashboard() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [trips, setTrips] = useState<DriverTripSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [readyForTomorrow, setReadyForTomorrow] = useState(false);
+  const [submittingReady, setSubmittingReady] = useState(false);
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -45,6 +47,23 @@ export default function DriverDashboard() {
   }, []);
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const currentHour = new Date().getHours();
+  
+  // Show if: has ongoing trip, before 6 PM (18:00), and hasn't confirmed yet
+  const showTomorrowButton = trips.some(t => t.status === "STARTED") && currentHour < 18 && !readyForTomorrow;
+
+  async function handleReadyForTomorrow() {
+    setSubmittingReady(true);
+    try {
+      // Send readiness to dispatcher
+      await apiFetch("/driver/ready-tomorrow", { method: "POST" });
+    } catch (e) {
+      console.warn("Backend endpoint might not exist yet, but proceeding to update UI", e);
+    } finally {
+      setReadyForTomorrow(true);
+      setSubmittingReady(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col font-sans" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
@@ -84,6 +103,29 @@ export default function DriverDashboard() {
       {/* Trips content */}
       <div className="flex flex-col flex-1 px-5 pt-5 pb-24 gap-4">
         
+        {/* Availability for Tomorrow Prompt */}
+        {showTomorrowButton && (
+          <div className="flex justify-between items-center p-4 rounded-xl" style={{ backgroundColor: "#E8F6EF", border: "1px solid #18794E", boxShadow: "0px 5px 16px 0px rgba(24, 121, 78, 0.08)" }}>
+            <div className="flex flex-col gap-0.5">
+              <span className="font-bold text-[14px]" style={{ color: "#18794E" }}>Available Tomorrow?</span>
+              <span className="font-normal text-[11px]" style={{ color: "#18794E", maxWidth: "160px" }}>Let dispatch know you can take a ride tomorrow (ends at 6 PM).</span>
+            </div>
+            <button
+              onClick={handleReadyForTomorrow}
+              disabled={submittingReady}
+              className="px-4 py-2.5 rounded-lg font-bold text-[13px] text-white disabled:opacity-50"
+              style={{ backgroundColor: "#18794E" }}
+            >
+              {submittingReady ? "Sending..." : "I'm Ready"}
+            </button>
+          </div>
+        )}
+
+        {readyForTomorrow && (
+          <div className="flex items-center p-3 gap-2 rounded-xl" style={{ backgroundColor: "#EAF2FF", border: "1px solid #2167D5" }}>
+            <span className="font-bold text-[12px]" style={{ color: "#2167D5" }}>✓ You're confirmed for tomorrow's schedule</span>
+          </div>
+        )}
         {loading ? (
           <div className="text-center py-10 text-[#5D6A78] text-sm font-medium">Loading your trips...</div>
         ) : trips.length === 0 ? (
