@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from app.models.loader_issue import IssueStatus as LoaderIssueStatus, IssueType as LoaderIssueType
 from app.models.order import OrderStatus
 from app.schemas.order import OrderItemRead
 
@@ -25,6 +26,38 @@ class GoodsRequestCreate(BaseModel):
     items: List[GoodsRequestItem] = Field(min_length=1)
 
 
+SHORTFALL_ISSUE_TYPES = {LoaderIssueType.SHORT, LoaderIssueType.MISSING, LoaderIssueType.WONT_FIT}
+UNDECIDED = {LoaderIssueStatus.SENT, LoaderIssueStatus.SEEN}
+
+
+class OrderShortfall(BaseModel):
+    """Order-level shortfall from the loader's issues (loader_issues). The loader flags per order, not per item."""
+
+    # under_review: the dispatcher hasn't decided yet, so there's no number to show.
+    state: Literal["under_review", "confirmed"]
+    units_short: Optional[int] = None
+    units_total: Optional[int] = None
+    reasons: List[str] = []
+
+
+def summarise_shortfall(issues) -> Optional[OrderShortfall]:
+    """None when nothing is short. Several issues on one order are added up."""
+    shortfalls = [issue for issue in issues or [] if issue.issue_type in SHORTFALL_ISSUE_TYPES]
+    if not shortfalls:
+        return None
+    reasons = sorted({issue.issue_type.value for issue in shortfalls})
+    if any(issue.status in UNDECIDED for issue in shortfalls):
+        return OrderShortfall(state="under_review", reasons=reasons)
+    known = [issue.units_affected for issue in shortfalls if issue.units_affected is not None]
+    units_short = sum(known) if known else None
+    if units_short == 0:
+        return None  # the dispatcher's decision covered it
+    totals = [issue.units_total for issue in shortfalls if issue.units_total is not None]
+    return OrderShortfall(
+        state="confirmed", units_short=units_short, units_total=max(totals) if totals else None, reasons=reasons
+    )
+
+
 class StoreOrderRead(BaseModel):
     id: int
     order_number: str
@@ -44,10 +77,16 @@ class StoreOrderRead(BaseModel):
     deferral_reason: Optional[str] = None
     deferral_count: int
     items: List[OrderItemRead] = []
+    shortfall: Optional[OrderShortfall] = Field(default=None, validation_alias="loader_issues")
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("shortfall", mode="before")
+    @classmethod
+    def shortfall_from_issues(cls, value):
+        return summarise_shortfall(value) if isinstance(value, list) else value
 
 
 class OrderStatusUpdate(BaseModel):

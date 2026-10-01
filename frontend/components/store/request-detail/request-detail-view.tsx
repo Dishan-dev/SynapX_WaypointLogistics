@@ -30,7 +30,14 @@ import { Table, TableBody, TableRow } from "@/components/ui/table";
 import { StoreSectionCard } from "@/components/store/store-cards";
 import { OrderStatusPill, PriorityPill, StorePill } from "@/components/store/status-pill";
 import { StoreTableCell, StoreTableHeader } from "@/components/store/store-table";
-import { brandLabels, type StoreManager, type StoreOrder, type StoreOrderItem, type StoreOutlet } from "@/components/store/mock-data";
+import {
+  brandLabels,
+  type OrderShortfall,
+  type StoreManager,
+  type StoreOrder,
+  type StoreOrderItem,
+  type StoreOutlet,
+} from "@/components/store/mock-data";
 import { formatDeliveryWindow, formatUnitCount } from "@/components/store/format";
 import { cutoffFor, isPastCutoff } from "@/components/store/new-request/delivery-rules";
 import { DispatcherNoteDialog } from "@/components/store/request-detail/dispatcher-note";
@@ -179,6 +186,7 @@ export function RequestDetailView({
           </AlertDescription>
         </Alert>
       )}
+      {order.shortfall && <ShortfallNotice shortfall={order.shortfall} />}
       {order.status === "cancelled" && (
         <Alert role="status">
           <AlertTitle className="font-bold">This request was cancelled</AlertTitle>
@@ -450,6 +458,38 @@ export function RequestDetailView({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// The loader flags shortfalls per order, so this never names an item.
+function ShortfallNotice({ shortfall }: { shortfall: OrderShortfall }) {
+  if (shortfall.state === "under_review") {
+    return (
+      <Alert className="border-warning/30 bg-warning-muted" role="status">
+        <CircleAlert className="text-warning" aria-hidden="true" />
+        <AlertTitle className="font-bold text-warning-muted-foreground">Shortfall under review</AlertTitle>
+        <AlertDescription className="text-foreground/80">
+          The depot reported this request may be short. The dispatcher is deciding what to send. You&apos;ll see the
+          final count here.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  const { unitsShort, unitsTotal } = shortfall;
+  const summary =
+    unitsShort !== undefined && unitsTotal !== undefined
+      ? `${unitsTotal - unitsShort} of ${unitsTotal} units sent (${unitsShort} short).`
+      : unitsShort !== undefined
+        ? `${unitsShort} ${unitsShort === 1 ? "unit" : "units"} short.`
+        : "Some units couldn't be sent.";
+  return (
+    <Alert className="border-warning/30 bg-warning-muted" role="status">
+      <CircleAlert className="text-warning" aria-hidden="true" />
+      <AlertTitle className="font-bold text-warning-muted-foreground">This request was sent short</AlertTitle>
+      <AlertDescription className="text-foreground/80">
+        {summary} Report an issue if what arrives doesn&apos;t match.
+      </AlertDescription>
+    </Alert>
   );
 }
 

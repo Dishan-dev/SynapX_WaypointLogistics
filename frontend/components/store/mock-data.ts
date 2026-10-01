@@ -160,6 +160,15 @@ export interface StoreOrder {
   notes?: string;
   activity?: { at: string; text: string }[];
   deferralReason?: string;
+  /** Order-level shortfall from the loader (the loader flags per order, not per item). */
+  shortfall?: OrderShortfall;
+}
+
+export interface OrderShortfall {
+  /** under_review: the dispatcher hasn't decided yet, so there's no number to show. */
+  state: "under_review" | "confirmed";
+  unitsShort?: number;
+  unitsTotal?: number;
 }
 
 const item = (
