@@ -1,7 +1,10 @@
+import { apiFetch, ApiError } from "@/components/store/api/client";
+import { STORE_DATA_SOURCE, STORE_OUTLET_ID } from "@/components/store/api/config";
+
 export interface StoreIssue {
   id: string;
   orderId: string;
-  type: "Damaged Goods" | "Missing Items" | "Quantity Mismatch" | "Temperature Breach" | "Wrong Consignment";
+  type: "Damaged Goods" | "Missing Items" | "Quantity Mismatch" | "Temperature Breach" | "Wrong Consignment" | "Other";
   title: string;
   affectedItem: string;
   sku: string;
@@ -18,6 +21,62 @@ export interface StoreIssue {
   claimedAmount?: string;
   driverName?: string;
   vehicleId?: string;
+}
+
+export interface ApiDeliveryIssue {
+  id: number;
+  order_id: number | null;
+  order_number: string | null;
+  outlet_id: number | null;
+  issue_type: string;
+  title: string;
+  affected_item: string | null;
+  sku: string | null;
+  expected_units: number | null;
+  received_units: number | null;
+  description: string;
+  photo_url: string | null;
+  photo_name: string | null;
+  photo_size: string | null;
+  reported_by: string;
+  status: "open" | "under_review" | "resolved" | "credit_issued";
+  resolution_notes: string | null;
+  claimed_amount: string | null;
+  driver_name: string | null;
+  vehicle_id: string | null;
+  reported_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function fromApiIssue(api: ApiDeliveryIssue): StoreIssue {
+  return {
+    id: `ISS${String(api.id).padStart(7, "0")}`,
+    orderId: api.order_number || (api.order_id ? `ORD${String(api.order_id).padStart(7, "0")}` : "ORD0000001"),
+    type: (api.issue_type as StoreIssue["type"]) || "Damaged Goods",
+    title: api.title,
+    affectedItem: api.affected_item || "General Consignment",
+    sku: api.sku || "N/A",
+    expectedUnits: api.expected_units ?? 0,
+    receivedUnits: api.received_units ?? 0,
+    description: api.description,
+    photoUrl: api.photo_url || undefined,
+    photoName: api.photo_name || undefined,
+    photoSize: api.photo_size || undefined,
+    reportedAt: new Date(api.reported_at).toLocaleString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    reportedBy: api.reported_by || "Sarah Jenkins (Store Manager)",
+    status: api.status,
+    resolutionNotes: api.resolution_notes || undefined,
+    claimedAmount: api.claimed_amount || undefined,
+    driverName: api.driver_name || undefined,
+    vehicleId: api.vehicle_id || undefined,
+  };
 }
 
 export const initialMockIssues: StoreIssue[] = [
@@ -98,6 +157,72 @@ export function getStoredIssues(): StoreIssue[] {
   }
 }
 
+/** Async fetch from DB with fallback to localStorage */
+export async function fetchStoreIssues(): Promise<StoreIssue[]> {
+  try {
+    const apiIssues = await apiFetch<ApiDeliveryIssue[]>(`/issues?outlet_id=${STORE_OUTLET_ID}`);
+    if (apiIssues && apiIssues.length > 0) {
+      const mapped = apiIssues.map(fromApiIssue);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(mapped));
+      }
+      return mapped;
+    }
+  } catch {
+    // fallback to local storage
+  }
+  return getStoredIssues();
+}
+
+/** Save an issue to DB + cache in localStorage */
+export async function saveIssueAsync(
+  issue: Omit<StoreIssue, "id" | "reportedAt" | "reportedBy" | "status">
+): Promise<StoreIssue> {
+  // 1. Try sending to backend API
+  try {
+    const numericOrderId = parseInt(issue.orderId.replace(/\D/g, ""), 10) || null;
+    const created = await apiFetch<ApiDeliveryIssue>("/issues", {
+      method: "POST",
+      body: JSON.stringify({
+        order_id: numericOrderId,
+        order_number: issue.orderId,
+        outlet_id: STORE_OUTLET_ID,
+        issue_type: issue.type,
+        title: issue.title,
+        affected_item: issue.affectedItem,
+        sku: issue.sku,
+        expected_units: issue.expectedUnits,
+        received_units: issue.receivedUnits,
+        description: issue.description,
+        photo_url: issue.photoUrl || null,
+        photo_name: issue.photoName || null,
+        photo_size: issue.photoSize || null,
+        driver_name: issue.driverName || null,
+        vehicle_id: issue.vehicleId || null,
+        claimed_amount: issue.claimedAmount || null,
+      }),
+    });
+    const mapped = fromApiIssue(created);
+    saveToLocalStorage(mapped);
+    return mapped;
+  } catch {
+    // 2. Offline / local fallback
+    return saveIssue(issue);
+  }
+}
+
+function saveToLocalStorage(newIssue: StoreIssue) {
+  if (typeof window === "undefined") return;
+  const current = getStoredIssues().filter((i) => i.id !== newIssue.id);
+  const updated = [newIssue, ...current];
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    window.dispatchEvent(new Event("waypoint_issues_updated"));
+  } catch (e) {
+    console.error("Failed to save issue to localStorage", e);
+  }
+}
+
 export function saveIssue(issue: Omit<StoreIssue, "id" | "reportedAt" | "reportedBy" | "status">): StoreIssue {
   const current = getStoredIssues();
   const nextNum = current.length + 1;
@@ -115,14 +240,33 @@ export function saveIssue(issue: Omit<StoreIssue, "id" | "reportedAt" | "reporte
     status: "open",
   };
 
-  const updated = [newIssue, ...current];
-  if (typeof window !== "undefined") {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      window.dispatchEvent(new Event("waypoint_issues_updated"));
-    } catch (e) {
-      console.error("Failed to save issue to localStorage", e);
-    }
-  }
+  saveToLocalStorage(newIssue);
+
+  // Background fire and forget sync to DB if reachable
+  const numericOrderId = parseInt(issue.orderId.replace(/\D/g, ""), 10) || null;
+  apiFetch<ApiDeliveryIssue>("/issues", {
+    method: "POST",
+    body: JSON.stringify({
+      order_id: numericOrderId,
+      order_number: issue.orderId,
+      outlet_id: STORE_OUTLET_ID,
+      issue_type: issue.type,
+      title: issue.title,
+      affected_item: issue.affectedItem,
+      sku: issue.sku,
+      expected_units: issue.expectedUnits,
+      received_units: issue.receivedUnits,
+      description: issue.description,
+      photo_url: issue.photoUrl || null,
+      photo_name: issue.photoName || null,
+      photo_size: issue.photoSize || null,
+      driver_name: issue.driverName || null,
+      vehicle_id: issue.vehicleId || null,
+      claimed_amount: issue.claimedAmount || null,
+    }),
+  }).catch(() => {
+    // Ignored in offline mode
+  });
+
   return newIssue;
 }

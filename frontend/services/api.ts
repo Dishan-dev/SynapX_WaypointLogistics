@@ -1,7 +1,7 @@
 export interface DeliveryReceipt {
-  id: string;
-  order_id: string;
-  outlet_id: string;
+  id: number;
+  order_id: number;
+  outlet_id: number;
   units_received?: number | null;
   weight_received_kg?: number | null;
   has_issues: boolean;
@@ -12,8 +12,8 @@ export interface DeliveryReceipt {
 }
 
 export interface ReceiptCreatePayload {
-  order_id: string;
-  outlet_id: string;
+  order_id: number;
+  outlet_id: number;
   units_received?: number | null;
   weight_received_kg?: number | null;
   has_issues: boolean;
@@ -66,7 +66,7 @@ export async function syncOfflineReceipts(receipts: ReceiptCreatePayload[]): Pro
   return res.json();
 }
 
-export async function getDeliveryReceipt(orderId: string): Promise<DeliveryReceipt | null> {
+export async function getDeliveryReceipt(orderId: number | string): Promise<DeliveryReceipt | null> {
   try {
     const res = await fetch(`${API_BASE_URL}/api/receipts/${orderId}`);
     if (res.status === 404) return null;

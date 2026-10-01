@@ -18,6 +18,7 @@ class OrderItemCreate(OrderItemBase):
 class OrderItemRead(OrderItemBase):
     id: int
     order_id: int
+    quantity_sent: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -26,6 +26,7 @@ import { StorePill } from "@/components/store/status-pill";
 import { submitDeliveryReceipt, ReceiptCreatePayload } from "@/services/api";
 import { saveIssue } from "@/services/issues-store";
 import { mockOrders, StoreOrder } from "@/components/store/mock-data";
+import { getStoreOrder } from "@/components/store/api/store-data";
 
 interface ItemState {
   id: string;
@@ -50,10 +51,10 @@ export default function DeliveryDetailsAndReceivingPage({
   const rawOrderId = resolvedParams.orderId || "ORD0000001";
   const router = useRouter();
 
-  // Find matching order in mock data or construct intelligent defaults
-  const matchedOrder = mockOrders.find(
-    (o) => o.orderNumber.toLowerCase() === rawOrderId.toLowerCase()
-  );
+  // Find initial matching order in mock data or construct intelligent defaults
+  const [matchedOrder, setMatchedOrder] = useState<StoreOrder | null>(() => {
+    return mockOrders.find((o) => o.orderNumber.toLowerCase() === rawOrderId.toLowerCase()) ?? null;
+  });
 
   const orderNumber = matchedOrder?.orderNumber || rawOrderId;
   const vehicleId = matchedOrder?.vehicleCode || matchedOrder?.vehicle?.code || "VEH001";
@@ -114,6 +115,34 @@ export default function DeliveryDetailsAndReceivingPage({
       ];
 
   const [items, setItems] = useState<ItemState[]>(initialItems);
+
+  useEffect(() => {
+    async function loadLiveOrder() {
+      try {
+        const orderData = await getStoreOrder(rawOrderId);
+        if (orderData) {
+          setMatchedOrder(orderData);
+          if (orderData.items && orderData.items.length > 0) {
+            setItems(
+              orderData.items.map((it, idx) => ({
+                id: `item-${idx + 1}`,
+                sku: it.sku,
+                name: it.itemName,
+                category: it.category,
+                sentUnits: it.quantitySent ?? it.quantity,
+                receivedUnits: it.quantitySent ?? it.quantity,
+                condition: "good" as const,
+                issueNote: "",
+              }))
+            );
+          }
+        }
+      } catch {
+        // Fallback to initial mock/defaults
+      }
+    }
+    loadLiveOrder();
+  }, [rawOrderId]);
   const [sealVerified, setSealVerified] = useState(true);
   const [tempVerified, setTempVerified] = useState(true);
   const [generalRemarks, setGeneralRemarks] = useState("");
@@ -239,8 +268,8 @@ export default function DeliveryDetailsAndReceivingPage({
     });
 
     const payload: ReceiptCreatePayload = {
-      order_id: "a1b2c3d4-0000-0000-0000-000000000001",
-      outlet_id: "OUT005",
+      order_id: matchedOrder?.id ?? (parseInt(rawOrderId.replace(/\D/g, ""), 10) || 1),
+      outlet_id: 5,
       units_received: totalReceived,
       weight_received_kg: 80.0,
       has_issues: hasItemIssues,
@@ -306,8 +335,8 @@ export default function DeliveryDetailsAndReceivingPage({
     });
 
     const payload: ReceiptCreatePayload = {
-      order_id: "a1b2c3d4-0000-0000-0000-000000000001",
-      outlet_id: "OUT005",
+      order_id: matchedOrder?.id ?? (parseInt(rawOrderId.replace(/\D/g, ""), 10) || 1),
+      outlet_id: 5,
       units_received: 0,
       has_issues: true,
       issue_type: "other",

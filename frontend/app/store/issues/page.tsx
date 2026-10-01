@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StorePill, StorePillTone } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
-import { getStoredIssues, saveIssue, StoreIssue } from "@/services/issues-store";
+import { getStoredIssues, fetchStoreIssues, saveIssue, StoreIssue } from "@/services/issues-store";
 
 export default function ExceptionsAndIssuesPage() {
   const [issues, setIssues] = useState<StoreIssue[]>([]);
@@ -46,8 +46,18 @@ export default function ExceptionsAndIssuesPage() {
   const [newDescription, setNewDescription] = useState("");
   const [newPhoto, setNewPhoto] = useState<{ name: string; url: string; size: string } | null>(null);
 
-  const loadIssues = () => {
+  const loadIssues = async () => {
+    // Initial quick load from local storage
     setIssues(getStoredIssues());
+    // Live update from backend DB
+    try {
+      const data = await fetchStoreIssues();
+      if (data && data.length > 0) {
+        setIssues(data);
+      }
+    } catch {
+      // Handled via local storage
+    }
   };
 
   useEffect(() => {

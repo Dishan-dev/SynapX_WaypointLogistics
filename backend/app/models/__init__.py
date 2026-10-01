@@ -7,6 +7,7 @@ from app.models.fleet import Vehicle, DriverProfile
 from app.models.allocation import Allocation
 from app.models.notification import Notification
 from app.models.receipts import DeliveryReceipt
+from app.models.delivery_issue import DeliveryIssue
 from app.models.outlet_settings import OutletSettings
 from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, IssueReport, SOSAlert
 from app.models.reference import (
@@ -53,6 +54,7 @@ __all__ = [
     "Allocation",
     "Notification",
     "DeliveryReceipt",
+    "DeliveryIssue",
     "OutletSettings",
     "DriverTrip",
     "DeliveryStop",

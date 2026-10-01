@@ -26,6 +26,9 @@ import {
   DeliveryReceipt,
   ReceiptCreatePayload,
 } from "@/services/api";
+import { getStoreOrder } from "@/components/store/api/store-data";
+import { STORE_OUTLET_ID } from "@/components/store/api/config";
+import { StoreOrder } from "@/components/store/mock-data";
 
 export default function ReceiptConfirmationPage({
   params,
@@ -36,6 +39,7 @@ export default function ReceiptConfirmationPage({
   const orderId = resolvedParams.orderId;
   const router = useRouter();
 
+  const [order, setOrder] = useState<StoreOrder | null>(null);
   const [existingReceipt, setExistingReceipt] = useState<DeliveryReceipt | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasIssue, setHasIssue] = useState<boolean>(false);
@@ -50,33 +54,45 @@ export default function ReceiptConfirmationPage({
     message?: string;
   } | null>(null);
 
-  // Mock order data for store manager view
+  // Order summary derived from real fetched order or sensible defaults
+  const totalUnits = order?.items.reduce((sum, it) => sum + (it.quantitySent ?? it.quantity), 0) ?? 40;
   const orderSummary = {
-    id: orderId,
-    outlet_id: "OUT001",
+    id: order?.id ?? (parseInt(orderId.replace(/\D/g, ""), 10) || 1),
+    orderNumber: order?.orderNumber ?? orderId,
+    outlet_id: STORE_OUTLET_ID,
     outlet_name: "Colombo Fresh - Pettah",
-    brand: "Fresh",
-    expected_units: 40,
+    brand: order?.temperatureClass === "chilled" ? "Fresh (Chilled)" : "Fresh",
+    expected_units: totalUnits,
     expected_weight_kg: 120.5,
-    temp_requirement: "chilled",
+    temp_requirement: order?.temperatureClass ?? "chilled",
     delivered_at: "Today, 07:15 AM",
   };
 
   useEffect(() => {
-    async function checkExisting() {
+    async function loadData() {
       setIsLoading(true);
       try {
-        const receipt = await getDeliveryReceipt(orderId);
+        const [receipt, orderData] = await Promise.all([
+          getDeliveryReceipt(orderId),
+          getStoreOrder(orderId),
+        ]);
         if (receipt) {
           setExistingReceipt(receipt);
         }
+        if (orderData) {
+          setOrder(orderData);
+          const total = orderData.items.reduce((sum, it) => sum + (it.quantitySent ?? it.quantity), 0);
+          if (total > 0) {
+            setUnitsReceived(total);
+          }
+        }
       } catch {
-        // No receipt yet
+        // Handled gracefully
       } finally {
         setIsLoading(false);
       }
     }
-    checkExisting();
+    loadData();
   }, [orderId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -85,7 +101,7 @@ export default function ReceiptConfirmationPage({
 
     setIsSubmitting(true);
     const payload: ReceiptCreatePayload = {
-      order_id: orderId,
+      order_id: orderSummary.id,
       outlet_id: orderSummary.outlet_id,
       units_received: unitsReceived,
       weight_received_kg: weightReceived,
@@ -151,7 +167,7 @@ export default function ReceiptConfirmationPage({
               Receipt Already Confirmed
             </h1>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Delivery for order <strong>{orderId.slice(0, 8)}...</strong> was previously confirmed on{" "}
+              Delivery for order <strong>{orderSummary.orderNumber}</strong> was previously confirmed on{" "}
               {existingReceipt.confirmed_at ? new Date(existingReceipt.confirmed_at).toLocaleDateString() : "today"}.
             </p>
           </div>
@@ -217,7 +233,7 @@ export default function ReceiptConfirmationPage({
             <span>Back to Orders</span>
           </Link>
           <span className="text-xs font-mono font-medium text-zinc-500">
-            Order: {orderId.slice(0, 8)}...
+            Order: {orderSummary.orderNumber}
           </span>
         </div>
       </header>

@@ -4,8 +4,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from app.models.receipts import DeliveryReceipt
+from app.models.delivery_issue import DeliveryIssue
+from app.models.order import OrderStatus
+from app.models.notification import NotificationType
 from app.schemas.receipts import ReceiptCreateRequest
-from app.services.mocks import get_order_service, get_notification_service
+from app.services.order_service import order_service
+from app.services.notification_service import notification_service
 
 
 class ReceiptService:
@@ -48,19 +52,55 @@ class ReceiptService:
                 detail="Receipt already submitted for this order",
             )
 
-        # Update order status
-        order_svc = get_order_service()
-        await order_svc.update_order_status(payload.order_id, "delivered")
+        # Update order status: receipt confirmation is the final step -> COMPLETED
+        try:
+            order = order_service._get(db, payload.order_id)
+            if order.status == OrderStatus.DISPATCHED:
+                order_service.update_order_status(db, payload.order_id, OrderStatus.DELIVERED)
+            if order.status == OrderStatus.DELIVERED:
+                order_service.update_order_status(db, payload.order_id, OrderStatus.COMPLETED)
+            elif order.status not in (OrderStatus.COMPLETED, OrderStatus.CANCELLED):
+                order_service.update_order_status(db, payload.order_id, OrderStatus.COMPLETED)
+        except Exception:
+            pass
 
-        # Fire notification if issues were reported
+        # Record delivery issue and fire notification if issues were reported
         if payload.has_issues:
-            notif_svc = get_notification_service()
-            await notif_svc.send(
-                outlet_id=payload.outlet_id,
-                type="issue_reported",
-                title="Delivery issue reported",
-                message=f"Issue type: {payload.issue_type}. {payload.issue_description or ''}",
+            order_number = f"ORD{payload.order_id:07d}"
+            try:
+                order = order_service._get(db, payload.order_id)
+                if order and order.order_number:
+                    order_number = order.order_number
+            except Exception:
+                pass
+
+            issue_type_formatted = (payload.issue_type or "Discrepancy").replace("_", " ").title()
+            delivery_issue = DeliveryIssue(
                 order_id=payload.order_id,
+                order_number=order_number,
+                outlet_id=payload.outlet_id,
+                issue_type=issue_type_formatted,
+                title=f"Delivery Discrepancy on {order_number} ({issue_type_formatted})",
+                received_units=payload.units_received,
+                description=payload.issue_description or f"Discrepancy reported on receipt confirmation ({payload.issue_type}).",
+                reported_by="Sarah Jenkins (Store Manager)",
+                status="open",
+            )
+            db.add(delivery_issue)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+
+            notification_service.send(
+                db,
+                outlet_id=payload.outlet_id,
+                type=NotificationType.ISSUE_LOGGED,
+                meta={
+                    "order_id": payload.order_id,
+                    "issue_code": payload.issue_type or "ISSUE",
+                    "note": f"Issue type: {payload.issue_type}. {payload.issue_description or ''}".strip(),
+                },
             )
 
         return receipt

@@ -16,6 +16,7 @@ export interface ApiOrderItem {
   sku: string;
   item_name: string;
   quantity: number;
+  quantity_sent?: number | null;
   unit_price: number;
 }
 
@@ -109,6 +110,7 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
         category: catalogue?.category ?? "",
         temperatureClass: catalogue?.temperatureClass ?? temperatureClass,
         quantity: item.quantity,
+        quantitySent: item.quantity_sent ?? undefined,
         unitLabel: catalogue?.unitLabel ?? "Units",
       };
     }),
