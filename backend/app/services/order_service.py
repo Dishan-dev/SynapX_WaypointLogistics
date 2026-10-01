@@ -330,6 +330,7 @@ class OrderService:
             )
         order.status = OrderStatus.DEFERRED
         order.deferral_reason = reason
+        order.allocation_id = None
         order.deferral_count = (order.deferral_count or 0) + 1
         if new_delivery_date:
             order.operating_date = new_delivery_date.isoformat()
