@@ -32,7 +32,7 @@ from app.models.loader_activity import (
 from app.models.fleet import Vehicle
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderSession, LoaderUser
-from app.models.order import Order
+from app.models.order import Order, OrderStatus
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
 from app.models.shipment import DispatchTrip
 from app.models.reference import (
@@ -399,6 +399,90 @@ class RunCodeTakenError(InvalidStateTransitionError):
         }
 
 
+class _TripRef:
+    """The two DispatchTrip attributes OrderOnAnotherRunError reads."""
+
+    def __init__(self, run: DeliveryRun):
+        self.id = run.dispatch_trip_id
+        self.trip_code = run.code
+
+
+class PlanLockedError(InvalidStateTransitionError):
+    """A dispatcher plan change on a run that has gone through the gate. 409."""
+
+    def __init__(self, run: DeliveryRun):
+        super().__init__(
+            f"{run.code} has gone through the gate; change it with the driver.",
+            current_state=run.status.value,
+            target_state="plan_changed",
+            entity="DeliveryRun",
+        )
+        self.code = "PLAN_LOCKED"
+        self.details = {"entity": "DeliveryRun", "entity_id": run.code, "status": run.status.value}
+
+
+class RunNotReleasedError(InvalidStateTransitionError):
+    """Hand-off or gate-out of a run the loader has not released. 409."""
+
+    def __init__(self, run: DeliveryRun):
+        super().__init__(
+            f"{run.code} is {run.status.value}; the loader has not released it.",
+            current_state=run.status.value,
+            target_state=RunStatus.GATED_OUT.value,
+            entity="DeliveryRun",
+        )
+        self.code = "RUN_NOT_RELEASED"
+        self.details = {"entity": "DeliveryRun", "entity_id": run.code, "status": run.status.value}
+
+
+class PlanChangeInvalidError(AllocationError):
+    """A dispatcher plan change that cannot be applied as asked. 422, every
+    reason in violations ({code, message, order_number? | outlet_code?})."""
+
+    def __init__(self, run: DeliveryRun, violations: List[dict]):
+        super().__init__(
+            f"The plan change for {run.code} cannot be applied.",
+            code="PLAN_CHANGE_INVALID",
+            violations=violations,
+        )
+        self.details["run_code"] = run.code
+
+
+class InvalidOptionError(AllocationError):
+    """A decision naming an option the issue does not have. 422."""
+
+    def __init__(self, issue: LoaderIssue, option):
+        super().__init__(
+            f"Option {option!r} is not one of issue {issue.id}'s options.",
+            code="INVALID_OPTION",
+            violations=[{
+                "code": "INVALID_OPTION",
+                "message": "Choose one of the issue's options.",
+                "options": [{"id": o.id, "label": o.label} for o in issue.options],
+            }],
+        )
+
+
+class IssueAlreadyDecidedError(InvalidStateTransitionError):
+    """A decision on an issue already decided (or defaulted) another way. 409."""
+
+    def __init__(self, issue: LoaderIssue, chosen: Optional[LoaderIssueOption]):
+        super().__init__(
+            f"Issue {issue.id} is already {issue.status.value}.",
+            current_state=issue.status.value,
+            target_state=IssueStatus.DECIDED.value,
+            entity="LoaderIssue",
+        )
+        self.code = "ISSUE_ALREADY_DECIDED"
+        self.details = {
+            "entity": "LoaderIssue",
+            "entity_id": issue.id,
+            "status": issue.status.value,
+            "chosen_option": chosen.label if chosen else None,
+            "decided_by": issue.decided_by,
+        }
+
+
 # delivery_runs.code is String(20); a longer trip code cannot be stored.
 RUN_CODE_MAX = 20
 
@@ -414,6 +498,7 @@ DISPATCHER_EVENT_TITLES = {
     "issue_decided": "Shortfall decided",
     "issue_default_applied": "Default applied",
     "load_reopened": "Load reopened",
+    "departure_changed": "Departure changed",
     "run_released": "Ready to depart",
     "run_release_undone": "Ready undone",
     "gated_out": "Gated out",
@@ -499,6 +584,7 @@ class LoaderService:
                         unloaded_at=unload.at if unload else None,
                         unloaded_by=unload.actor.short_name if unload and unload.actor else None,
                         **(diff.order_fields(row, stop) if diff else {}),
+                        **LoaderService.order_destination(db, run, row),
                     )
                 )
             stop_reads.append(
@@ -819,6 +905,7 @@ class LoaderService:
             decided_by=issue.decided_by,
             options=[
                 schemas.IssueOptionRead(
+                    id=o.id,
                     label=o.label,
                     detail=o.detail,
                     is_default=o.is_default,
@@ -1946,6 +2033,8 @@ class LoaderService:
         reasons: Optional[Dict[str, str]] = None,
         summary: Optional[str] = None,
         source: str = "Dispatcher",
+        stop_order: Optional[List[int]] = None,
+        actor_label: Optional[str] = None,
     ) -> PlanRevision:
         """Publish the next plan version for a run.
 
@@ -1967,6 +2056,9 @@ class LoaderService:
         - take_off and re_check rows are carried forward as they are, so a
           stacked change never loses an outstanding task or a check.
         - reasons are the dispatcher's words per order, shown in the diff.
+        - stop_order (outlet ids) puts those stops first, in that delivery
+          order; the others follow in their existing order. Without it a brand
+          new stop goes first and the rest keep their order.
 
         The dev plan-change endpoint is the only caller today; the dispatcher's
         real publish is meant to call this too, so every rule about what a new
@@ -2024,16 +2116,19 @@ class LoaderService:
                 prepended_outlet_ids.append(order.outlet_id)
 
         # A brand new stop goes first in delivery order, so it loads last -
-        # nearest the door, first off the truck.
-        offset = len(prepended_outlet_ids)
-        total_stops = len(old_stops) + offset
+        # nearest the door, first off the truck - unless stop_order says otherwise.
+        default_order = prepended_outlet_ids + [s.outlet_id for s in old_stops]
+        named = [o for o in dict.fromkeys(stop_order or []) if o in default_order]
+        final_order = named + [o for o in default_order if o not in named]
+        sequence_of = {outlet_id: index + 1 for index, outlet_id in enumerate(final_order)}
+        total_stops = len(final_order)
 
         def load_position_for(sequence: int) -> int:
             return total_stops - sequence + 1
 
         carried: List[RunStop] = []
-        for index, outlet_id in enumerate(prepended_outlet_ids):
-            sequence = index + 1
+        for outlet_id in prepended_outlet_ids:
+            sequence = sequence_of[outlet_id]
             new_stop = RunStop(
                 run_id=run.id,
                 plan_version=new_version,
@@ -2049,7 +2144,7 @@ class LoaderService:
 
         # Copy each existing stop and its rows forward into the new version.
         for old_stop in old_stops:
-            sequence = old_stop.stop_sequence + offset
+            sequence = sequence_of[old_stop.outlet_id]
             new_stop = RunStop(
                 run_id=run.id,
                 plan_version=new_version,
@@ -2167,7 +2262,7 @@ class LoaderService:
 
         LoaderService.log(
             db, run, at=now, actor_kind=ActorKind.DISPATCHER,
-            event_type="plan_published", actor_label=source,
+            event_type="plan_published", actor_label=actor_label or source,
             message=f"{source} published plan v{new_version}",
         )
 
@@ -2460,6 +2555,494 @@ class LoaderService:
         ).all()
         return [{"order_number": number, "run_code": code} for number, code in rows]
 
+    # --- dispatcher plan change (integration) ----------------------------
+
+    @staticmethod
+    def require_run_for_dispatch_trip(db: Session, trip_id: int) -> DeliveryRun:
+        run = LoaderService.run_for_dispatch_trip(db, trip_id)
+        if run is None:
+            raise NotFoundError(
+                f"No loader run for dispatch trip {trip_id}.", entity="DeliveryRun", entity_id=trip_id
+            )
+        return run
+
+    @staticmethod
+    def _active_rows(db: Session, run: DeliveryRun) -> Dict[str, RunStopOrder]:
+        """Current-plan rows still on the plan, by order number."""
+        return {
+            row.order.order_number: row
+            for stop in LoaderService.current_stops(db, run)
+            for row in stop.orders
+            if row.state not in OFF_PLAN_STATES
+        }
+
+    @staticmethod
+    def publish_dispatcher_plan(
+        db: Session, run: DeliveryRun, payload: schemas.DispatcherPlanRequest
+    ) -> Tuple[Optional[PlanRevision], bool]:
+        """The dispatcher changes the plan of a run built from a dispatch trip.
+
+        Returns (revision, replayed). revision is None when only departs_at
+        changed: a new departure time alone is not a new plan version.
+
+        - gated_out -> 409 PLAN_LOCKED. Any other status is allowed; a
+          ready_to_depart run reopens (publish_plan, L7).
+        - base_version must be the current version, else 409
+          PLAN_VERSION_STALE - unless the current version is exactly this
+          request, already applied (a retry): then it is returned as a replay.
+        - 422 PLAN_CHANGE_INVALID lists everything wrong with the request.
+        - 409 ORDER_ON_ANOTHER_RUN for an added order planned elsewhere.
+
+        remove / move / defer all take the order off this run: off the truck
+        (take_off) when it is aboard, otherwise moved. Rows aboard nearer the
+        door than an order coming off are put to re_check (they are moved to
+        reach it); a new stop order re-checks everything aboard.
+        """
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+        if run.status == RunStatus.GATED_OUT:
+            raise PlanLockedError(run)
+
+        removed = [r.order_number for r in (*payload.remove, *payload.move, *payload.defer)]
+        added = [r.order_number for r in payload.add]
+
+        if payload.base_version != run.current_plan_version:
+            if LoaderService._plan_replay(db, run, payload, removed, added):
+                return LoaderService.get_revision(db, run, run.current_plan_version), True
+            raise StalePlanVersionError(run, payload.base_version)
+
+        violations: List[dict] = []
+
+        def violation(code: str, message: str, **extra) -> None:
+            violations.append({"code": code, "message": message, **extra})
+
+        seen: set = set()
+        for number in removed + added:
+            if number in seen:
+                violation("DUPLICATE_ORDER", f"{number} is named more than once.", order_number=number)
+            seen.add(number)
+
+        active = LoaderService._active_rows(db, run)
+        for number in removed:
+            if number not in active:
+                violation("ORDER_NOT_ON_RUN", f"{number} is not on {run.code}'s plan.", order_number=number)
+
+        new_orders: List[Order] = []
+        for number in added:
+            order = db.execute(select(Order).filter_by(order_number=number)).scalars().first()
+            if order is None:
+                violation("ORDER_NOT_FOUND", f"{number} does not exist.", order_number=number)
+                continue
+            if order.outlet_id is None:
+                violation("ORDER_WITHOUT_OUTLET", f"{number} has no outlet.", order_number=number)
+                continue
+            brand = LoaderService._order_brand(order, order.outlet)
+            if brand != run.brand:
+                violation("BRAND_MISMATCH", f"{number} is not a {BRAND_LABELS[run.brand]} order.",
+                          order_number=number)
+                continue
+            new_orders.append(order)
+
+        current_stops = LoaderService.current_stops(db, run)
+        outlet_by_code = {s.outlet.code.upper(): s.outlet for s in current_stops}
+        for order in new_orders:
+            outlet_by_code.setdefault(order.outlet.code.upper(), order.outlet)
+        stop_ids: List[int] = []
+        for code in payload.stop_order or []:
+            outlet = outlet_by_code.get(code.upper())
+            if outlet is None:
+                violation("UNKNOWN_STOP", f"{code} is not a stop on {run.code}.", outlet_code=code)
+            elif outlet.id not in stop_ids:
+                stop_ids.append(outlet.id)
+
+        current_sequence = [s.outlet_id for s in sorted(current_stops, key=lambda s: s.stop_sequence)]
+        resequenced = bool(stop_ids) and stop_ids != current_sequence[: len(stop_ids)]
+        if not (removed or added or resequenced or payload.departs_at):
+            violation("EMPTY_CHANGE", "Nothing to change: no orders, stop order or departure time.")
+
+        if violations:
+            raise PlanChangeInvalidError(run, violations)
+
+        clashes = [
+            c for c in LoaderService._orders_on_other_runs(db, [o.id for o in new_orders])
+            if c["run_code"] != run.code
+        ]
+        if clashes:
+            raise OrderOnAnotherRunError(_TripRef(run), clashes)
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if payload.departs_at is not None:
+            new_departure = _naive_utc(payload.departs_at)
+            if new_departure != run.departs_at:
+                LoaderService.log(
+                    db, run, at=now, actor_kind=ActorKind.DISPATCHER,
+                    event_type="departure_changed", actor_label=payload.dispatcher,
+                    message=(
+                        f"{payload.dispatcher} moved departure "
+                        f"{_depot_hhmm(run.departs_at)} -> {_depot_hhmm(new_departure)}"
+                    ),
+                )
+                run.departs_at = new_departure
+
+        if not (removed or added or resequenced):
+            db.flush()
+            return None, False
+
+        reasons = {}
+        for ref in (*payload.remove, *payload.move, *payload.defer, *payload.add):
+            if ref.reason:
+                reasons[ref.order_number] = ref.reason
+
+        revision = LoaderService.publish_plan(
+            db,
+            run,
+            unload=removed,
+            dont_load=[],
+            load_new=added,
+            recheck=None if resequenced else LoaderService._rows_to_reach(active, removed),
+            reasons=reasons,
+            summary=payload.summary,
+            stop_order=stop_ids or None,
+            actor_label=payload.dispatcher,
+        )
+        return revision, False
+
+    @staticmethod
+    def _rows_to_reach(active: Dict[str, RunStopOrder], removed: List[str]) -> List[str]:
+        """Loaded orders that have to be moved to get the removed ones off.
+
+        load_position 1 is deepest; anything aboard at a stop nearer the door
+        (a higher load_position) than the deepest order coming off is in the way.
+        """
+        aboard = {n: r for n, r in active.items() if r.state in ON_TRUCK_STATES}
+        coming_off = [aboard[n].run_stop.load_position for n in removed if n in aboard]
+        if not coming_off:
+            return []
+        deepest = min(coming_off)
+        return sorted(
+            n for n, r in aboard.items()
+            if n not in removed and r.run_stop.load_position > deepest
+        )
+
+    @staticmethod
+    def _plan_replay(
+        db: Session,
+        run: DeliveryRun,
+        payload: schemas.DispatcherPlanRequest,
+        removed: List[str],
+        added: List[str],
+    ) -> bool:
+        """True when the current plan version is this very request, already
+        applied: one version past base_version, from the dispatcher, with the
+        same orders off and on, the named stops first, and the same departure."""
+        if run.current_plan_version != payload.base_version + 1:
+            return False
+        revision = LoaderService.get_revision(db, run, run.current_plan_version)
+        if revision is None or revision.source != "Dispatcher":
+            return False
+        off_kinds = {PlanChangeKind.UNLOAD_FROM_TRUCK, PlanChangeKind.DONT_LOAD}
+        off = {c.order.order_number for c in revision.changes if c.order and c.change_kind in off_kinds}
+        on = {c.order.order_number for c in revision.changes
+              if c.order and c.change_kind == PlanChangeKind.LOAD_NEW}
+        if off != set(removed) or on != set(added):
+            return False
+        if payload.stop_order:
+            sequence = [
+                s.outlet.code.upper()
+                for s in sorted(LoaderService.current_stops(db, run), key=lambda s: s.stop_sequence)
+            ]
+            named = list(dict.fromkeys(c.upper() for c in payload.stop_order))
+            if sequence[: len(named)] != named:
+                return False
+        if payload.departs_at is not None and _naive_utc(payload.departs_at) != run.departs_at:
+            return False
+        return True
+
+    @staticmethod
+    def order_destination(db: Session, run: DeliveryRun, row: RunStopOrder) -> dict:
+        """moved_to / deferred_to for an order this run's plan has dropped.
+
+        Read from where the order is now, so nothing extra is stored: moved_to
+        when another loader run (not gated out) has it on its current plan,
+        deferred_to when the order is DEFERRED to a later operating day.
+        """
+        if row.state not in OFF_PLAN_STATES:
+            return {}
+        fields: dict = {}
+        other = db.execute(
+            select(DeliveryRun)
+            .join(RunStop, RunStop.run_id == DeliveryRun.id)
+            .join(RunStopOrder, RunStopOrder.run_stop_id == RunStop.id)
+            .where(
+                RunStopOrder.order_id == row.order_id,
+                DeliveryRun.id != run.id,
+                RunStop.plan_version == DeliveryRun.current_plan_version,
+                DeliveryRun.status != RunStatus.GATED_OUT,
+                RunStopOrder.state.notin_(OFF_PLAN_STATES),
+            )
+        ).scalars().first()
+        if other is not None:
+            fields["moved_to"] = schemas.MovedToRead(
+                run_code=other.code,
+                vehicle_code=other.vehicle.code,
+                trip_number=other.trip_number,
+                departs_at=other.departs_at,
+            )
+        order = row.order
+        if order.status == OrderStatus.DEFERRED and order.operating_date:
+            try:
+                day = date.fromisoformat(order.operating_date[:10])
+            except ValueError:
+                day = None
+            if day is not None and day > _depot_date(run.departs_at):
+                fields["deferred_to"] = day
+        return fields
+
+    # --- dispatcher decision (integration, L8) ---------------------------
+
+    @staticmethod
+    def decide_issue(
+        db: Session, issue: LoaderIssue, payload: schemas.IssueDecisionRequest
+    ) -> Tuple[LoaderIssue, bool]:
+        """The dispatcher's decision on a flag. Returns (issue, replayed).
+
+        option is the option's id, or its label. 422 INVALID_OPTION when the
+        issue has no such option. Deciding again with the option already
+        chosen is a replay (200, nothing written); any other option on a
+        decided or defaulted issue is 409 ISSUE_ALREADY_DECIDED. A run through
+        the gate is 409 too.
+        """
+        chosen = LoaderService._find_option(issue, payload.option)
+        if chosen is None:
+            raise InvalidOptionError(issue, payload.option)
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == issue.run_id).with_for_update())
+
+        if issue.status in (IssueStatus.DECIDED, IssueStatus.DEFAULT_APPLIED):
+            current = next((o for o in issue.options if o.is_chosen), None)
+            if current is not None and current.id == chosen.id:
+                return issue, True
+            raise IssueAlreadyDecidedError(issue, current)
+        if issue.run.status == RunStatus.GATED_OUT:
+            raise InvalidStateTransitionError(
+                f"{issue.run.code} has gone through the gate.",
+                current_state=issue.run.status.value,
+                target_state=IssueStatus.DECIDED.value,
+                entity="LoaderIssue",
+            )
+
+        message = f"{issue.order.order_number}: {chosen.label}"
+        if payload.note:
+            message += f" · {payload.note}"
+        LoaderService._record_decision(
+            db, issue, chosen,
+            status=IssueStatus.DECIDED, decided_by=payload.decided_by,
+            actor_kind=ActorKind.DISPATCHER, event_type="issue_decided", message=message,
+        )
+        return issue, False
+
+    @staticmethod
+    def _find_option(issue: LoaderIssue, option) -> Optional[LoaderIssueOption]:
+        if isinstance(option, int):
+            return next((o for o in issue.options if o.id == option), None)
+        text = str(option).strip()
+        if text.isdigit():
+            by_id = next((o for o in issue.options if o.id == int(text)), None)
+            if by_id is not None:
+                return by_id
+        return next((o for o in issue.options if o.label.lower() == text.lower()), None)
+
+    @staticmethod
+    def _record_decision(
+        db: Session,
+        issue: LoaderIssue,
+        chosen: LoaderIssueOption,
+        *,
+        status: IssueStatus,
+        decided_by: str,
+        actor_kind: ActorKind,
+        event_type: str,
+        message: str,
+    ) -> None:
+        """Mark the option chosen, apply the outcome to the run (which lifts
+        the release lock once nothing waits) and log it. Shared by the real
+        decision, the dev decision and the decide-by default."""
+        now = datetime.now(timezone.utc)
+        for option in issue.options:
+            option.is_chosen = option is chosen
+        issue.status = status
+        issue.decided_at = now
+        issue.decided_by = decided_by
+        if issue.seen_at is None and status == IssueStatus.DECIDED:
+            issue.seen_at = now
+        LoaderService._apply_issue_outcome(db, issue, chosen)
+        LoaderService.log(
+            db, issue.run, at=now, actor_kind=actor_kind, event_type=event_type,
+            actor_label=decided_by if actor_kind == ActorKind.DISPATCHER else "System",
+            order_id=issue.order_id, message=message,
+        )
+        db.flush()
+
+    @staticmethod
+    def apply_default_decision(db: Session, issue: LoaderIssue) -> LoaderIssue:
+        """Apply the pre-agreed default because decide-by passed (L8 timeout)."""
+        if issue.status in (IssueStatus.DECIDED, IssueStatus.DEFAULT_APPLIED):
+            raise InvalidStateTransitionError(
+                "This issue has already been resolved.",
+                current_state=issue.status.value,
+                target_state="default_applied",
+                entity="LoaderIssue",
+            )
+        chosen = next((o for o in issue.options if o.is_default), None)
+        if chosen is None:
+            raise NotFoundError(
+                f"Issue {issue.id} has no default option to apply.",
+                entity="LoaderIssueOption",
+                entity_id=issue.id,
+            )
+        LoaderService._record_decision(
+            db, issue, chosen,
+            status=IssueStatus.DEFAULT_APPLIED, decided_by="System (decide-by passed)",
+            actor_kind=ActorKind.SYSTEM, event_type="issue_default_applied",
+            message=f"No decision by decide-by; applied default: {chosen.label}",
+        )
+        return issue
+
+    @staticmethod
+    def apply_overdue_defaults(
+        db: Session, now: Optional[datetime] = None, *, linked_only: bool = True
+    ) -> List[LoaderIssue]:
+        """Apply the default to every waiting issue whose decide-by has passed.
+
+        Called on the loader and dispatcher reads, so an overdue issue is
+        never shown as still waiting. linked_only (the default on reads) keeps
+        it to runs built from a dispatch trip: seeded demo runs such as
+        LDR-RUN-1002 have no dispatcher to answer and are left to the dev
+        /expire endpoint. Runs through the gate and issues with no default
+        are skipped.
+        """
+        cutoff = _naive_utc(now or datetime.now(timezone.utc))
+        query = (
+            select(LoaderIssue)
+            .join(DeliveryRun, LoaderIssue.run_id == DeliveryRun.id)
+            .where(
+                LoaderIssue.status.in_([IssueStatus.SENT, IssueStatus.SEEN]),
+                LoaderIssue.decide_by.is_not(None),
+                LoaderIssue.decide_by < cutoff,
+                DeliveryRun.status != RunStatus.GATED_OUT,
+            )
+            .order_by(LoaderIssue.decide_by, LoaderIssue.id)
+        )
+        if linked_only:
+            query = query.where(DeliveryRun.dispatch_trip_id.is_not(None))
+        applied = []
+        for issue in db.execute(query).scalars().all():
+            if any(o.is_default for o in issue.options):
+                applied.append(LoaderService.apply_default_decision(db, issue))
+        return applied
+
+    # --- driver hand-off and gate-out (integration) ----------------------
+
+    @staticmethod
+    def handoff(db: Session, run: DeliveryRun) -> schemas.HandoffRead:
+        """What is on the truck, for the driver. 409 RUN_NOT_RELEASED until
+        the loader has released the run (ready_to_depart or gated_out)."""
+        if run.status not in CLOSED_RUN_STATES:
+            raise RunNotReleasedError(run)
+
+        latest = LoaderService._latest_issues(db, run)
+        shortfalls = {
+            order_id: LoaderService._shortfall_read(issue)
+            for order_id, issue in latest.items()
+            if issue.status in (IssueStatus.DECIDED, IssueStatus.DEFAULT_APPLIED)
+        }
+        stops = []
+        units_ordered = units_loaded = 0
+        for stop in sorted(LoaderService.current_stops(db, run), key=lambda s: s.stop_sequence):
+            orders = []
+            for row in sorted(stop.orders, key=lambda r: r.order.order_number):
+                if row.state in OFF_PLAN_STATES:
+                    continue
+                loaded = LoaderService.loaded_units(row, latest.get(row.order_id))
+                units_ordered += row.units or 0
+                units_loaded += loaded
+                orders.append(schemas.HandoffOrderRead(
+                    order_number=row.order.order_number,
+                    temperature_class=order_temperature(row.order),
+                    units_ordered=row.units,
+                    loaded_units=loaded,
+                    weight_kg=row.weight_kg,
+                    volume_m3=row.volume_m3,
+                    shortfall=shortfalls.get(row.order_id),
+                ))
+            if not orders:
+                continue  # every order of this stop left the plan
+            stops.append(schemas.HandoffStopRead(
+                stop_sequence=stop.stop_sequence,
+                load_position=stop.load_position,
+                outlet_code=stop.outlet.code,
+                outlet_name=stop.outlet.name,
+                district=stop.outlet.district,
+                eta=stop.eta,
+                orders=orders,
+            ))
+
+        return schemas.HandoffRead(
+            dispatch_trip_id=run.dispatch_trip_id,
+            run_code=run.code,
+            status=run.status,
+            plan_version=run.current_plan_version,
+            vehicle_code=run.vehicle.code,
+            dock=run.dock.code,
+            departs_at=run.departs_at,
+            gated_out_at=run.gated_out_at,
+            units_ordered=units_ordered,
+            units_loaded=units_loaded,
+            stops=stops,
+            shortfalls=sorted(shortfalls.values(), key=lambda s: s.order_number),
+            **LoaderService.release_fields(run),
+        )
+
+    @staticmethod
+    def _shortfall_read(issue: LoaderIssue) -> schemas.HandoffShortfallRead:
+        chosen = next((o for o in issue.options if o.is_chosen), None)
+        return schemas.HandoffShortfallRead(
+            issue_id=issue.id,
+            order_number=issue.order.order_number,
+            outlet_code=issue.order.outlet.code if issue.order.outlet else None,
+            issue_type=issue.issue_type,
+            units_affected=issue.units_affected,
+            units_total=issue.units_total,
+            status=issue.status,
+            decision=chosen.label if chosen else None,
+            decided_by=issue.decided_by,
+            decided_at=issue.decided_at,
+        )
+
+    @staticmethod
+    def gate_out(
+        db: Session, run: DeliveryRun, payload: schemas.GateOutRequest
+    ) -> Tuple[DeliveryRun, bool]:
+        """The truck leaves: ready_to_depart -> gated_out. Returns (run, replayed).
+
+        A run already gated out is a replay (200). Anything not released is
+        409 RUN_NOT_RELEASED. Once gated out the run leaves the loader queue,
+        release and undo answer 409, and dispatcher plan changes 409 PLAN_LOCKED.
+        """
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+        if run.status == RunStatus.GATED_OUT:
+            return run, True
+        if run.status != RunStatus.READY_TO_DEPART:
+            raise RunNotReleasedError(run)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        run.status = RunStatus.GATED_OUT
+        run.gated_out_at = now
+        who = payload.by or "Driver"
+        LoaderService.log(
+            db, run, at=now, actor_kind=ActorKind.SYSTEM, event_type="gated_out",
+            actor_label=who, message=f"Gated out · {who}",
+        )
+        db.flush()
+        return run, False
+
     # --- integration slice 1: loader -> dispatcher ----------------------
 
     @staticmethod
@@ -2597,60 +3180,18 @@ class LoaderService:
                 entity_id=issue.id,
             )
 
-        now = datetime.now(timezone.utc)
-        for option in issue.options:
-            option.is_chosen = option is chosen
-        issue.status = IssueStatus.DECIDED
-        issue.decided_at = now
-        issue.decided_by = payload.decided_by
-        if issue.seen_at is None:
-            issue.seen_at = now
-
-        LoaderService._apply_issue_outcome(db, issue, chosen)
-        LoaderService.log(
-            db, issue.run, at=now, actor_kind=ActorKind.DISPATCHER,
-            event_type="issue_decided", actor_label=payload.decided_by,
-            order_id=issue.order_id,
+        LoaderService._record_decision(
+            db, issue, chosen,
+            status=IssueStatus.DECIDED, decided_by=payload.decided_by,
+            actor_kind=ActorKind.DISPATCHER, event_type="issue_decided",
             message=f"{issue.order.order_number}: {chosen.label}",
         )
-        db.flush()
         return issue
 
     @staticmethod
     def simulate_decision_timeout(db: Session, issue: LoaderIssue) -> LoaderIssue:
-        """Apply the pre-agreed default because decide-by passed."""
-        if issue.status in (IssueStatus.DECIDED, IssueStatus.DEFAULT_APPLIED):
-            raise InvalidStateTransitionError(
-                "This issue has already been resolved.",
-                current_state=issue.status.value,
-                target_state="default_applied",
-                entity="LoaderIssue",
-            )
-
-        chosen = next((o for o in issue.options if o.is_default), None)
-        if chosen is None:
-            raise NotFoundError(
-                f"Issue {issue.id} has no default option to apply.",
-                entity="LoaderIssueOption",
-                entity_id=issue.id,
-            )
-
-        now = datetime.now(timezone.utc)
-        for option in issue.options:
-            option.is_chosen = option is chosen
-        issue.status = IssueStatus.DEFAULT_APPLIED
-        issue.decided_at = now
-        issue.decided_by = "System (decide-by passed)"
-
-        LoaderService._apply_issue_outcome(db, issue, chosen)
-        LoaderService.log(
-            db, issue.run, at=now, actor_kind=ActorKind.SYSTEM,
-            event_type="issue_default_applied", actor_label="System",
-            order_id=issue.order_id,
-            message=f"No decision by decide-by; applied default: {chosen.label}",
-        )
-        db.flush()
-        return issue
+        """Apply the pre-agreed default because decide-by passed (dev /expire)."""
+        return LoaderService.apply_default_decision(db, issue)
 
     @staticmethod
     def _apply_issue_outcome(

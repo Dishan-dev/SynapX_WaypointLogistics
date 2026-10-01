@@ -1,7 +1,9 @@
 # Loader integration — phase 1 audit and design
 
-Status: **decisions taken (§7); slice 1 built** on `loader-sachintha-integration` — loader side only, the
-dispatcher's change is the snippet in §8. Audited on `dev` at `3c9ae55` (2026-10-01).
+Status: **decisions taken (§7). Loader side built** on `loader-sachintha-integration`: run creation,
+the dispatcher read, plan change, decision (+ decide-by default), driver hand-off and gate-out. The dispatcher
+and driver teams wire their own sides: **§8 is Thisaru's contract, §9 is Minidu's.** Where §3 (the proposal)
+and §8/§9 (what was built) differ, §8/§9 win. Audited on `dev` at `3c9ae55` (2026-10-01).
 Owner: Sachintha (loader backend). Reviewers: Thisaru (dispatcher), Minidu (driver), Devmith (DB).
 
 This audit covers how the loader connects to the dispatcher and the driver. It says what exists
@@ -104,6 +106,11 @@ Only `seed_driver.py` creates trips (DT-TODAY-001, "John Doe"). Nothing reads lo
 ---
 
 ## 3. Proposed contract per connection
+
+> This was the proposal. The built contract is §8 (dispatcher) and §9 (driver). The main differences:
+> the dispatcher and driver call **loader HTTP endpoints** (or the same `LoaderService` functions);
+> `driver_service.ensure_trip_for_run` is not called by the loader (Minidu pulls the hand-off instead);
+> idempotency uses the state of the data, not stored `client_action_id`s (§4 #2/#3 are not built).
 
 General rules for every cross-module write:
 
@@ -319,9 +326,9 @@ General rules for every cross-module write:
 | # | Table (owner) | Change | Why | Needed by |
 |---|---|---|---|---|
 | 1 | `delivery_runs` (loader) | UNIQUE index on existing `dispatch_trip_id` (nulls allowed) | One loader run per dispatch trip; D1 idempotency. No column change | D1 — slice 1 |
-| 2 | `plan_revisions` (loader) | `publish_request_id VARCHAR(64) NULL UNIQUE` | Replay of a dispatcher publish (D2/D3). `client_action_id` is already the acknowledge's | D2 |
-| 3 | `loader_issue_options` (loader) | `action VARCHAR(32) NULL` (`send_partial`, `send_without`, `hold`, `move`, `swap_vehicle`); `loader_issues.decision_request_id VARCHAR(64) NULL UNIQUE` | Stop matching on labels; D4 replay | D4 |
-| 4 | `plan_revision_changes` (loader) | `moved_to VARCHAR(100) NULL`, `deferred_to DATE NULL` | "Moved to VEH003 · Trip 1" / "Deferred to Fri" text (already pending from the migration plan) | D3, later |
+| 2 | `plan_revisions` (loader) — **not built** | `publish_request_id VARCHAR(64) NULL UNIQUE` | Replay of a dispatcher publish (D2/D3). `client_action_id` is already the acknowledge's | D2 |
+| 3 | `loader_issue_options` (loader) — **not built** | `action VARCHAR(32) NULL` (`send_partial`, `send_without`, `hold`, `move`, `swap_vehicle`); `loader_issues.decision_request_id VARCHAR(64) NULL UNIQUE` | Stop matching on labels; D4 replay | D4 |
+| 4 | `plan_revision_changes` (loader) — **not built**; read-time derivation instead (§8.3) | `moved_to VARCHAR(100) NULL`, `deferred_to DATE NULL` | "Moved to VEH003 · Trip 1" / "Deferred to Fri" text (already pending from the migration plan) | D3, later |
 | 5 | `driver_trips` (Minidu) | `delivery_run_id INT NULL FK delivery_runs(id) ON DELETE SET NULL`; UNIQUE on `dispatch_trip_id` | Direct link without going through the dispatch trip; one driver trip per dispatch trip. **Optional**: the join through `dispatch_trip_id` already works | R1 |
 | 6 | `delivery_stops` (Minidu) | `run_stop_id INT NULL FK run_stops(id) ON DELETE SET NULL` | Per-stop manifest join; lets the driver's stop screens show the loaded items | R1 |
 
@@ -422,11 +429,29 @@ Still open (slice 1 uses the proposed default; say if you want otherwise):
 
 ---
 
-## 8. For Thisaru — the dispatcher change for slice 1
+## 8. For Thisaru — the dispatcher contract
 
 The loader side is on `loader-sachintha-integration`. Nothing in `dispatch.py`, `allocations.py`, `schemas/shipment.py`
-or `components/dispatcher/*` was touched; below is the exact change. Both parts are optional for the loader, and
-nothing breaks until you apply them.
+or `components/dispatcher/*` was touched. Everything below is something **you** call. The loader works without
+any of it: until you call these, loader runs come only from the seeds.
+
+| When | Call | Section |
+|---|---|---|
+| An allocation is dispatched (`from-allocation`) | `loader_service.create_run_for_dispatch_trip(db, trip)` in your transaction, or `POST /loader/dispatch-trips/{id}/run` | 8.1 |
+| Showing delivery runs / Loading readiness | `loader_service.dispatcher_view(db, ids)`, or `GET /loader/dispatch-trips/{id}/loading` | 8.2 |
+| The dispatcher changes the plan (re-route, add / remove / move / defer an order, hold departure) | `POST /loader/dispatch-trips/{id}/plan` | 8.3 |
+| Exception queue: list the dock's flags | `GET /loader/issues?dock=DOCK3` (all), `GET /loader/issues/{id}` | 8.4 |
+| The dispatcher answers a flag | `POST /loader/issues/{id}/decision` | 8.4 |
+
+All errors use the shared envelope: `{"detail": {"code": "…", "message": "…", …details}}`. 422s carry
+`detail.violations: [{code, message, …}]`, listing every problem at once.
+
+**Idempotency.** Every write takes a `client_action_id` (UUID; one per user action, reused on retry).
+What actually makes a retry safe is the state of the data (§4 #2/#3, which would store the ids, are not built):
+a plan change is a replay when the current version is exactly that change; a decision is a replay when the
+same option is already chosen; a gate-out is a replay when the run is already gated out. A replay answers 200
+with `"replayed": true` (plan, gate-out) or the unchanged issue (decision), and writes nothing.
+Consequence: one `client_action_id` reused for a *different* request is not detected.
 
 ### 8.1 Build the loader run when an allocation is dispatched
 
@@ -506,3 +531,205 @@ const hasLoaderAck = run.loader ? run.loader.plan_acknowledged : hasPlanChanged;
 
 The detail panel can show `run.loader.status` (`not_started` · `loading` · `issue_flagged` · `loaded` ·
 `ready_to_depart` · `gated_out`) as the dock badge. "Ready to depart" = `run.loader.status === "ready_to_depart"`.
+
+### 8.3 Plan change — `POST /loader/dispatch-trips/{trip_id}/plan`
+
+Call it whenever the dispatcher changes a dispatched trip, after your own validation and in place of (or
+alongside) your `PATCH /delivery-runs/{id}` of `stop_sequence` / `departure_time`. It publishes the next plan
+version; the dock tablet blocks on the L7 "Plan changed" screen until the loader acknowledges.
+
+Request:
+
+```json
+{
+  "client_action_id": "6f1c2a9e-0d55-4c1e-9a43-3d2b9b7c1e01",
+  "base_version": 1,
+  "stop_order": ["OUT030", "OUT026"],
+  "add":    [{"order_number": "ORD1005", "reason": "OUT031 must go tonight"}],
+  "remove": [{"order_number": "ORD1003", "reason": "Store closed for stock-take"}],
+  "move":   [{"order_number": "ORD1006", "reason": "Balance load", "to_dispatch_trip_id": 25}],
+  "defer":  [{"order_number": "ORD1004", "reason": "Vehicle full", "deferred_to": "2026-10-03"}],
+  "departs_at": "2026-10-01T22:30:00Z",
+  "summary": "Stock-take at OUT030; OUT031 must go tonight.",
+  "dispatcher": "Kasun P."
+}
+```
+
+- `base_version` = the `plan_version` your screen shows (`run.loader.plan_version` from 8.2).
+- `stop_order` (optional): outlet codes in delivery order. Named stops go first, others keep their order.
+  A new stop for an added order goes first unless you place it.
+- `remove` / `move` / `defer` all take the order off this run: `take_off` when it is already on the truck
+  (the loader must unload it), otherwise it is simply not loaded. `reason` is shown verbatim on the tablet.
+- `to_dispatch_trip_id` / `deferred_to` are informational (nothing stores them). The tablet's "moved to" /
+  "deferred to" are read from the order's real state: **moved to** appears once another loader run has the
+  order on its plan (e.g. you built that trip's run, or added it there with this endpoint); **deferred to**
+  appears when the order is `DEFERRED` with an `operating_date` after this run's day. So: also do your own
+  defer (`POST /orders/{id}/defer`, and set the new `operating_date`) as you do today.
+- `departs_at` alone (nothing else) changes the departure without a new plan version (`published: false`).
+- Aboard orders nearer the door than an order coming off are put to re-check (the loader moves them to reach
+  it). A new stop order re-checks everything aboard.
+
+Response `200`:
+
+```json
+{
+  "dispatch_trip_id": 24, "run_code": "RUN-0024", "plan_version": 2,
+  "published": true, "replayed": false, "run_status": "loading",
+  "departs_at": "2026-10-01T22:30:00Z",
+  "changes": [
+    {"change_kind": "unload_from_truck", "order_number": "ORD1003", "outlet_code": "OUT030", "reason": "Store closed for stock-take"},
+    {"change_kind": "dont_load", "order_number": "ORD1004", "outlet_code": "OUT026", "reason": "Vehicle full"},
+    {"change_kind": "load_new", "order_number": "ORD1005", "outlet_code": "OUT031", "reason": "OUT031 must go tonight"}
+  ]
+}
+```
+
+| Run status | Result |
+|---|---|
+| `not_started`, `loading`, `issue_flagged`, `loaded` | new version, tablet shows the change |
+| `ready_to_depart` | new version **and the run reopens** to `loading`; the loader releases again |
+| `gated_out` | `409 PLAN_LOCKED` |
+
+| Error | When |
+|---|---|
+| `404 NOT_FOUND` | no dispatch trip, or no loader run for it (build it first, 8.1) |
+| `409 PLAN_LOCKED` | the run has gone through the gate |
+| `409 PLAN_VERSION_STALE` | `base_version` is behind (someone else changed it): re-read 8.2 and retry. `detail.current_plan_version` |
+| `409 ORDER_ON_ANOTHER_RUN` | an added order is on another loader run's plan; `detail.orders = [{order_number, run_code}]` |
+| `422 PLAN_CHANGE_INVALID` | `violations[].code`: `ORDER_NOT_ON_RUN`, `ORDER_NOT_FOUND`, `ORDER_WITHOUT_OUTLET`, `BRAND_MISMATCH`, `UNKNOWN_STOP`, `DUPLICATE_ORDER`, `EMPTY_CHANGE` |
+
+Retry: the same body after a timeout returns `200` with `"replayed": true` and the same `plan_version`.
+
+### 8.4 Exception queue and decisions (L8)
+
+**List:** `GET /loader/issues?dock=DOCK3` (every issue at the dock, newest first; keep `status` in `sent` /
+`seen` on your side for "waiting" — the endpoint has no status filter), or `GET /loader/issues/{id}`. Each option now carries its `id`:
+
+```json
+{
+  "id": 41, "run_code": "RUN-0024", "order_number": "ORD1002", "outlet_code": "OUT027",
+  "issue_type": "short", "units_affected": 3, "units_total": 8,
+  "reported_by": "Saman J.", "reported_at": "2026-10-01T20:33:00Z",
+  "status": "sent", "decide_by": "2026-10-01T21:40:00Z", "decided_at": null, "decided_by": null,
+  "options": [
+    {"id": 101, "label": "Send 5 of 8", "detail": "Balance on the next delivery day.", "is_default": true, "is_chosen": false},
+    {"id": 102, "label": "Hold the vehicle", "detail": "Wait for replacement stock.", "is_default": false, "is_chosen": false}
+  ]
+}
+```
+
+**Decide:** `POST /loader/issues/{issue_id}/decision`
+
+```json
+{"option": 102, "note": "Replacement on the 03:00 shuttle", "decided_by": "Kasun P.",
+ "client_action_id": "0b7d…"}
+```
+
+`option` is the option's `id` (preferred) or its exact label. Response `200`: the issue as above with
+`status: "decided"`, the chosen option `is_chosen: true`, `decided_by`, `decided_at`.
+
+What it does: marks the option chosen; "Send without it" / "Move to …" take the order off the run; when no other
+issue waits, the run goes `issue_flagged → loading` and the release lock lifts; writes an `issue_decided`
+activity (`"ORD1002: Hold the vehicle · Replacement on the 03:00 shuttle"`). The note is kept in that
+activity row only. "Hold" does not move the departure: send a `departs_at` plan change (8.3) for that.
+
+| Error | When |
+|---|---|
+| `404 NOT_FOUND` | no such issue |
+| `422 INVALID_OPTION` | the option is not one of this issue's; `violations[0].options` lists the valid ones |
+| `409 ISSUE_ALREADY_DECIDED` | decided (or defaulted) with a different option; `detail.chosen_option`, `detail.decided_by` |
+| `409 INVALID_STATE_TRANSITION` | the run has gone through the gate |
+
+Same option again → `200`, nothing written.
+
+**Decide-by.** `decide_by` = departure − 20 min. When it passes with no decision, the default option is applied
+(`status: "default_applied"`, `decided_by: "System (decide-by passed)"`, activity `issue_default_applied`).
+This happens on the next read of the loader or of these endpoints; there is no scheduler. It applies only to
+runs built from a dispatch trip (seeded demo runs keep the dev `/expire` endpoint). A decision after that
+is `409 ISSUE_ALREADY_DECIDED`.
+
+
+---
+
+## 9. For Minidu — hand-off and gate-out
+
+The driver side is not touched. Two loader endpoints, both keyed by the **dispatch trip id**, the same id as
+`driver_trips.dispatch_trip_id`, so you need no new column to find the loader run.
+
+| When | Call |
+|---|---|
+| Trip screen / before departure: what is on the truck | `GET /loader/dispatch-trips/{dispatch_trip_id}/handoff` |
+| The driver starts the trip (leaves the depot) | `POST /loader/dispatch-trips/{dispatch_trip_id}/gate-out` |
+
+Suggested wiring on your side: in `start_trip`, call `loader_service.gate_out(db, run, payload)` (or the endpoint)
+and refuse the start while it answers `409 RUN_NOT_RELEASED`. Build `delivery_stops` from the hand-off's `stops`.
+Runs with no dispatch trip (the seeded LDR-RUN-xxxx demo runs) have no hand-off.
+
+### 9.1 `GET /loader/dispatch-trips/{dispatch_trip_id}/handoff`
+
+Available once the loader has released the run (`ready_to_depart`), and after gate-out. Stops are in
+**delivery order** (`stop_sequence` 1 = first stop); `load_position` is the loading order (1 = deepest), for reference.
+Only orders on the plan are listed; an order sent without (shortfall decision) appears only in `shortfalls`,
+and a stop left with no orders is dropped.
+
+```json
+{
+  "dispatch_trip_id": 24, "run_code": "RUN-0024", "status": "ready_to_depart", "plan_version": 2,
+  "vehicle_code": "VEH014", "dock": "DOCK3", "departs_at": "2026-10-01T22:00:00Z",
+  "released_at": "2026-10-01T21:20:00Z", "released_by": {"id": 3, "name": "Saman J."},
+  "gated_out_at": null,
+  "units_ordered": 28, "units_loaded": 25,
+  "stops": [
+    {"stop_sequence": 1, "load_position": 3, "outlet_code": "OUT027", "outlet_name": "Fresh Gampaha 27",
+     "district": "Gampaha", "eta": null,
+     "orders": [
+       {"order_number": "ORD1002", "temperature_class": "chilled", "units_ordered": 8, "loaded_units": 5,
+        "weight_kg": 200.0, "volume_m3": 0.8,
+        "shortfall": {"issue_id": 41, "order_number": "ORD1002", "outlet_code": "OUT027", "issue_type": "short",
+                      "units_affected": 3, "units_total": 8, "status": "decided",
+                      "decision": "Hold the vehicle", "decided_by": "Kasun P.", "decided_at": "2026-10-01T20:40:00Z"}}
+     ]},
+    {"stop_sequence": 2, "load_position": 2, "outlet_code": "OUT026", "outlet_name": "Fresh Gampaha 26",
+     "district": "Gampaha", "eta": null,
+     "orders": [
+       {"order_number": "ORD1001", "temperature_class": "ambient", "units_ordered": 12, "loaded_units": 12,
+        "weight_kg": 300.0, "volume_m3": 1.2, "shortfall": null}
+     ]}
+  ],
+  "shortfalls": [ { "issue_id": 41, "order_number": "ORD1002", "decision": "Hold the vehicle", "…": "…" } ]
+}
+```
+
+- `units_ordered` = what the plan said; `loaded_units` = what is physically on the truck (short / damaged /
+  won't fit subtract the flagged units; missing = 0). Deliver against `loaded_units`.
+- A plan change before gate-out reopens the run (it is then not released): the hand-off answers 409 until the
+  loader releases again. Re-read it before departure; it is final from gate-out on.
+
+| Error | When |
+|---|---|
+| `404 NOT_FOUND` | no dispatch trip, or no loader run for it |
+| `409 RUN_NOT_RELEASED` | the loader has not released the run (`detail.status` says where it is) |
+
+### 9.2 `POST /loader/dispatch-trips/{dispatch_trip_id}/gate-out`
+
+```json
+{"client_action_id": "3c2d…", "by": "Tharindu F."}
+```
+
+Response `200`:
+
+```json
+{"dispatch_trip_id": 24, "run_code": "RUN-0024", "status": "gated_out",
+ "gated_out_at": "2026-10-01T22:04:00Z", "replayed": false}
+```
+
+`ready_to_depart → gated_out`. From then on: the run leaves the dock queue; the loader's release and undo answer
+409; dispatcher plan changes answer `409 PLAN_LOCKED`; decisions on its issues answer 409. Logged as `gated_out`
+("Gated out · Tharindu F.").
+
+| Error | When |
+|---|---|
+| `404 NOT_FOUND` | no dispatch trip, or no loader run for it |
+| `409 RUN_NOT_RELEASED` | not released yet (`not_started` … `loaded`): the driver cannot leave |
+
+Already gated out → `200` with `"replayed": true` and the original `gated_out_at`.

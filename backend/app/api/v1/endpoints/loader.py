@@ -25,6 +25,13 @@ from app.services.loader_service import FlagRequestError, IncorrectPinError, loa
 router = APIRouter()
 
 
+def _apply_overdue_defaults(db: Session) -> None:
+    """Reads never show an overdue issue as waiting: apply the default first
+    (runs built from a dispatch trip only; see LoaderService.apply_overdue_defaults)."""
+    if loader_service.apply_overdue_defaults(db):
+        db.commit()
+
+
 # ---------------------------------------------------------------------------
 # L2 sign-in: loaders and sessions
 # ---------------------------------------------------------------------------
@@ -76,6 +83,7 @@ def get_queue(
     db: Session = Depends(deps.get_db),
 ):
     """The dock's loading queue: cards grouped by brand and wave, by departure."""
+    _apply_overdue_defaults(db)
     return loader_service.build_queue(db, loader_service.resolve_dock(db, dock), brand)
 
 
@@ -85,12 +93,14 @@ def get_summary(
     db: Session = Depends(deps.get_db),
 ):
     """The queue's metric cards, counted from the same runs as GET /loader/runs."""
+    _apply_overdue_defaults(db)
     return loader_service.build_summary(db, loader_service.resolve_dock(db, dock))
 
 
 @router.get("/runs/{code}", response_model=schemas.RunDetailRead)
 def get_run(code: str, db: Session = Depends(deps.get_db)):
     """The loading checklist for one run, stops in load order (deepest first)."""
+    _apply_overdue_defaults(db)
     run = loader_service.get_run(db, code)
     return loader_service.build_run_detail(db, run)
 
@@ -250,6 +260,7 @@ def list_issues(
     db: Session = Depends(deps.get_db),
 ):
     """The Issues tab: every issue on the dock's runs, newest first."""
+    _apply_overdue_defaults(db)
     issues = loader_service.list_issues(db, loader_service.resolve_dock(db, dock), run)
     return [loader_service.build_issue_detail(db, issue) for issue in issues]
 
@@ -275,6 +286,7 @@ def undo_release(code: str, payload: schemas.ReleaseRequest, db: Session = Depen
 @router.get("/issues/{issue_id}", response_model=schemas.IssueDetailRead)
 def get_issue(issue_id: int, db: Session = Depends(deps.get_db)):
     """One flagged issue with the options the dispatcher had."""
+    _apply_overdue_defaults(db)
     issue = loader_service.get_issue(db, issue_id)
     return loader_service.build_issue_detail(db, issue)
 
@@ -321,6 +333,7 @@ def create_run_for_dispatch_trip(
 @router.get("/dispatch-trips/{trip_id}/loading", response_model=schemas.DispatcherLoadingRead)
 def get_dispatch_trip_loading(trip_id: int, db: Session = Depends(deps.get_db)):
     """The dock's side of one dispatch trip; 404 when no loader run is built for it."""
+    _apply_overdue_defaults(db)
     trip = _dispatch_trip(db, trip_id)
     view = loader_service.dispatcher_view(db, [trip.id]).get(trip.id)
     if view is None:
@@ -328,6 +341,80 @@ def get_dispatch_trip_loading(trip_id: int, db: Session = Depends(deps.get_db)):
             f"No loader run for dispatch trip {trip_id}.", entity="DeliveryRun", entity_id=trip_id
         )
     return view
+
+
+@router.post("/dispatch-trips/{trip_id}/plan", response_model=schemas.DispatcherPlanResult)
+def change_plan(
+    trip_id: int, payload: schemas.DispatcherPlanRequest, db: Session = Depends(deps.get_db)
+):
+    """The dispatcher changes the plan: stop order, orders added / removed /
+    moved / deferred, departure time. Publishes the next plan version (the
+    tablet shows the L7 plan-change screen); a Ready run reopens. 409
+    PLAN_LOCKED after gate-out, 409 PLAN_VERSION_STALE when base_version is
+    behind, 422 PLAN_CHANGE_INVALID with the reasons."""
+    run = loader_service.require_run_for_dispatch_trip(db, _dispatch_trip(db, trip_id).id)
+    revision, replayed = loader_service.publish_dispatcher_plan(db, run, payload)
+    db.commit()
+    changes = revision.changes if revision is not None else []
+    return schemas.DispatcherPlanResult(
+        dispatch_trip_id=trip_id,
+        run_code=run.code,
+        plan_version=run.current_plan_version,
+        published=revision is not None,
+        replayed=replayed,
+        run_status=run.status,
+        departs_at=run.departs_at,
+        changes=[
+            schemas.PlanChangeRead(
+                change_kind=change.change_kind,
+                order_number=change.order.order_number if change.order else None,
+                outlet_code=change.outlet.code if change.outlet else None,
+                reason=change.reason,
+            )
+            for change in sorted(changes, key=lambda c: (c.position, c.id))
+        ],
+    )
+
+
+@router.get("/dispatch-trips/{trip_id}/handoff", response_model=schemas.HandoffRead)
+def get_handoff(trip_id: int, db: Session = Depends(deps.get_db)):
+    """For the driver: the released run's stops in delivery order, each order's
+    loaded vs ordered units and any decided shortfall. 409 RUN_NOT_RELEASED
+    until the loader has released it."""
+    _apply_overdue_defaults(db)
+    run = loader_service.require_run_for_dispatch_trip(db, _dispatch_trip(db, trip_id).id)
+    return loader_service.handoff(db, run)
+
+
+@router.post("/dispatch-trips/{trip_id}/gate-out", response_model=schemas.GateOutRead)
+def gate_out(trip_id: int, payload: schemas.GateOutRequest, db: Session = Depends(deps.get_db)):
+    """The truck leaves the depot: ready_to_depart -> gated_out. Locks release,
+    undo and plan changes. 409 RUN_NOT_RELEASED before release; a run already
+    gated out is returned unchanged."""
+    run = loader_service.require_run_for_dispatch_trip(db, _dispatch_trip(db, trip_id).id)
+    run, replayed = loader_service.gate_out(db, run, payload)
+    db.commit()
+    return schemas.GateOutRead(
+        dispatch_trip_id=trip_id,
+        run_code=run.code,
+        status=run.status,
+        gated_out_at=run.gated_out_at,
+        replayed=replayed,
+    )
+
+
+@router.post("/issues/{issue_id}/decision", response_model=schemas.IssueDetailRead)
+def decide_issue(
+    issue_id: int, payload: schemas.IssueDecisionRequest, db: Session = Depends(deps.get_db)
+):
+    """The dispatcher's decision on a flag (L8). option = the option id or its
+    label. Lifts the release lock once nothing else waits. Repeating the same
+    decision returns the issue unchanged; another option on a decided issue is
+    409 ISSUE_ALREADY_DECIDED; an unknown option 422 INVALID_OPTION."""
+    issue = loader_service.get_issue(db, issue_id)
+    issue, _ = loader_service.decide_issue(db, issue, payload)
+    db.commit()
+    return loader_service.build_issue_detail(db, issue)
 
 
 # ---------------------------------------------------------------------------
