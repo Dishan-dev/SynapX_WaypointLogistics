@@ -67,9 +67,18 @@ export async function fetchWithFallback(
 }
 
 export class ApiError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public status: number,
+    public code?: string,
+    public details: Record<string, unknown> = {}
+  ) {
     super(message);
     this.name = "ApiError";
+  }
+
+  get isNetworkError() {
+    return this.status === 0;
   }
 }
 
@@ -98,39 +107,56 @@ export async function apiFetchUpload<T>(path: string, formData: FormData): Promi
     } catch {
       errorMsg = (await res.text()) || errorMsg;
     }
-    throw new ApiError(errorMsg);
+    throw new ApiError(errorMsg, res.status);
   }
 
   return res.json();
 }
 
-export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = getToken();
-  
-  // ensure path starts with /
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  // attach api/v1 prefix as fetchWithFallback takes the whole endpoint
-  const endpoint = `api/v1${normalizedPath}`;
-
-  const res = await fetchWithFallback(endpoint, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
-  
-  if (!res.ok) {
-    let errorMsg = `HTTP Error ${res.status}`;
-    try {
-      const errorData = await res.json();
-      errorMsg = errorData.detail || JSON.stringify(errorData);
-    } catch {
-      errorMsg = await res.text() || errorMsg;
-    }
-    throw new ApiError(errorMsg);
+function messageFrom(detail: unknown, fallback: string) {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const first = detail[0] as { msg?: string } | undefined;
+    return first?.msg ?? fallback;
   }
-  
-  return res.json();
+  if (detail && typeof detail === "object" && "message" in detail) {
+    return String((detail as { message: unknown }).message);
+  }
+  return fallback;
+}
+
+export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  const fullEndpoint = cleanPath.startsWith("/api/v1") ? cleanPath : `/api/v1${cleanPath}`;
+  const token = getToken();
+
+  let response: Response;
+  try {
+    response = await fetchWithFallback(fullEndpoint, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init.headers,
+      },
+      cache: "no-store",
+    });
+  } catch (err: any) {
+    throw new ApiError(err?.message || "Couldn't reach the Waypoint server.", 0);
+  }
+
+  if (!response.ok) {
+    let detail: unknown;
+    try {
+      detail = (await response.json()).detail;
+    } catch {
+      detail = undefined;
+    }
+    const code = detail && typeof detail === "object" && "code" in detail ? String((detail as { code: unknown }).code) : undefined;
+    const details = detail && typeof detail === "object" && !Array.isArray(detail) ? (detail as Record<string, unknown>) : {};
+    throw new ApiError(messageFrom(detail, `Request failed (${response.status})`), response.status, code, details);
+  }
+
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
 }

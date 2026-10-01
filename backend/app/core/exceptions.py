@@ -74,6 +74,13 @@ class AuthorizationError(WaypointLogisticsError):
         )
 
 
+class OrderRuleError(WaypointLogisticsError):
+    """Raised when a goods request breaks an ordering rule (cutoff, operating day, Fresh dual-order, …)."""
+
+    def __init__(self, message: str, code: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, code=code, details=details)
+
+
 class SynchronizationError(WaypointLogisticsError):
     """Raised when offline synchronization fails or payload is malformed."""
 
@@ -134,6 +141,19 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def auth_error_handler(request: Request, exc: AuthorizationError):
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "detail": {
+                    "code": exc.code,
+                    "message": exc.message,
+                    **exc.details,
+                }
+            },
+        )
+
+    @app.exception_handler(OrderRuleError)
+    async def order_rule_error_handler(request: Request, exc: OrderRuleError):
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content={
                 "detail": {
                     "code": exc.code,

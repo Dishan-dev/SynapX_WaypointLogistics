@@ -1,4 +1,6 @@
+from datetime import datetime
 from typing import Generator, Optional
+from zoneinfo import ZoneInfo
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -21,6 +23,11 @@ def get_db() -> Generator:
         yield db
     finally:
         db.close()
+
+
+def get_now() -> datetime:
+    """Current Colombo time (naive), used for cutoffs. Tests override this to pin the clock."""
+    return datetime.now(ZoneInfo("Asia/Colombo")).replace(tzinfo=None)
 
 
 def get_current_user(
