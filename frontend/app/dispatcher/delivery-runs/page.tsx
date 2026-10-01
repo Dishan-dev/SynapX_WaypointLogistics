@@ -41,6 +41,8 @@ export interface DeliveryRun {
   loading_events: any[];
   total_weight_kg: number;
   total_volume_m3: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  loader?: any;
 }
 
 export default function DeliveryRunsPage() {
@@ -80,7 +82,16 @@ export default function DeliveryRunsPage() {
   }, []); // No dependencies — fetchRuns is stable
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { fetchRuns(); }, [fetchRuns]);
+  useEffect(() => { 
+    fetchRuns(); 
+    let interval: NodeJS.Timeout;
+    if (selectedRun) {
+      interval = setInterval(fetchRuns, 15000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    }
+  }, [fetchRuns, selectedRun !== null]);
 
   // Derive "delayed" status on frontend (en_route + overdue ETA)
   const now = new Date();
