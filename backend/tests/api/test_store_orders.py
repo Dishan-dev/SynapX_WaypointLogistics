@@ -57,6 +57,7 @@ def test_mixed_request_splits_into_one_order_per_zone(client, clock, outlets):
     chilled = orders[0]
     assert chilled["status"] == "SUBMITTED"
     assert chilled["brand"] == "Fresh"
+    assert chilled["shortfall"] is None
     assert chilled["units"] == 25
     assert chilled["operating_date"] == "2026-09-30"
     assert chilled["delivery_window"] == "04:00 – 07:45"
