@@ -235,7 +235,11 @@ class OrderService:
         limit: int = 50,
     ) -> List[Order]:
         """Order history for Goods Requests (Figma 02). Dates filter on when the request was submitted."""
-        query = db.query(Order).options(selectinload(Order.items)).filter(Order.outlet_id == outlet_id)
+        query = (
+            db.query(Order)
+            .options(selectinload(Order.items), selectinload(Order.loader_issues))
+            .filter(Order.outlet_id == outlet_id)
+        )
         if statuses:
             query = query.filter(Order.status.in_(statuses))
         if is_priority is not None:
@@ -258,7 +262,7 @@ class OrderService:
     def get_order_by_number(db: Session, order_number: str) -> Order:
         order = (
             db.query(Order)
-            .options(selectinload(Order.items))
+            .options(selectinload(Order.items), selectinload(Order.loader_issues))
             .filter(Order.order_number == order_number.upper())
             .first()
         )
@@ -355,7 +359,7 @@ class OrderService:
         """Contract (§3): the loader builds its loading lists from this."""
         return (
             db.query(Order)
-            .options(selectinload(Order.items))
+            .options(selectinload(Order.items), selectinload(Order.loader_issues))
             .join(Outlet, Order.outlet_id == Outlet.id)
             .filter(
                 Order.operating_date == day.isoformat(),

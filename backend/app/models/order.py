@@ -68,6 +68,8 @@ class Order(Base):
     shipment = relationship("Shipment", back_populates="order", uselist=False)
     allocation = relationship("Allocation", back_populates="orders")
     outlet = relationship("Outlet")
+    # Read-only: the loader writes these (loader_issue.py); the store reads its shortfall from them.
+    loader_issues = relationship("LoaderIssue", viewonly=True)
     receipt = relationship("DeliveryReceipt", back_populates="order", uselist=False)
 
 

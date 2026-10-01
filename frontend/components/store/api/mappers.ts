@@ -39,8 +39,16 @@ export interface ApiStoreOrder {
   deferral_reason: string | null;
   deferral_count: number;
   items: ApiOrderItem[];
+  shortfall: ApiOrderShortfall | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ApiOrderShortfall {
+  state: "under_review" | "confirmed";
+  units_short: number | null;
+  units_total: number | null;
+  reasons: string[];
 }
 
 export interface ApiNotification {
@@ -85,6 +93,13 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
     notes: order.notes ?? undefined,
     deferralReason: order.deferral_reason ?? undefined,
     statusTimes: order.submitted_at ? { submitted: order.submitted_at } : undefined,
+    shortfall: order.shortfall
+      ? {
+          state: order.shortfall.state,
+          unitsShort: order.shortfall.units_short ?? undefined,
+          unitsTotal: order.shortfall.units_total ?? undefined,
+        }
+      : undefined,
     items: order.items.map((item) => {
       // The API doesn't have catalogue details yet (contract Q4), so category and unit come from the catalogue.
       const catalogue = catalogueBySku.get(item.sku);
