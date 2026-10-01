@@ -590,3 +590,59 @@ class QueueSummaryRead(BaseModel):
     issues: IssueCountRead
     ready: ReadyCountRead
     plan_updated_at: Optional[UtcDateTime] = None
+
+
+# --- integration slice 1 (docs/loader/INTEGRATION_DESIGN.md) ------------------
+
+
+class DispatcherLoadingEventRead(BaseModel):
+    """One entry on the dispatcher's Loading readiness timeline.
+
+    event / time / note / status are the keys LoadingReadinessDialog already
+    reads from dispatch_trips.loading_events; at and type are extra.
+    """
+
+    event: str
+    time: str  # "HH:MM", depot time
+    note: str
+    status: str  # ok | warning | error
+    at: UtcDateTime
+    type: str  # the loader activity event_type
+
+
+class DispatcherLoadingRead(BaseModel):
+    """The dock's side of one dispatch trip, for the dispatcher's screens.
+
+    stop_count / stops_completed / open_shortfalls / loading_events use the
+    names the readiness dialog already reads, so it can switch from `run.X`
+    to `run.loader.X`. stops_completed = stops fully loaded (or flagged).
+    """
+
+    run_code: str
+    status: RunStatus
+    dock: str
+    departs_at: UtcDateTime
+    plan_version: int
+    plan_acknowledged: bool
+    stop_count: int
+    stops_completed: int
+    orders_checked: int
+    orders_total: int
+    open_shortfalls: int
+    planned_weight_kg: float
+    loaded_weight_kg: float
+    planned_volume_m3: float
+    loaded_volume_m3: float
+    released_at: Optional[UtcDateTime] = None
+    released_by: Optional[LoaderRefRead] = None
+    last_update_at: Optional[UtcDateTime] = None
+    loading_events: List[DispatcherLoadingEventRead]
+
+
+class DispatchTripRunRead(BaseModel):
+    """POST /loader/dispatch-trips/{id}/run: the loader run built for a trip."""
+
+    dispatch_trip_id: int
+    run_code: str
+    created: bool
+    loading: DispatcherLoadingRead

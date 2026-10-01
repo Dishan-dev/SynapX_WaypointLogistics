@@ -8,14 +8,16 @@ plus the dev-only simulation endpoints from L0.
 
 Every backend route here is owned by Sachintha (docs/loader/API_CONTRACT.md).
 """
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core.config import settings
+from app.core.exceptions import NotFoundError
 from app.models.loader_activity import CheckAction
+from app.models.shipment import DispatchTrip
 from app.models.reference import Brand
 from app.schemas import loader as schemas
 from app.services.loader_service import FlagRequestError, IncorrectPinError, loader_service
@@ -275,6 +277,57 @@ def get_issue(issue_id: int, db: Session = Depends(deps.get_db)):
     """One flagged issue with the options the dispatcher had."""
     issue = loader_service.get_issue(db, issue_id)
     return loader_service.build_issue_detail(db, issue)
+
+
+# ---------------------------------------------------------------------------
+# Integration slice 1: dispatch trips (docs/loader/INTEGRATION_DESIGN.md)
+#
+# The dispatcher's own from-allocation endpoint should call
+# loader_service.create_run_for_dispatch_trip inside its transaction; these
+# two are for backfilling a trip dispatched before that, and for the
+# dispatcher frontend to read one trip's loading state directly.
+# ---------------------------------------------------------------------------
+
+
+def _dispatch_trip(db: Session, trip_id: int) -> DispatchTrip:
+    trip = db.get(DispatchTrip, trip_id)
+    if trip is None:
+        raise NotFoundError(f"Dispatch trip {trip_id} not found.", entity="DispatchTrip", entity_id=trip_id)
+    return trip
+
+
+@router.post("/dispatch-trips/{trip_id}/run", response_model=schemas.DispatchTripRunRead)
+def create_run_for_dispatch_trip(
+    trip_id: int,
+    response: Response,
+    dock: Optional[str] = Query(None, description="Dock code; default is the first dock at the vehicle's depot"),
+    db: Session = Depends(deps.get_db),
+):
+    """Build the loader run (plan v1) for a dispatch trip. Idempotent: 201 when
+    built now, 200 with the same run when it already existed."""
+    trip = _dispatch_trip(db, trip_id)
+    existed = loader_service.run_for_dispatch_trip(db, trip.id) is not None
+    run = loader_service.create_run_for_dispatch_trip(db, trip, dock_code=dock)
+    db.commit()
+    response.status_code = 200 if existed else 201
+    return schemas.DispatchTripRunRead(
+        dispatch_trip_id=trip.id,
+        run_code=run.code,
+        created=not existed,
+        loading=loader_service.dispatcher_view(db, [trip.id])[trip.id],
+    )
+
+
+@router.get("/dispatch-trips/{trip_id}/loading", response_model=schemas.DispatcherLoadingRead)
+def get_dispatch_trip_loading(trip_id: int, db: Session = Depends(deps.get_db)):
+    """The dock's side of one dispatch trip; 404 when no loader run is built for it."""
+    trip = _dispatch_trip(db, trip_id)
+    view = loader_service.dispatcher_view(db, [trip.id]).get(trip.id)
+    if view is None:
+        raise NotFoundError(
+            f"No loader run for dispatch trip {trip_id}.", entity="DeliveryRun", entity_id=trip_id
+        )
+    return view
 
 
 # ---------------------------------------------------------------------------

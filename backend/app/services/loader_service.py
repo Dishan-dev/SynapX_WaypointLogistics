@@ -2,7 +2,8 @@
 
 Endpoints stay thin; anything that decides something lives here.
 """
-from datetime import date, datetime, timedelta, timezone
+from collections import Counter
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
 
@@ -10,7 +11,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import InvalidStateTransitionError, NotFoundError
+from app.core.exceptions import AllocationError, InvalidStateTransitionError, NotFoundError
 from app.core.security import verify_password
 from app.models.delivery_run import (
     DeliveryRun,
@@ -28,15 +29,19 @@ from app.models.loader_activity import (
     ReleaseAction,
     RunReleaseAction,
 )
+from app.models.fleet import Vehicle
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderSession, LoaderUser
 from app.models.order import Order
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
+from app.models.shipment import DispatchTrip
 from app.models.reference import (
     Brand,
     CalendarDay,
+    Depot,
     Dock,
     DockTablet,
+    Outlet,
     TempCapability,
     TemperatureClass,
     VehicleType,
@@ -325,6 +330,105 @@ class ClientActionIdReusedError(InvalidStateTransitionError):
         self.details = {"entity": entity, "client_action_id": client_action_id}
 
 
+def order_temperature(order: Order) -> Optional[TemperatureClass]:
+    """The order's temperature class for the loader screens.
+
+    orders.temperature_zone ("Ambient"/"Chilled", Nisith's, always set) is the
+    source of truth; temperature_class (0003) is only filled by loader seeds.
+    Read the class when set, otherwise map the zone, so orders placed through
+    the Store Manager or the dispatcher still get a Temp badge.
+    """
+    if order.temperature_class is not None:
+        return order.temperature_class
+    zone = (order.temperature_zone or "").strip().lower()
+    try:
+        return TemperatureClass(zone)
+    except ValueError:
+        return None
+
+
+class RunNotBuildableError(AllocationError):
+    """A dispatch trip that cannot become a loader run (integration slice 1).
+
+    422 through the shared AllocationError handler; `violations` lists every
+    reason at once ({code, message, order_number?}) so the dispatcher can fix
+    them in one go. The caller's transaction must roll back with it.
+    """
+
+    def __init__(self, trip: DispatchTrip, violations: List[dict]):
+        super().__init__(
+            f"{trip.trip_code} cannot be sent to the loading dock.",
+            code="RUN_NOT_BUILDABLE",
+            violations=violations,
+        )
+        self.details["dispatch_trip_id"] = trip.id
+
+
+class OrderOnAnotherRunError(InvalidStateTransitionError):
+    """An order of the trip is already on another loader run's current plan,
+    and that run has not left the gate. 409; details.orders names each one."""
+
+    def __init__(self, trip: DispatchTrip, clashes: List[dict]):
+        super().__init__(
+            f"{len(clashes)} order(s) of {trip.trip_code} are already on another loader run.",
+            current_state="on_another_run",
+            target_state="on_this_run",
+            entity="Order",
+        )
+        self.code = "ORDER_ON_ANOTHER_RUN"
+        self.details = {"entity": "Order", "dispatch_trip_id": trip.id, "orders": clashes}
+
+
+class RunCodeTakenError(InvalidStateTransitionError):
+    """The trip code is already the code of a loader run that is not this
+    trip's (for example a seeded demo run). 409 rather than overwriting it."""
+
+    def __init__(self, trip: DispatchTrip, run: DeliveryRun):
+        super().__init__(
+            f"Loader run {run.code} already exists and is not {trip.trip_code}'s.",
+            current_state="taken",
+            target_state="created",
+            entity="DeliveryRun",
+        )
+        self.code = "RUN_CODE_TAKEN"
+        self.details = {
+            "entity": "DeliveryRun",
+            "entity_id": run.code,
+            "dispatch_trip_id": trip.id,
+            "linked_dispatch_trip_id": run.dispatch_trip_id,
+        }
+
+
+# delivery_runs.code is String(20); a longer trip code cannot be stored.
+RUN_CODE_MAX = 20
+
+# How the dispatcher's Loading readiness timeline titles each loader event.
+DISPATCHER_EVENT_TITLES = {
+    "plan_published": "Plan published",
+    "plan_acknowledged": "Loader acknowledged plan",
+    "order_checked": "Order loaded",
+    "order_rechecked": "Order re-checked",
+    "order_unchecked": "Order unchecked",
+    "order_unloaded": "Order unloaded",
+    "issue_flagged": "Shortfall flagged",
+    "issue_decided": "Shortfall decided",
+    "issue_default_applied": "Default applied",
+    "load_reopened": "Load reopened",
+    "run_released": "Ready to depart",
+    "run_release_undone": "Ready undone",
+    "gated_out": "Gated out",
+}
+
+# The timeline dot colour the dialog maps: error = red, warning = amber, ok = green.
+DISPATCHER_EVENT_STATUS = {
+    "issue_flagged": "error",
+    "plan_published": "warning",
+    "load_reopened": "warning",
+    "issue_default_applied": "warning",
+    "run_release_undone": "warning",
+}
+
+
 class LoaderService:
     # --- reads ------------------------------------------------------------
 
@@ -384,7 +488,7 @@ class LoaderService:
                 order_reads.append(
                     schemas.RunOrderRead(
                         order_number=row.order.order_number,
-                        temperature_class=row.order.temperature_class,
+                        temperature_class=order_temperature(row.order),
                         units=row.units,
                         weight_kg=row.weight_kg,
                         volume_m3=row.volume_m3,
@@ -1720,7 +1824,7 @@ class LoaderService:
     @staticmethod
     def return_area(order: Order) -> str:
         """Where an unloaded order goes back to: chilled to the chiller dock."""
-        return "chiller" if order.temperature_class == TemperatureClass.CHILLED else "staging"
+        return "chiller" if order_temperature(order) == TemperatureClass.CHILLED else "staging"
 
     @staticmethod
     def refresh_stop_status(stop: RunStop) -> None:
@@ -2081,6 +2185,363 @@ class LoaderService:
             LoaderService._refresh_run_status(db, run)
         db.flush()
         return revision
+
+    # --- integration slice 1: dispatcher -> loader ----------------------
+
+    @staticmethod
+    def run_for_dispatch_trip(db: Session, trip_id: int) -> Optional[DeliveryRun]:
+        return db.execute(
+            select(DeliveryRun).filter_by(dispatch_trip_id=trip_id)
+        ).scalars().first()
+
+    @staticmethod
+    def create_run_for_dispatch_trip(
+        db: Session, trip: DispatchTrip, *, dock_code: Optional[str] = None
+    ) -> DeliveryRun:
+        """Turn a dispatched allocation into a loader run with plan v1.
+
+        The dispatcher calls this inside its own transaction, right after it
+        creates the dispatch trip (POST /delivery-runs/from-allocation), so
+        both commit or neither does. Nothing is committed here.
+
+        - Idempotent: a run already built for this trip comes back unchanged.
+        - 422 RUN_NOT_BUILDABLE lists every reason the trip cannot be loaded:
+          no allocation or no orders, an order with no outlet or brand, orders
+          of more than one brand, no departure time, no vehicle, no dock at
+          the vehicle's depot, a trip code longer than a run code can be.
+        - 409 RUN_CODE_TAKEN when a run (say a seeded demo run) already has
+          the trip's code.
+        - 409 ORDER_ON_ANOTHER_RUN when an order is already on another run's
+          current plan and that run has not gated out.
+
+        Stops follow the outlet codes in trip.stop_sequence when it names
+        them; the rest go by delivery window, then outlet code. Plan v1 is
+        left unacknowledged: the loader accepts it before the first tick.
+        """
+        existing = LoaderService.run_for_dispatch_trip(db, trip.id)
+        if existing is not None:
+            return existing
+
+        violations: List[dict] = []
+
+        def violation(code: str, message: str, order: Optional[Order] = None) -> None:
+            entry = {"code": code, "message": message}
+            if order is not None:
+                entry["order_number"] = order.order_number
+            violations.append(entry)
+
+        orders: List[Order] = []
+        if trip.allocation_id is None:
+            violation("NO_ALLOCATION", "The trip was not dispatched from an allocation.")
+        else:
+            orders = list(
+                db.execute(
+                    select(Order).filter_by(allocation_id=trip.allocation_id).order_by(Order.id)
+                ).scalars()
+            )
+            if not orders:
+                violation("NO_ORDERS", "The allocation has no orders.")
+
+        for order in orders:
+            if order.outlet_id is None:
+                violation("ORDER_WITHOUT_OUTLET", f"{order.order_number} has no outlet.", order)
+
+        outlet_ids = {o.outlet_id for o in orders if o.outlet_id is not None}
+        outlets = {
+            o.id: o
+            for o in db.execute(select(Outlet).where(Outlet.id.in_(outlet_ids))).scalars()
+        } if outlet_ids else {}
+
+        brands = set()
+        for order in orders:
+            brand = LoaderService._order_brand(order, outlets.get(order.outlet_id))
+            if brand is None:
+                violation("ORDER_WITHOUT_BRAND", f"{order.order_number} has no brand.", order)
+            else:
+                brands.add(brand)
+        if len(brands) > 1:
+            names = ", ".join(sorted(BRAND_LABELS[b] for b in brands))
+            violation("MIXED_BRANDS", f"A loader run carries one brand; this trip has {names}.")
+
+        if trip.departure_time is None:
+            violation("NO_DEPARTURE_TIME", "The trip has no departure time.")
+
+        vehicle = db.get(Vehicle, trip.vehicle_id) if trip.vehicle_id is not None else None
+        dock = None
+        if vehicle is None:
+            violation("NO_VEHICLE", "The trip has no vehicle.")
+        else:
+            dock = LoaderService._dock_for(db, vehicle, dock_code)
+            if dock is None:
+                where = f"dock {dock_code}" if dock_code else f"dock at {vehicle.depot_name}"
+                violation("NO_DOCK", f"There is no {where} to load {vehicle.code}.")
+
+        if len(trip.trip_code) > RUN_CODE_MAX:
+            violation(
+                "RUN_CODE_TOO_LONG",
+                f"{trip.trip_code} is longer than {RUN_CODE_MAX} characters.",
+            )
+
+        if violations:
+            raise RunNotBuildableError(trip, violations)
+
+        taken = db.execute(select(DeliveryRun).filter_by(code=trip.trip_code)).scalars().first()
+        if taken is not None:
+            raise RunCodeTakenError(trip, taken)
+
+        clashes = LoaderService._orders_on_other_runs(db, [o.id for o in orders])
+        if clashes:
+            raise OrderOnAnotherRunError(trip, clashes)
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        departs_at = _naive_utc(trip.departure_time)
+        sequence = LoaderService._stop_order(trip, list(outlets.values()))
+        districts = Counter(outlets[o.outlet_id].district for o in orders)
+
+        try:
+            with db.begin_nested():
+                run = DeliveryRun(
+                    code=trip.trip_code,
+                    vehicle_id=vehicle.id,
+                    dock_id=dock.id,
+                    trip_number=LoaderService._next_trip_number(db, vehicle.id, departs_at),
+                    brand=brands.pop(),
+                    district=districts.most_common(1)[0][0],
+                    departs_at=departs_at,
+                    status=RunStatus.NOT_STARTED,
+                    current_plan_version=1,
+                    dispatch_trip_id=trip.id,
+                )
+                db.add(run)
+                db.flush()
+
+                for position, outlet in enumerate(sequence, start=1):
+                    stop = RunStop(
+                        run_id=run.id,
+                        plan_version=1,
+                        stop_sequence=position,
+                        # Delivery order reversed: the last stop loads first, deepest.
+                        load_position=len(sequence) - position + 1,
+                        outlet_id=outlet.id,
+                        status=StopStatus.PENDING,
+                    )
+                    db.add(stop)
+                    db.flush()
+                    for order in orders:
+                        if order.outlet_id != outlet.id:
+                            continue
+                        db.add(
+                            RunStopOrder(
+                                run_stop_id=stop.id,
+                                order_id=order.id,
+                                plan_version=1,
+                                state=RunOrderState.TO_LOAD,
+                                units=LoaderService._order_units(order),
+                                weight_kg=order.weight_kg,
+                                volume_m3=order.volume_m3,
+                            )
+                        )
+                db.flush()
+                LoaderService.recalculate_capacity(db, run)
+
+                db.add(
+                    PlanRevision(
+                        run_id=run.id,
+                        version=1,
+                        published_at=now,
+                        source="Dispatcher",
+                        summary=f"Plan v1 from {trip.trip_code}",
+                        planned_weight_kg=run.planned_weight_kg,
+                        planned_volume_m3=run.planned_volume_m3,
+                    )
+                )
+                LoaderService.log(
+                    db, run, at=now, actor_kind=ActorKind.DISPATCHER,
+                    event_type="plan_published", actor_label="Dispatcher",
+                    message="Dispatcher published plan v1",
+                )
+                db.flush()
+        except IntegrityError:
+            # Another request built the run for this trip between our lookup
+            # and our insert: theirs stands.
+            existing = LoaderService.run_for_dispatch_trip(db, trip.id)
+            if existing is not None:
+                return existing
+            raise
+        return run
+
+    @staticmethod
+    def _order_brand(order: Order, outlet: Optional[Outlet]) -> Optional[Brand]:
+        """orders.brand ("Fresh", a string) when it names a brand, else the outlet's."""
+        if order.brand:
+            try:
+                return Brand(order.brand.strip().lower())
+            except ValueError:
+                pass
+        return outlet.brand if outlet is not None else None
+
+    @staticmethod
+    def _order_units(order: Order) -> Optional[int]:
+        """orders.units when set (the Store Manager sets it), else the sum of
+        the order lines, else unknown."""
+        if order.units is not None:
+            return order.units
+        if order.items:
+            return sum(item.quantity for item in order.items)
+        return None
+
+    @staticmethod
+    def _dock_for(db: Session, vehicle: Vehicle, dock_code: Optional[str]) -> Optional[Dock]:
+        """The named dock, or else the first dock (by code) at the vehicle's depot."""
+        if dock_code:
+            return db.execute(select(Dock).filter_by(code=dock_code)).scalars().first()
+        try:
+            depot = Depot((vehicle.depot_name or "").strip().lower())
+        except ValueError:
+            return None
+        return db.execute(
+            select(Dock).filter_by(depot=depot).order_by(Dock.code)
+        ).scalars().first()
+
+    @staticmethod
+    def _stop_order(trip: DispatchTrip, outlets: List[Outlet]) -> List[Outlet]:
+        """Outlets in delivery order.
+
+        trip.stop_sequence entries may be outlet codes, or objects carrying
+        "outlet_code" (or "id") = the code. Entries that name no outlet of
+        this trip (place names such as "Kelaniya") are ignored. Outlets the
+        list does not name follow, by delivery window start, then code.
+        """
+        by_code = {o.code.upper(): o for o in outlets}
+        ordered: List[Outlet] = []
+        for entry in trip.stop_sequence or []:
+            code = entry.get("outlet_code") or entry.get("id") if isinstance(entry, dict) else entry
+            outlet = by_code.get(str(code).upper()) if code is not None else None
+            if outlet is not None and outlet not in ordered:
+                ordered.append(outlet)
+        rest = sorted(
+            (o for o in outlets if o not in ordered),
+            key=lambda o: (o.window_start or time.max, o.code),
+        )
+        return ordered + rest
+
+    @staticmethod
+    def _next_trip_number(db: Session, vehicle_id: int, departs_at: datetime) -> int:
+        """1 + the vehicle's other runs departing the same depot day."""
+        day = _depot_date(departs_at)
+        same_day = [
+            r for r in db.execute(select(DeliveryRun).filter_by(vehicle_id=vehicle_id)).scalars()
+            if _depot_date(r.departs_at) == day
+        ]
+        return len(same_day) + 1
+
+    @staticmethod
+    def _orders_on_other_runs(db: Session, order_ids: List[int]) -> List[dict]:
+        """Orders still on another run's current plan, that run not gated out.
+
+        A row taken off that plan (take_off, moved) does not count: the order
+        has left that run, or is about to.
+        """
+        if not order_ids:
+            return []
+        rows = db.execute(
+            select(Order.order_number, DeliveryRun.code)
+            .select_from(RunStopOrder)
+            .join(RunStop, RunStopOrder.run_stop_id == RunStop.id)
+            .join(DeliveryRun, RunStop.run_id == DeliveryRun.id)
+            .join(Order, RunStopOrder.order_id == Order.id)
+            .where(
+                RunStopOrder.order_id.in_(order_ids),
+                RunStop.plan_version == DeliveryRun.current_plan_version,
+                DeliveryRun.status != RunStatus.GATED_OUT,
+                RunStopOrder.state.notin_(OFF_PLAN_STATES),
+            )
+            .order_by(Order.order_number)
+        ).all()
+        return [{"order_number": number, "run_code": code} for number, code in rows]
+
+    # --- integration slice 1: loader -> dispatcher ----------------------
+
+    @staticmethod
+    def dispatcher_view(
+        db: Session, dispatch_trip_ids: List[int]
+    ) -> Dict[int, schemas.DispatcherLoadingRead]:
+        """The dock's side of each dispatch trip, by trip id, for the
+        dispatcher's delivery runs list and Loading readiness dialog.
+
+        Field names follow what that dialog already reads off a dispatch trip
+        (stop_count, stops_completed, open_shortfalls, loading_events), so the
+        dispatcher can show `run.loader` where it showed `run`. Trips with no
+        loader run are simply absent.
+        """
+        if not dispatch_trip_ids:
+            return {}
+        runs = db.execute(
+            select(DeliveryRun).where(DeliveryRun.dispatch_trip_id.in_(dispatch_trip_ids))
+        ).scalars().all()
+        return {run.dispatch_trip_id: LoaderService._dispatcher_read(db, run) for run in runs}
+
+    @staticmethod
+    def _dispatcher_read(db: Session, run: DeliveryRun) -> schemas.DispatcherLoadingRead:
+        stops = LoaderService.current_stops(db, run)
+        # A stop whose every order left the plan is no longer a stop to load.
+        active_stops = [
+            s for s in stops if any(r.state not in OFF_PLAN_STATES for r in s.orders)
+        ]
+        checked, total = LoaderService.progress(db, run)
+        revision = LoaderService.get_revision(db, run, run.current_plan_version)
+        waiting = db.execute(
+            select(func.count(LoaderIssue.id)).where(
+                LoaderIssue.run_id == run.id,
+                LoaderIssue.status.in_([IssueStatus.SENT, IssueStatus.SEEN]),
+            )
+        ).scalar()
+        activity = db.execute(
+            select(LoaderActivity)
+            .filter_by(run_id=run.id)
+            .order_by(LoaderActivity.at, LoaderActivity.id)
+        ).scalars().all()
+        stop_of = LoaderService._stops_by_order(db, run) if activity else {}
+
+        events = []
+        for row in activity:
+            note = row.message
+            if row.event_type == "issue_flagged" and row.order_id in stop_of:
+                # The shortfall dialog reads the note as "stop · issue".
+                note = f"{stop_of[row.order_id].outlet.code} · {row.message}"
+            events.append(
+                schemas.DispatcherLoadingEventRead(
+                    event=DISPATCHER_EVENT_TITLES.get(
+                        row.event_type, row.event_type.replace("_", " ").capitalize()
+                    ),
+                    time=_depot_hhmm(row.at),
+                    note=note,
+                    status=DISPATCHER_EVENT_STATUS.get(row.event_type, "ok"),
+                    at=row.at,
+                    type=row.event_type,
+                )
+            )
+
+        return schemas.DispatcherLoadingRead(
+            run_code=run.code,
+            status=run.status,
+            dock=run.dock.code,
+            departs_at=run.departs_at,
+            plan_version=run.current_plan_version,
+            plan_acknowledged=revision is None or revision.acknowledged_at is not None,
+            stop_count=len(active_stops),
+            stops_completed=sum(1 for s in active_stops if s.status == StopStatus.COMPLETE),
+            orders_checked=checked,
+            orders_total=total,
+            open_shortfalls=waiting or 0,
+            planned_weight_kg=run.planned_weight_kg,
+            loaded_weight_kg=run.loaded_weight_kg,
+            planned_volume_m3=run.planned_volume_m3,
+            loaded_volume_m3=run.loaded_volume_m3,
+            last_update_at=activity[-1].at if activity else None,
+            loading_events=events,
+            **LoaderService.release_fields(run),
+        )
 
     # --- dev-only simulation ---------------------------------------------
 
