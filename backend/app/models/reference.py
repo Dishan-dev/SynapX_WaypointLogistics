@@ -87,6 +87,8 @@ class Outlet(Base):
     window_start = Column(Time, nullable=True)
     window_end = Column(Time, nullable=True)
     depot = Column(Enum(Depot), default=Depot.PELIYAGODA, nullable=False)
+    parking_constraint = Column(String(50), default="normal", nullable=False)
+    mall_window = Column(String(50), nullable=True)
 
 
 class Dock(Base):

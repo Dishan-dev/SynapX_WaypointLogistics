@@ -42,6 +42,9 @@ export interface FleetVehicle {
   temperature_mode: string;
   depot_name: string;
   weekly_fuel_status: string;
+  fuel_type?: string;
+  km_per_l?: number;
+  weekly_fuel_quota_l?: number;
   trips_today: number;
   trips_planned: number;
   maintenance_state?: string | null;
@@ -57,6 +60,8 @@ export interface OutletRecord {
   district: string;
   dock_type: string;
   van_only: boolean;
+  parking_constraint?: string;
+  mall_window?: string | null;
   window_start?: string;
   window_end?: string;
   depot: string;
@@ -311,6 +316,33 @@ export const adminService = {
     if (!res.ok) throw new Error("Failed to delete vehicle");
   },
 
+  async importVehiclesCSV(csvContent: string): Promise<{
+    success: boolean;
+    total_rows: number;
+    imported: number;
+    updated: number;
+    errors: string[];
+  }> {
+    const res = await fetch(`${API_BASE}/api/v1/fleet/vehicles/import-csv`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv_content: csvContent }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to import vehicles CSV");
+    }
+    return res.json();
+  },
+
+  async exportVehiclesCSV(): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/v1/fleet/vehicles/export-csv`, {
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error("Failed to export vehicles CSV");
+    return res.text();
+  },
+
   // Outlets
   async getOutlets(params?: { q?: string; brand?: string; depot?: string; district?: string; van_only?: boolean }): Promise<OutletRecord[]> {
     const query = new URLSearchParams();
@@ -346,6 +378,33 @@ export const adminService = {
     });
     if (!res.ok) throw new Error("Failed to update outlet");
     return res.json();
+  },
+
+  async importOutletsCSV(csvContent: string): Promise<{
+    success: boolean;
+    total_rows: number;
+    imported: number;
+    updated: number;
+    errors: string[];
+  }> {
+    const res = await fetch(`${API_BASE}/api/v1/outlets/import-csv`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ csv_content: csvContent }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to import outlets CSV");
+    }
+    return res.json();
+  },
+
+  async exportOutletsCSV(): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/v1/outlets/export-csv`, {
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error("Failed to export outlets CSV");
+    return res.text();
   },
 
   // Depots

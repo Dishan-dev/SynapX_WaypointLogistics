@@ -16,6 +16,9 @@ class VehicleBase(BaseModel):
     trips_today: int = 0
     trips_planned: int = 0
     maintenance_state: Optional[str] = None
+    fuel_type: str = "diesel"
+    km_per_l: float = 6.0
+    weekly_fuel_quota_l: float = 500.0
 
 class VehicleCreate(VehicleBase):
     pass
@@ -32,6 +35,9 @@ class VehicleUpdate(BaseModel):
     trips_today: Optional[int] = None
     trips_planned: Optional[int] = None
     maintenance_state: Optional[str] = None
+    fuel_type: Optional[str] = None
+    km_per_l: Optional[float] = None
+    weekly_fuel_quota_l: Optional[float] = None
 
 class VehicleResponse(VehicleBase):
     id: int

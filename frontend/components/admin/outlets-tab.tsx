@@ -9,11 +9,19 @@ import {
   MapPin,
   Edit2,
   RefreshCw,
+  Download,
+  Upload,
+  FileSpreadsheet,
+  CheckCircle2,
+  AlertCircle,
+  FileText,
+  Warehouse,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Table,
   TableBody,
@@ -37,7 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { OutletRecord, adminService } from "@/services/admin-service";
 
@@ -47,11 +55,39 @@ interface OutletsTabProps {
   onRefresh: () => void;
 }
 
+interface CSVPreviewRow {
+  outlet_id: string;
+  brand: string;
+  district: string;
+  depot: string;
+  dock_type: string;
+  parking_constraint: string;
+  mall_window: string;
+  window_open_time: string;
+  window_close_time: string;
+}
+
 export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [brandFilter, setBrandFilter] = useState("ALL");
   const [depotFilter, setDepotFilter] = useState("ALL");
   const [accessFilter, setAccessFilter] = useState("ALL");
+
+  // Export State
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Import Dialog State
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importCSVText, setImportCSVText] = useState("");
+  const [csvPreviewRows, setCsvPreviewRows] = useState<CSVPreviewRow[]>([]);
+  const [isSubmittingImport, setIsSubmittingImport] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState<{
+    total_rows: number;
+    imported: number;
+    updated: number;
+    errors: string[];
+  } | null>(null);
 
   // Create Dialog
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -62,6 +98,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
     district: "Colombo",
     depot: "peliyagoda",
     dock_type: "rear_dock",
+    parking_constraint: "normal",
+    mall_window: "",
     van_only: false,
     window_start: "06:00",
     window_end: "18:00",
@@ -77,12 +115,107 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
     district: "",
     depot: "peliyagoda",
     dock_type: "rear_dock",
+    parking_constraint: "normal",
+    mall_window: "",
     van_only: false,
     window_start: "06:00",
     window_end: "18:00",
   });
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [editError, setEditError] = useState("");
+
+  // Parse CSV Preview helper
+  const parseCSVPreview = (text: string) => {
+    try {
+      const lines = text.trim().split(/\r?\n/).filter((l) => l.trim().length > 0);
+      if (lines.length <= 1) {
+        setCsvPreviewRows([]);
+        return;
+      }
+      const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+      const preview: CSVPreviewRow[] = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(",").map((p) => p.trim());
+        const row: Record<string, string> = {};
+        headers.forEach((h, idx) => {
+          row[h] = parts[idx] || "";
+        });
+
+        preview.push({
+          outlet_id: row.outlet_id || row.code || row.id || parts[0] || "",
+          brand: row.brand || parts[1] || "Fresh",
+          district: row.district || parts[2] || "Colombo",
+          depot: row.depot || parts[3] || "Peliyagoda",
+          dock_type: row.dock_type || parts[4] || "street",
+          parking_constraint: row.parking_constraint || parts[5] || "normal",
+          mall_window: row.mall_window || parts[6] || "",
+          window_open_time: row.window_open_time || row.window_start || parts[7] || "06:00",
+          window_close_time: row.window_close_time || row.window_end || parts[8] || "18:00",
+        });
+      }
+      setCsvPreviewRows(preview);
+    } catch {
+      setCsvPreviewRows([]);
+    }
+  };
+
+  // Handle File Input for CSV
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportError("");
+    setImportResult(null);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = (event.target?.result as string) || "";
+      setImportCSVText(text);
+      parseCSVPreview(text);
+    };
+    reader.onerror = () => setImportError("Failed to read file.");
+    reader.readAsText(file);
+  };
+
+  // Handle CSV Import Submit
+  const handleImportSubmit = async () => {
+    if (!importCSVText.trim()) {
+      setImportError("Please provide CSV content or select a file.");
+      return;
+    }
+
+    setImportError("");
+    setIsSubmittingImport(true);
+    try {
+      const res = await adminService.importOutletsCSV(importCSVText);
+      setImportResult(res);
+      onRefresh();
+    } catch (err: unknown) {
+      setImportError(err instanceof Error ? err.message : "Failed to import outlets");
+    } finally {
+      setIsSubmittingImport(false);
+    }
+  };
+
+  // Handle CSV Export
+  const handleExportCSV = async () => {
+    setIsExporting(true);
+    try {
+      const csvText = await adminService.exportOutletsCSV();
+      const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `waypoint_outlets_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to export outlets CSV");
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   // Filter outlets
   const filteredOutlets = outlets.filter((o) => {
@@ -95,8 +228,9 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
     const matchesDepot = depotFilter === "ALL" || o.depot.toLowerCase() === depotFilter.toLowerCase();
     const matchesAccess =
       accessFilter === "ALL" ||
-      (accessFilter === "VAN_ONLY" && o.van_only) ||
-      (accessFilter === "TRUCK" && !o.van_only);
+      (accessFilter === "VAN_ONLY" && (o.van_only || o.parking_constraint === "van_only")) ||
+      (accessFilter === "MALL_DOCK" && o.parking_constraint === "mall_dock") ||
+      (accessFilter === "NORMAL" && !o.van_only && o.parking_constraint !== "van_only");
 
     return matchesSearch && matchesBrand && matchesDepot && matchesAccess;
   });
@@ -105,14 +239,19 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateError("");
-    if (!createForm.code || !createForm.name || !createForm.district) {
-      setCreateError("All fields are required.");
+    if (!createForm.code || !createForm.name) {
+      setCreateError("Outlet code and name are required.");
       return;
     }
 
     setIsSubmittingCreate(true);
     try {
-      await adminService.createOutlet(createForm);
+      await adminService.createOutlet({
+        ...createForm,
+        code: createForm.code.toUpperCase(),
+        van_only: createForm.parking_constraint === "van_only",
+        mall_window: createForm.mall_window || undefined,
+      });
       setIsCreateOpen(false);
       setCreateForm({
         code: "",
@@ -121,6 +260,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
         district: "Colombo",
         depot: "peliyagoda",
         dock_type: "rear_dock",
+        parking_constraint: "normal",
+        mall_window: "",
         van_only: false,
         window_start: "06:00",
         window_end: "18:00",
@@ -141,6 +282,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
       district: outlet.district,
       depot: outlet.depot.toLowerCase(),
       dock_type: outlet.dock_type.toLowerCase(),
+      parking_constraint: outlet.parking_constraint || (outlet.van_only ? "van_only" : "normal"),
+      mall_window: outlet.mall_window || "",
       van_only: outlet.van_only,
       window_start: outlet.window_start || "06:00",
       window_end: outlet.window_end || "18:00",
@@ -157,7 +300,17 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
 
     setIsSubmittingEdit(true);
     try {
-      await adminService.updateOutlet(selectedOutlet.id, editForm);
+      await adminService.updateOutlet(selectedOutlet.id, {
+        name: editForm.name,
+        district: editForm.district,
+        depot: editForm.depot,
+        dock_type: editForm.dock_type,
+        parking_constraint: editForm.parking_constraint,
+        mall_window: editForm.mall_window || null,
+        van_only: editForm.parking_constraint === "van_only",
+        window_start: editForm.window_start,
+        window_end: editForm.window_end,
+      });
       setIsEditOpen(false);
       onRefresh();
     } catch (err: unknown) {
@@ -170,13 +323,35 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
   const getBrandBadge = (brand: string) => {
     switch (brand.toLowerCase()) {
       case "fresh":
-        return <Badge className="bg-emerald-100 text-emerald-900 border-emerald-300">Fresh Foods</Badge>;
+        return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">Fresh</Badge>;
       case "style":
-        return <Badge className="bg-pink-100 text-pink-900 border-pink-300">Style Retail</Badge>;
+        return <Badge className="bg-purple-100 text-purple-800 border-purple-300">Style</Badge>;
       case "tech":
-        return <Badge className="bg-blue-100 text-blue-900 border-blue-300">Tech &amp; Elec</Badge>;
+        return <Badge className="bg-blue-100 text-blue-800 border-blue-300">Tech</Badge>;
       default:
         return <Badge variant="outline">{brand}</Badge>;
+    }
+  };
+
+  const getParkingBadge = (constraint?: string, vanOnly?: boolean) => {
+    const val = (constraint || (vanOnly ? "van_only" : "normal")).toLowerCase();
+    switch (val) {
+      case "van_only":
+        return (
+          <Badge className="bg-purple-100 text-purple-900 border-purple-300 text-[10px]">
+            Van Only
+          </Badge>
+        );
+      case "mall_dock":
+        return (
+          <Badge className="bg-amber-100 text-amber-900 border-amber-300 text-[10px]">
+            Mall Dock
+          </Badge>
+        );
+      default:
+        return (
+          <span className="text-[10px] text-muted-foreground">Normal Access</span>
+        );
     }
   };
 
@@ -190,10 +365,10 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
             <span>Retail Outlets &amp; Delivery Destinations</span>
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Configure outlet profiles, assigned depots, delivery windows, dock unloading types, and vehicle access constraints.
+            Configure outlet profiles, assigned depots, delivery windows, dock unloading types, and import/export operations CSV records.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -203,6 +378,37 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
             <RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} />
             <span>Refresh</span>
           </Button>
+
+          {/* Export CSV Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportCSV}
+            disabled={isExporting}
+            className="text-xs gap-1.5 border-border bg-background hover:bg-slate-100"
+          >
+            <Download className="size-3.5 text-emerald-600" />
+            <span>{isExporting ? "Exporting..." : "Export CSV"}</span>
+          </Button>
+
+          {/* Import CSV Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setImportCSVText("");
+              setCsvPreviewRows([]);
+              setImportError("");
+              setImportResult(null);
+              setIsImportOpen(true);
+            }}
+            className="text-xs gap-1.5 border-primary/30 text-primary bg-primary/5 hover:bg-primary/10"
+          >
+            <Upload className="size-3.5" />
+            <span>Import CSV</span>
+          </Button>
+
+          {/* Add Outlet Button */}
           <Button
             size="sm"
             onClick={() => setIsCreateOpen(true)}
@@ -260,9 +466,10 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
                 <SelectValue placeholder="Vehicle Access" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="ALL">All Access Types</SelectItem>
+                <SelectItem value="ALL">All Constraints</SelectItem>
                 <SelectItem value="VAN_ONLY">Van Only Requirement</SelectItem>
-                <SelectItem value="TRUCK">Truck Accessible</SelectItem>
+                <SelectItem value="MALL_DOCK">Mall Dock Constraint</SelectItem>
+                <SelectItem value="NORMAL">Normal Truck Access</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -277,8 +484,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
               <TableHead className="text-xs font-semibold">Outlet Code &amp; Name</TableHead>
               <TableHead className="text-xs font-semibold">Brand &amp; District</TableHead>
               <TableHead className="text-xs font-semibold">Assigned Depot</TableHead>
-              <TableHead className="text-xs font-semibold">Delivery Window</TableHead>
-              <TableHead className="text-xs font-semibold">Dock &amp; Access Type</TableHead>
+              <TableHead className="text-xs font-semibold">Delivery &amp; Mall Window</TableHead>
+              <TableHead className="text-xs font-semibold">Dock &amp; Constraint</TableHead>
               <TableHead className="text-xs font-semibold text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -312,14 +519,22 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
                     </div>
                   </TableCell>
                   <TableCell className="py-3">
-                    <Badge variant="outline" className="text-xs font-semibold text-foreground">
-                      {outlet.depot} Depot
+                    <Badge variant="outline" className="text-xs font-semibold text-foreground flex items-center gap-1 w-fit">
+                      <Warehouse className="size-3 text-muted-foreground" />
+                      <span>{outlet.depot} Depot</span>
                     </Badge>
                   </TableCell>
                   <TableCell className="py-3">
-                    <div className="text-xs font-medium font-mono text-foreground flex items-center gap-1.5">
-                      <Clock className="size-3 text-muted-foreground" />
-                      <span>{outlet.window_start || "06:00"} &ndash; {outlet.window_end || "18:00"}</span>
+                    <div className="space-y-1">
+                      <div className="text-xs font-medium font-mono text-foreground flex items-center gap-1.5">
+                        <Clock className="size-3 text-muted-foreground" />
+                        <span>{outlet.window_start || "06:00"} &ndash; {outlet.window_end || "18:00"}</span>
+                      </div>
+                      {outlet.mall_window && (
+                        <div className="text-[11px] text-amber-700 font-medium">
+                          Mall Bay: {outlet.mall_window}
+                        </div>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell className="py-3">
@@ -327,13 +542,7 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
                       <div className="text-xs font-medium capitalize text-foreground">
                         {outlet.dock_type.replace("_", " ")}
                       </div>
-                      {outlet.van_only ? (
-                        <Badge className="bg-purple-100 text-purple-900 border-purple-300 text-[10px]">
-                          Van Only Required
-                        </Badge>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground">Truck &amp; Van OK</span>
-                      )}
+                      <div>{getParkingBadge(outlet.parking_constraint, outlet.van_only)}</div>
                     </div>
                   </TableCell>
                   <TableCell className="py-3 text-right">
@@ -354,9 +563,171 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
         </Table>
       </Card>
 
+      {/* CSV Import Dialog */}
+      <Dialog open={isImportOpen} onOpenChange={setIsImportOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <FileSpreadsheet className="size-4 text-primary" />
+              <span>Import Outlets CSV</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Upload or paste retail outlets configuration. Existing outlets matching the outlet ID will be updated; new ones will be registered.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {importError && (
+              <div className="p-3 rounded text-xs bg-red-50 text-red-800 border border-red-200 flex items-center gap-2">
+                <AlertCircle className="size-4 text-red-600 shrink-0" />
+                <span>{importError}</span>
+              </div>
+            )}
+
+            {importResult && (
+              <div className="p-3 rounded text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 space-y-1">
+                <div className="flex items-center gap-2 font-semibold">
+                  <CheckCircle2 className="size-4 text-emerald-600 shrink-0" />
+                  <span>
+                    Successfully processed {importResult.total_rows} outlets ({importResult.imported} newly created, {importResult.updated} updated)
+                  </span>
+                </div>
+                {importResult.errors.length > 0 && (
+                  <div className="text-[11px] text-amber-700 mt-2">
+                    <span className="font-semibold">Notices / Warnings:</span>
+                    <ul className="list-disc pl-4 mt-0.5 space-y-0.5">
+                      {importResult.errors.slice(0, 5).map((e, idx) => (
+                        <li key={idx}>{e}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="p-2.5 rounded bg-slate-50 border border-slate-200 text-[11px] text-muted-foreground">
+              <span className="font-semibold text-foreground">Expected CSV Column Header:</span>
+              <p className="font-mono text-[10px] mt-0.5 text-slate-700 break-all">
+                outlet_id,brand,district,depot,dock_type,parking_constraint,mall_window,window_open_time,window_close_time
+              </p>
+            </div>
+
+            <Tabs defaultValue="file" className="w-full">
+              <TabsList className="grid grid-cols-2 text-xs">
+                <TabsTrigger value="file" className="text-xs gap-1.5">
+                  <Upload className="size-3.5" />
+                  <span>Upload File</span>
+                </TabsTrigger>
+                <TabsTrigger value="paste" className="text-xs gap-1.5">
+                  <FileText className="size-3.5" />
+                  <span>Paste Raw CSV</span>
+                </TabsTrigger>
+              </TabsList>
+
+              {/* File Upload Tab */}
+              <TabsContent value="file" className="space-y-3 pt-2">
+                <div className="border-2 border-dashed border-border rounded-lg p-6 text-center hover:bg-slate-50/50 transition">
+                  <FileSpreadsheet className="size-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-xs font-medium text-foreground">Select a .csv file from your computer</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">Comma-separated values (.csv) format</p>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={handleFileUpload}
+                    className="mt-3 text-xs file:mr-3 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-primary-foreground hover:file:opacity-90 cursor-pointer"
+                  />
+                </div>
+              </TabsContent>
+
+              {/* Paste Raw CSV Tab */}
+              <TabsContent value="paste" className="space-y-3 pt-2">
+                <Textarea
+                  placeholder={`outlet_id,brand,district,depot,dock_type,parking_constraint,mall_window,window_open_time,window_close_time\nOUT001,Fresh,Colombo,Peliyagoda,street,van_only,,05:00,07:30\nOUT015,Style,Colombo,Peliyagoda,mall_bay,mall_dock,09:00-11:00,09:00,11:00`}
+                  rows={6}
+                  value={importCSVText}
+                  onChange={(e) => {
+                    setImportCSVText(e.target.value);
+                    parseCSVPreview(e.target.value);
+                  }}
+                  className="font-mono text-xs"
+                />
+              </TabsContent>
+            </Tabs>
+
+            {/* Parsed Preview Table */}
+            {csvPreviewRows.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-foreground">
+                    Preview ({csvPreviewRows.length} outlets detected)
+                  </span>
+                  <span className="text-muted-foreground text-[11px]">
+                    Showing top {Math.min(csvPreviewRows.length, 5)} rows
+                  </span>
+                </div>
+                <div className="border border-border rounded-md overflow-x-auto max-h-48">
+                  <Table className="text-[11px]">
+                    <TableHeader className="bg-slate-50 sticky top-0">
+                      <TableRow>
+                        <TableHead className="py-1 px-2 font-mono">ID</TableHead>
+                        <TableHead className="py-1 px-2">Brand</TableHead>
+                        <TableHead className="py-1 px-2">District</TableHead>
+                        <TableHead className="py-1 px-2">Depot</TableHead>
+                        <TableHead className="py-1 px-2">Dock</TableHead>
+                        <TableHead className="py-1 px-2">Parking</TableHead>
+                        <TableHead className="py-1 px-2">Mall Window</TableHead>
+                        <TableHead className="py-1 px-2">Open</TableHead>
+                        <TableHead className="py-1 px-2">Close</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {csvPreviewRows.slice(0, 5).map((row, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell className="py-1.5 px-2 font-mono font-bold">{row.outlet_id}</TableCell>
+                          <TableCell className="py-1.5 px-2 capitalize">{row.brand}</TableCell>
+                          <TableCell className="py-1.5 px-2">{row.district}</TableCell>
+                          <TableCell className="py-1.5 px-2 capitalize">{row.depot}</TableCell>
+                          <TableCell className="py-1.5 px-2 capitalize">{row.dock_type}</TableCell>
+                          <TableCell className="py-1.5 px-2">{row.parking_constraint}</TableCell>
+                          <TableCell className="py-1.5 px-2 font-mono">{row.mall_window || "—"}</TableCell>
+                          <TableCell className="py-1.5 px-2 font-mono">{row.window_open_time}</TableCell>
+                          <TableCell className="py-1.5 px-2 font-mono">{row.window_close_time}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsImportOpen(false)}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={isSubmittingImport || !importCSVText.trim()}
+              onClick={handleImportSubmit}
+              className="bg-primary text-primary-foreground text-xs font-semibold gap-1.5"
+            >
+              <Upload className="size-3.5" />
+              <span>{isSubmittingImport ? "Importing Outlets..." : `Import ${csvPreviewRows.length || ""} Outlets`}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Create Outlet Dialog */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-base font-bold flex items-center gap-2">
               <Store className="size-4 text-primary" />
@@ -408,7 +779,7 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
               <Label className="text-xs">Store Name</Label>
               <Input
                 className="text-xs"
-                placeholder="e.g. Fresh Nugegoda Super"
+                placeholder="e.g. Fresh Colombo Super"
                 value={createForm.name}
                 onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
                 required
@@ -466,31 +837,49 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Dock Unloading Type</Label>
-              <Select
-                value={createForm.dock_type}
-                onValueChange={(val) => setCreateForm({ ...createForm, dock_type: val })}
-              >
-                <SelectTrigger className="text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="rear_dock">Rear Dock</SelectItem>
-                  <SelectItem value="street">Street Unload</SelectItem>
-                  <SelectItem value="mall_bay">Mall Loading Bay</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Dock Unloading Type</Label>
+                <Select
+                  value={createForm.dock_type}
+                  onValueChange={(val) => setCreateForm({ ...createForm, dock_type: val })}
+                >
+                  <SelectTrigger className="text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rear_dock">Rear Dock</SelectItem>
+                    <SelectItem value="street">Street Unload</SelectItem>
+                    <SelectItem value="mall_bay">Mall Loading Bay</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Parking Constraint</Label>
+                <Select
+                  value={createForm.parking_constraint}
+                  onValueChange={(val) => setCreateForm({ ...createForm, parking_constraint: val })}
+                >
+                  <SelectTrigger className="text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="normal">Normal (Truck OK)</SelectItem>
+                    <SelectItem value="van_only">Van Only</SelectItem>
+                    <SelectItem value="mall_dock">Mall Dock</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
-            <div className="flex items-center justify-between border-t border-border pt-3">
-              <div>
-                <Label className="text-xs font-semibold">Van Only Access</Label>
-                <p className="text-[11px] text-muted-foreground">Prohibits trucks from routing to this location</p>
-              </div>
-              <Switch
-                checked={createForm.van_only}
-                onCheckedChange={(checked) => setCreateForm({ ...createForm, van_only: checked })}
+            <div className="space-y-1.5">
+              <Label className="text-xs">Mall Delivery Window (Optional)</Label>
+              <Input
+                className="text-xs font-mono"
+                placeholder="e.g. 09:00-11:00 or 10:30-12:30"
+                value={createForm.mall_window}
+                onChange={(e) => setCreateForm({ ...createForm, mall_window: e.target.value })}
               />
             </div>
 
@@ -519,7 +908,7 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
 
       {/* Edit Outlet Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-base font-bold flex items-center gap-2">
               <Edit2 className="size-4 text-primary" />
@@ -597,31 +986,49 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs">Dock Unloading Type</Label>
-              <Select
-                value={editForm.dock_type}
-                onValueChange={(val) => setEditForm({ ...editForm, dock_type: val })}
-              >
-                <SelectTrigger className="text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="rear_dock">Rear Dock</SelectItem>
-                  <SelectItem value="street">Street Unload</SelectItem>
-                  <SelectItem value="mall_bay">Mall Loading Bay</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Dock Unloading Type</Label>
+                <Select
+                  value={editForm.dock_type}
+                  onValueChange={(val) => setEditForm({ ...editForm, dock_type: val })}
+                >
+                  <SelectTrigger className="text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rear_dock">Rear Dock</SelectItem>
+                    <SelectItem value="street">Street Unload</SelectItem>
+                    <SelectItem value="mall_bay">Mall Loading Bay</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Parking Constraint</Label>
+                <Select
+                  value={editForm.parking_constraint}
+                  onValueChange={(val) => setEditForm({ ...editForm, parking_constraint: val })}
+                >
+                  <SelectTrigger className="text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="normal">Normal (Truck OK)</SelectItem>
+                    <SelectItem value="van_only">Van Only</SelectItem>
+                    <SelectItem value="mall_dock">Mall Dock</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
-            <div className="flex items-center justify-between border-t border-border pt-3">
-              <div>
-                <Label className="text-xs font-semibold">Van Only Access</Label>
-                <p className="text-[11px] text-muted-foreground">Prohibits trucks from routing here</p>
-              </div>
-              <Switch
-                checked={editForm.van_only}
-                onCheckedChange={(checked) => setEditForm({ ...editForm, van_only: checked })}
+            <div className="space-y-1.5">
+              <Label className="text-xs">Mall Delivery Window (Optional)</Label>
+              <Input
+                className="text-xs font-mono"
+                placeholder="e.g. 09:00-11:00 or 10:30-12:30"
+                value={editForm.mall_window}
+                onChange={(e) => setEditForm({ ...editForm, mall_window: e.target.value })}
               />
             </div>
 
