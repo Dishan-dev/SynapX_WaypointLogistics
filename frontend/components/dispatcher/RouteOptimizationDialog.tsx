@@ -47,16 +47,45 @@ export function RouteOptimizationDialog({ run, onClose, onApply }: RouteOptimiza
         body: JSON.stringify({ stop_sequence: proposedWithSLA }),
       });
       if (!r1.ok) throw new Error("patch failed");
-      // 2. Record the event in loading_events
-      await fetch(`${API_BASE}/api/v1/delivery-runs/${run.id}/add-loading-event`, {
-        method: 'POST', headers,
-        body: JSON.stringify({
-          event: "Route optimized",
-          time: format(new Date(), "HH:mm"),
-          note: "Dispatcher applied optimized stop sequence",
-          status: "ok"
-        }),
-      });
+      
+      // 2. Call loader plan change if loader exists
+      if (run.loader) {
+        const p1 = await fetch(`${API_BASE}/api/v1/loader/dispatch-trips/${run.id}/plan`, {
+          method: 'POST', headers,
+          body: JSON.stringify({
+            client_action_id: crypto.randomUUID(),
+            base_version: run.loader.plan_version,
+            stop_order: proposedWithSLA.map((s: any) => s.outlet_code || s.name),
+            dispatcher: "Dispatcher"
+          }),
+        });
+        if (p1.status === 409) {
+            const data = await p1.json();
+            if (data.detail && data.detail.code === 'PLAN_LOCKED') {
+                toast.error("Released — ask the dock to undo");
+                setIsApplying(false);
+                return;
+            } else {
+                toast.error("Plan changed by someone else. Please refresh.");
+                setIsApplying(false);
+                return;
+            }
+        } else if (!p1.ok) {
+            toast.error("Failed to sync plan to loader");
+        }
+      } else {
+        // Record the event in loading_events (fallback if no loader)
+        await fetch(`${API_BASE}/api/v1/delivery-runs/${run.id}/add-loading-event`, {
+          method: 'POST', headers,
+          body: JSON.stringify({
+            event: "Route optimized",
+            time: format(new Date(), "HH:mm"),
+            note: "Dispatcher applied optimized stop sequence",
+            status: "ok"
+          }),
+        });
+      }
+      
       toast.success("Optimized route applied");
       onApply();
       onClose();

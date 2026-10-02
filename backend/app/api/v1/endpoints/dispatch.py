@@ -8,8 +8,19 @@ from app.models.allocation import Allocation, AllocationStatus
 from app.models.fleet import DriverProfile
 from app.schemas.shipment import DispatchTripCreate, DispatchTripRead, DeliveryRunResponse, DeliveryRunUpdate, LoadingEventIn
 from app.models.order import Order, OrderItem
+from app.services.loader_service import loader_service
 
 router = APIRouter()
+
+def _with_loader(db: Session, trips: List[DispatchTrip]) -> List[DeliveryRunResponse]:
+    views = loader_service.dispatcher_view(db, [t.id for t in trips])
+    out = []
+    for t in trips:
+        item = DeliveryRunResponse.model_validate(t)
+        view = views.get(t.id)
+        item.loader = view.model_dump(mode="json") if view else None
+        out.append(item)
+    return out
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -60,7 +71,9 @@ def list_delivery_runs(
         query = query.filter(DispatchTrip.status == status)
     if depot:
         query = query.filter(DispatchTrip.depot_name == depot)
-    return query.offset(skip).limit(limit).all()
+    
+    trips = query.offset(skip).limit(limit).all()
+    return _with_loader(db, trips)
 
 
 @router.get("/live")
@@ -110,7 +123,7 @@ def get_delivery_run(id: int, db: Session = Depends(deps.get_db)):
     run = db.query(DispatchTrip).filter(DispatchTrip.id == id).first()
     if not run:
         raise HTTPException(status_code=404, detail="Delivery run not found")
-    return run
+    return _with_loader(db, [run])[0]
 
 
 @router.post("/", response_model=DeliveryRunResponse, status_code=status.HTTP_201_CREATED)
@@ -227,6 +240,9 @@ def create_run_from_allocation(
     # Mark allocation as dispatched
     allocation.status = AllocationStatus.DISPATCHED
     db.add(allocation)
+
+    db.flush()
+    loader_service.create_run_for_dispatch_trip(db, trip)
 
     db.commit()
     db.refresh(trip)
