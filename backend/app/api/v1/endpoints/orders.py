@@ -139,11 +139,23 @@ def bulk_allocate_orders(req: BulkAllocateRequest, db: Session = Depends(deps.ge
     if not orders:
         raise HTTPException(status_code=404, detail="No matching orders found")
 
+    # Up-front validation
+    for order in orders:
+        if order.status != OrderStatus.ALLOCATED and OrderStatus.ALLOCATED not in order_service.TRANSITIONS.get(order.status, set()):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{order.order_number} can't move from {order.status.value.lower()} to allocated."
+            )
+
+    # Apply changes
     for order in orders:
         if req.allocation_id:
             order.allocation_id = req.allocation_id
-        db.commit()
-        order_service.update_order_status(db, order.id, OrderStatus.ALLOCATED)
+        
+        if order.status != OrderStatus.ALLOCATED:
+            order_service.update_order_status(db, order.id, OrderStatus.ALLOCATED, commit=False)
+            
+    db.commit()
     return {"message": f"Successfully allocated {len(orders)} orders", "count": len(orders)}
 
 

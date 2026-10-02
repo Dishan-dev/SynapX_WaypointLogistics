@@ -74,6 +74,8 @@ class Order(Base):
 
     @property
     def estimated_arrival(self):
+        if self.shipment and self.shipment.dispatch_trip:
+            return self.shipment.dispatch_trip.estimated_arrival
         if self.allocation and self.allocation.dispatch_trips:
             dt = self.allocation.dispatch_trips
             if isinstance(dt, list):
