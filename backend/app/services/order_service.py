@@ -298,7 +298,7 @@ class OrderService:
         return order
 
     @staticmethod
-    def update_order_status(db: Session, order_id: int, status: OrderStatus) -> Order:
+    def update_order_status(db: Session, order_id: int, status: OrderStatus, commit: bool = True) -> Order:
         """Contract (§3): called by the Loader, Driver and Dispatcher flows. Sends the store a notification
         for confirmed / ready for dispatch / delivered / completed."""
         order = OrderService._get(db, order_id)
@@ -311,8 +311,9 @@ class OrderService:
                 target_state=status.value,
             )
         order.status = status
-        db.commit()
-        db.refresh(order)
+        if commit:
+            db.commit()
+            db.refresh(order)
         notification_type = STATUS_NOTIFICATIONS.get(status)
         if notification_type and order.outlet_id:
             meta = {"order_id": order.id, "order_number": order.order_number}
@@ -334,6 +335,7 @@ class OrderService:
             )
         order.status = OrderStatus.DEFERRED
         order.deferral_reason = reason
+        order.allocation_id = None
         order.deferral_count = (order.deferral_count or 0) + 1
         if new_delivery_date:
             order.operating_date = new_delivery_date.isoformat()
