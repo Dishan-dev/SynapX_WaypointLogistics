@@ -8,26 +8,15 @@ import {
   Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
-
-interface DeliveryStop {
-  id: number;
-  sequence: number;
-  address: string;
-  customer_name: string;
-  status: string;
-}
-
-interface TripDetail {
-  id: number;
-  stops: DeliveryStop[];
-}
+import { fetchStopDetail, parseWindow, type StopDetail } from "@/lib/driverStop";
 
 function ArrivalContent() {
   const searchParams = useSearchParams();
   const stopId = searchParams.get("stop_id");
-  
-  const [stop, setStop] = useState<DeliveryStop | null>(null);
+
+  const [stop, setStop] = useState<StopDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const deliveryWindow = parseWindow(stop?.order?.delivery_window);
 
   useEffect(() => {
     if (!stopId) return;
@@ -35,14 +24,7 @@ function ArrivalContent() {
     async function loadDataAndArrive() {
       try {
         // Step 1: Load stop details for display (always do this first)
-        const trips = await apiFetch<any[]>("/driver/trips/today");
-        const startedTrip = trips.find(t => t.status === "STARTED");
-        
-        if (startedTrip) {
-          const tripDetail = await apiFetch<TripDetail>(`/driver/trips/${startedTrip.id}`);
-          const foundStop = tripDetail.stops.find(s => s.id.toString() === stopId);
-          if (foundStop) setStop(foundStop);
-        }
+        setStop(await fetchStopDetail(stopId!));
       } catch (error) {
         console.error("Failed to load stop details:", error);
       }
@@ -164,8 +146,12 @@ function ArrivalContent() {
         {/* Arrival Times */}
         <div className="flex w-full gap-2.5">
           <div className="flex-1 flex flex-col p-3.5 rounded-xl gap-1" style={{ backgroundColor: "#F2F5F8" }}>
-            <span className="font-bold text-[10px]" style={{ color: "#5D6A78" }}>EXPECTED</span>
-            <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>--:--</span>
+            <span className="font-bold text-[10px]" style={{ color: "#5D6A78" }}>
+              {deliveryWindow.close ? `WINDOW · FROM ${deliveryWindow.open}` : "EXPECTED"}
+            </span>
+            <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>
+              {deliveryWindow.close ? `by ${deliveryWindow.close}` : "--:--"}
+            </span>
           </div>
           <div className="flex-1 flex flex-col p-3.5 rounded-xl gap-1" style={{ backgroundColor: "#E8F6EF" }}>
             <span className="font-bold text-[10px]" style={{ color: "#18794E" }}>ACTUAL · NOW</span>
@@ -194,28 +180,6 @@ function ArrivalContent() {
         </Link>
       </div>
 
-      {/* Bottom Nav */}
-      <div
-        className="flex items-center justify-between px-8 py-2.5 bg-white z-50 shrink-0"
-        style={{ borderTop: "1px solid #D9E1E8" }}
-      >
-        <Link href="/driver" className="flex flex-col items-center gap-1 w-[72px]">
-          <Home size={22} color="#8793A0" />
-          <span className="text-[10px] font-medium" style={{ color: "#8793A0" }}>Home</span>
-        </Link>
-        <Link href="/driver/trip" className="flex flex-col items-center gap-1 w-[72px]">
-          <MapIcon size={22} color="#163A5F" />
-          <span className="text-[10px] font-medium" style={{ color: "#163A5F" }}>Map</span>
-        </Link>
-        <Link href="/driver/report" className="flex flex-col items-center gap-1 w-[72px]">
-          <TriangleAlert size={22} color="#5D6A78" />
-          <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Report</span>
-        </Link>
-        <Link href="/driver/queue" className="flex flex-col items-center gap-1 w-[72px]">
-          <Layers size={22} color="#5D6A78" />
-          <span className="text-[10px] font-medium" style={{ color: "#5D6A78" }}>Queue</span>
-        </Link>
-      </div>
     </div>
   );
 }

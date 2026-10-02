@@ -46,6 +46,11 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
   }, [tripId]);
 
   async function handleStartTrip() {
+    if (trip?.status === "STARTED") {
+      router.push(`/driver/trip`);
+      return;
+    }
+    
     setStarting(true);
     try {
       await apiFetch(`/driver/trips/${tripId}/start`, { method: "POST" });

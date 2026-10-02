@@ -81,15 +81,21 @@ export default function ReportProblemPage() {
     async function loadActiveTrip() {
       try {
         const trips = await apiFetch<any[]>("/driver/trips/today");
-        const startedTrip = trips.find(t => t.status === "STARTED");
-        
+        const startedTrip = trips.find(t => t.status === "started");
+
         if (startedTrip) {
           const detail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
           setActiveTrip(detail);
-          
-          const pendingStops = detail.stops?.filter((s: any) => s.status === 'PENDING') || [];
-          if (pendingStops.length > 0) {
-            setCurrentStop(pendingStops[0]);
+
+          // Coming from the outcome screen, the failed stop is passed explicitly
+          const requestedStopId = new URLSearchParams(window.location.search).get("stop_id");
+          const requestedStop = detail.stops?.find((s: any) => String(s.id) === requestedStopId);
+          const activeStop = requestedStop ?? detail.stops
+            ?.slice()
+            .sort((a: any, b: any) => a.sequence - b.sequence)
+            .find((s: any) => s.status === "pending" || s.status === "arrived");
+          if (activeStop) {
+            setCurrentStop(activeStop);
           }
         }
       } catch (error) {

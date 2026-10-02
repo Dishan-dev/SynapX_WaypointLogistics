@@ -78,7 +78,7 @@ export default function DriverMapCanvas({
 
     const map = new Map({
       container: containerRef.current,
-      style: "https://tiles.openfreemap.org/styles/liberty",
+      style: "https://tiles.openfreemap.org/styles/bright",
       center,
       zoom: 13,
       attributionControl: false,
