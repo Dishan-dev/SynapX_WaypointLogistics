@@ -20,6 +20,19 @@ class VehicleBase(BaseModel):
 class VehicleCreate(VehicleBase):
     pass
 
+class VehicleUpdate(BaseModel):
+    code: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    capacity_kg: Optional[float] = None
+    capacity_vol_m3: Optional[float] = None
+    status: Optional[VehicleStatus] = None
+    temperature_mode: Optional[str] = None
+    depot_name: Optional[str] = None
+    weekly_fuel_status: Optional[str] = None
+    trips_today: Optional[int] = None
+    trips_planned: Optional[int] = None
+    maintenance_state: Optional[str] = None
+
 class VehicleResponse(VehicleBase):
     id: int
     created_at: datetime
