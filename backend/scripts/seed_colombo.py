@@ -25,8 +25,73 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.core.security import get_password_hash
 from app.models.user import User, UserRole
-from app.models.shipment import DispatchTrip
-from app.models.driver import DriverTrip, DeliveryStop, DeliveryStopStatus, DriverTripStatus
+from app.models.shipment import DispatchTrip, Shipment, ShipmentStatus
+from app.models.order import Order, OrderItem, OrderStatus
+from app.models.driver import (
+    DriverTrip, DeliveryStop, DeliveryStopStatus, DriverTripStatus, ProofOfDelivery, IssueReport,
+)
+
+# Order delivered at each stop (keyed by stop sequence) so the driver's
+# at-stop screens can show what goods are being handed over.
+COLOMBO_ORDERS = {
+    1: {
+        "order_number": "CMB-ORD-001", "brand": "Fresh", "temperature_zone": "Chilled",
+        "delivery_window": "05:00-07:30", "weight_kg": 412.0, "volume_m3": 2.4,
+        "items": [("FR-MLK-1L", "Fresh milk 1L (crate of 12)", 8),
+                  ("FR-YGT-80", "Set yoghurt 80g (tray of 24)", 6),
+                  ("FR-CHK-1K", "Chicken breast 1kg", 15)],
+    },
+    2: {
+        "order_number": "CMB-ORD-002", "brand": "Fresh", "temperature_zone": "Ambient",
+        "delivery_window": "05:30-08:00", "weight_kg": 538.5, "volume_m3": 3.1,
+        "items": [("FR-RCE-5K", "Samba rice 5kg", 30),
+                  ("FR-DAL-1K", "Red dhal 1kg", 40),
+                  ("FR-OIL-1L", "Coconut oil 1L", 24)],
+    },
+    3: {
+        "order_number": "CMB-ORD-003", "brand": "Fresh", "temperature_zone": "Ambient",
+        "delivery_window": "04:00-07:45", "weight_kg": 296.0, "volume_m3": 1.9,
+        "items": [("FR-TEA-400", "Ceylon tea 400g", 48),
+                  ("FR-BIS-200", "Cream crackers 200g (carton)", 20),
+                  ("FR-SUG-1K", "White sugar 1kg", 35)],
+    },
+}
+
+
+def attach_order(db: Session, stop: DeliveryStop, dispatch: DispatchTrip):
+    """Create an order + items + shipment for a stop and link it (skips if linked)."""
+    spec = COLOMBO_ORDERS.get(stop.sequence)
+    if stop.shipment_id or not spec:
+        return
+    order = db.query(Order).filter(Order.order_number == spec["order_number"]).first()
+    if not order:
+        order = Order(
+            order_number=spec["order_number"],
+            client_name=stop.customer_name,
+            destination_address=stop.address,
+            status=OrderStatus.DISPATCHED,
+            brand=spec["brand"],
+            district="Colombo",
+            temperature_zone=spec["temperature_zone"],
+            delivery_window=spec["delivery_window"],
+            weight_kg=spec["weight_kg"],
+            volume_m3=spec["volume_m3"],
+            units=sum(q for _, _, q in spec["items"]),
+            notes=stop.notes,
+            items=[OrderItem(sku=sku, item_name=name, quantity=qty, unit_price=0.0)
+                   for sku, name, qty in spec["items"]],
+        )
+        db.add(order)
+        db.flush()
+    shipment = Shipment(
+        tracking_number=f"TRK-{spec['order_number']}",
+        order_id=order.id,
+        dispatch_trip_id=dispatch.id,
+        status=ShipmentStatus.OUT_FOR_DELIVERY,
+    )
+    db.add(shipment)
+    db.flush()
+    stop.shipment_id = shipment.id
 
 # â”€â”€â”€ Colombo Store Locations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Real coordinates verified on OpenStreetMap / MapLibre
@@ -69,8 +134,17 @@ def reset_colombo(db: Session):
     if dispatch:
         driver_trip = db.query(DriverTrip).filter(DriverTrip.dispatch_trip_id == dispatch.id).first()
         if driver_trip:
+            stop_ids = [s.id for s in driver_trip.stops]
+            if stop_ids:
+                db.query(ProofOfDelivery).filter(ProofOfDelivery.stop_id.in_(stop_ids)).delete(synchronize_session=False)
+            db.query(IssueReport).filter(IssueReport.driver_trip_id == driver_trip.id).delete()
             db.query(DeliveryStop).filter(DeliveryStop.driver_trip_id == driver_trip.id).delete()
             db.delete(driver_trip)
+        db.query(Shipment).filter(Shipment.dispatch_trip_id == dispatch.id).delete()
+        for spec in COLOMBO_ORDERS.values():
+            order = db.query(Order).filter(Order.order_number == spec["order_number"]).first()
+            if order:
+                db.delete(order)
         db.delete(dispatch)
         db.commit()
         print("âœ“ Existing Colombo data removed.")
@@ -138,6 +212,11 @@ def seed_colombo(db: Session):
     existing = db.query(DeliveryStop).filter(DeliveryStop.driver_trip_id == driver_trip.id).count()
     if existing > 0:
         print(f"  {existing} stops already exist â€” skipping stop creation.")
+        # Backfill order details onto stops seeded before orders were added
+        for stop in driver_trip.stops:
+            attach_order(db, stop, dispatch)
+        db.commit()
+        print("  Linked order details to existing stops.")
     else:
         stops = [
             DeliveryStop(
@@ -148,6 +227,9 @@ def seed_colombo(db: Session):
             for stop_data in COLOMBO_STOPS
         ]
         db.add_all(stops)
+        db.flush()
+        for stop in stops:
+            attach_order(db, stop, dispatch)
         db.commit()
         print(f"âœ“ Created {len(stops)} delivery stops:")
         for s in COLOMBO_STOPS:

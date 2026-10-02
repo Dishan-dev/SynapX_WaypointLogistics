@@ -1,9 +1,11 @@
+import json
 from typing import List, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus
 from app.models.shipment import DispatchTrip
+from app.schemas.driver import DeliveryStopRead
 
 
 def get_today_trips(db: Session, driver_id: int) -> List[DriverTrip]:
@@ -45,7 +47,7 @@ def complete_trip(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
         raise HTTPException(status_code=400, detail="Trip is not started")
     
     # Verify all stops are in terminal state
-    terminal_states = [DeliveryStopStatus.DELIVERED, DeliveryStopStatus.FAILED, DeliveryStopStatus.RESCHEDULED]
+    terminal_states = [DeliveryStopStatus.DELIVERED, DeliveryStopStatus.PARTIAL, DeliveryStopStatus.FAILED, DeliveryStopStatus.RESCHEDULED]
     for stop in trip.stops:
         if stop.status not in terminal_states:
             raise HTTPException(status_code=400, detail=f"Stop {stop.id} is not in a terminal state")
@@ -67,6 +69,32 @@ def get_stop(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
     return stop
 
 
+def get_stop_detail(db: Session, stop_id: int, driver_id: int) -> dict:
+    """Stop fields plus the order (and its items) delivered at this stop."""
+    stop = get_stop(db, stop_id, driver_id)
+    detail = DeliveryStopRead.model_validate(stop).model_dump()
+    detail["total_stops"] = len(stop.driver_trip.stops)
+    detail["trip_status"] = stop.driver_trip.status
+
+    order = stop.shipment.order if stop.shipment else None
+    if order:
+        detail["order"] = {
+            "order_number": order.order_number,
+            "brand": order.brand,
+            "temperature_zone": order.temperature_zone,
+            "delivery_window": order.delivery_window,
+            "units": order.units,
+            "weight_kg": order.weight_kg,
+            "volume_m3": order.volume_m3,
+            "notes": order.notes,
+            "items": [
+                {"sku": i.sku, "item_name": i.item_name, "quantity": i.quantity_sent or i.quantity}
+                for i in order.items
+            ],
+        }
+    return detail
+
+
 def record_arrival(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
     stop = get_stop(db, stop_id, driver_id)
     # Idempotent: if already arrived, just return the stop as-is
@@ -84,13 +112,17 @@ def record_arrival(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
 
 def record_outcome(db: Session, stop_id: int, outcome: DeliveryStopStatus, driver_id: int) -> DeliveryStop:
     stop = get_stop(db, stop_id, driver_id)
-    if stop.status not in [DeliveryStopStatus.ARRIVED, DeliveryStopStatus.PENDING]:
-        raise HTTPException(status_code=400, detail="Must arrive at stop first (or be pending)")
-        
+    outcome = DeliveryStopStatus(outcome)
     valid_outcomes = [DeliveryStopStatus.DELIVERED, DeliveryStopStatus.FAILED, DeliveryStopStatus.PARTIAL, DeliveryStopStatus.RESCHEDULED]
     if outcome not in valid_outcomes:
         raise HTTPException(status_code=400, detail="Invalid outcome")
-        
+
+    # Idempotent; the driver may also change the outcome until POD is submitted
+    if stop.status == outcome:
+        return stop
+    if stop.pod is not None:
+        raise HTTPException(status_code=400, detail="Proof of delivery already submitted for this stop")
+
     stop.status = outcome
     db.commit()
     db.refresh(stop)
@@ -102,15 +134,21 @@ def submit_pod(db: Session, stop_id: int, pod_data: dict, driver_id: int) -> Pro
     if stop.status != DeliveryStopStatus.DELIVERED and stop.status != DeliveryStopStatus.PARTIAL:
         raise HTTPException(status_code=400, detail="Outcome must be delivered or partial before POD")
         
+    # Idempotent: a retried submit (e.g. offline replay) returns the stored POD
     existing_pod = db.query(ProofOfDelivery).filter(ProofOfDelivery.stop_id == stop.id).first()
     if existing_pod:
-        raise HTTPException(status_code=400, detail="POD already exists for this stop")
-        
+        return existing_pod
+
+    # photo_url always holds a JSON array of URLs (a POD can have several photos)
+    photo_url = pod_data.get("photo_url")
+    if photo_url and not photo_url.startswith("["):
+        photo_url = json.dumps([photo_url])
+
     pod = ProofOfDelivery(
         stop_id=stop.id,
         recipient_name=pod_data["recipient_name"],
         signature_data=pod_data.get("signature_data"),
-        photo_url=pod_data.get("photo_url"),
+        photo_url=photo_url,
         notes=pod_data.get("notes")
     )
     db.add(pod)

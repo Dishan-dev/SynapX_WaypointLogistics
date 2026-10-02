@@ -7,7 +7,7 @@ from app.api import deps
 from app.models.user import User
 from app.schemas.auth import UserRead
 from app.schemas.driver import (
-    DriverTripSummary, DriverTripDetail, DeliveryStopRead, ProofOfDeliveryCreate, ProofOfDeliveryRead
+    DriverTripSummary, DriverTripDetail, DeliveryStopRead, DeliveryStopDetail, ProofOfDeliveryCreate, ProofOfDeliveryRead
 )
 from app.services import driver_service
 from app.models.driver import DeliveryStopStatus
@@ -50,6 +50,16 @@ def start_trip(
 ):
     """Sets DriverTrip.status = "started", started_at = now()"""
     return driver_service.start_trip(db, trip_id, current_user.id)
+
+@router.get("/stops/{stop_id}", response_model=DeliveryStopDetail)
+def get_stop_detail(
+    stop_id: int,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_driver)
+):
+    """Returns a stop with the order (items, window, temperature) delivered there."""
+    return driver_service.get_stop_detail(db, stop_id, current_user.id)
+
 
 @router.patch("/stops/{stop_id}/arrive", response_model=DeliveryStopRead)
 def record_arrival(

@@ -44,6 +44,31 @@ class DeliveryStopRead(DeliveryStopBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StopOrderItem(BaseModel):
+    sku: str
+    item_name: str
+    quantity: int
+
+
+class StopOrderInfo(BaseModel):
+    order_number: str
+    brand: Optional[str] = None
+    temperature_zone: Optional[str] = None
+    delivery_window: Optional[str] = None
+    units: Optional[int] = None
+    weight_kg: Optional[float] = None
+    volume_m3: Optional[float] = None
+    notes: Optional[str] = None
+    items: List[StopOrderItem] = []
+
+
+class DeliveryStopDetail(DeliveryStopRead):
+    """A stop plus the order being delivered there (for the at-stop screens)."""
+    total_stops: int
+    trip_status: DriverTripStatus
+    order: Optional[StopOrderInfo] = None
+
+
 class DriverTripBase(BaseModel):
     status: DriverTripStatus = DriverTripStatus.ASSIGNED
 
