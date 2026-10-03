@@ -143,8 +143,9 @@ def bulk_allocate_orders(req: BulkAllocateRequest, db: Session = Depends(deps.ge
         raise HTTPException(status_code=404, detail="No matching orders found")
 
     # Up-front validation
+    from app.services.order_service import TRANSITIONS
     for order in orders:
-        if order.status != OrderStatus.ALLOCATED and OrderStatus.ALLOCATED not in order_service.TRANSITIONS.get(order.status, set()):
+        if order.status != OrderStatus.ALLOCATED and OrderStatus.ALLOCATED not in TRANSITIONS.get(order.status, set()):
             raise HTTPException(
                 status_code=409,
                 detail=f"{order.order_number} can't move from {order.status.value.lower()} to allocated."
