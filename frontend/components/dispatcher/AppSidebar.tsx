@@ -56,7 +56,7 @@ export function AppSidebar() {
       <SidebarContent className="p-2 pt-4">
         <SidebarMenu>
           {navItems.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const isActive = pathname === item.href || (item.href !== "/dispatcher" && pathname.startsWith(`${item.href}/`));
             return (
               <SidebarMenuItem key={item.name}>
                 <SidebarMenuButton 
@@ -65,7 +65,7 @@ export function AppSidebar() {
                   tooltip={item.name}
                   className="font-medium text-[13px] h-9"
                 >
-                  <Link href={item.href}>
+                  <Link href={item.href} aria-current={isActive ? "page" : undefined}>
                     <item.icon className="size-4" />
                     <span>{item.name}</span>
                   </Link>

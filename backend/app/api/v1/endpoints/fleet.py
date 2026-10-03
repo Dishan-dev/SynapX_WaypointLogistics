@@ -1,11 +1,14 @@
 from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import IntegrityError
+from datetime import timezone
 
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_db, require_dispatcher_or_admin
 from app.models.user import User
-from app.models.fleet import Vehicle, DriverProfile
-from app.schemas.fleet import VehicleCreate, VehicleResponse, DriverProfileCreate, DriverProfileResponse
+from app.models.fleet import Vehicle, DriverProfile, VehicleStatus
+from app.models.allocation import Allocation, AllocationStatus
+from app.schemas.fleet import VehicleCreate, VehicleUpdate, VehicleResponse, DriverProfileCreate, DriverProfileResponse
 
 router = APIRouter()
 
@@ -28,7 +31,8 @@ def get_vehicles(
 @router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
 def create_vehicle(
     vehicle_in: VehicleCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _: User = Depends(require_dispatcher_or_admin),
 ) -> Any:
     """
     Create new vehicle.
@@ -41,7 +45,45 @@ def create_vehicle(
         )
     vehicle = Vehicle(**vehicle_in.model_dump())
     db.add(vehicle)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="This vehicle code is already in use.")
+    db.refresh(vehicle)
+    return vehicle
+
+
+@router.patch("/vehicles/{vehicle_id}", response_model=VehicleResponse)
+def update_vehicle(
+    vehicle_id: int,
+    vehicle_in: VehicleUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_dispatcher_or_admin),
+) -> Any:
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).with_for_update().first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    def utc_naive(value):
+        return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
+    if utc_naive(vehicle.updated_at) != utc_naive(vehicle_in.expected_updated_at):
+        raise HTTPException(status_code=409, detail="Vehicle changed since you opened it. Close the form, refresh, and try again.")
+    changes = vehicle_in.model_dump(exclude_unset=True, exclude={"expected_updated_at"})
+    changes = {key: value for key, value in changes.items() if getattr(vehicle, key) != value}
+    protected = {"status", "code", "vehicle_type", "capacity_kg", "capacity_vol_m3", "temperature_mode", "depot_name"}
+    if protected.intersection(changes):
+        active = db.query(Allocation.id).filter(Allocation.vehicle_id == vehicle_id, Allocation.status.notin_([AllocationStatus.COMPLETED, AllocationStatus.CANCELLED])).first()
+        if active or vehicle.status in (VehicleStatus.ALLOCATED, VehicleStatus.LOADING):
+            raise HTTPException(status_code=409, detail="This vehicle is assigned to operational work. Complete or cancel its allocation before changing specifications or availability.")
+    if "code" in changes and db.query(Vehicle.id).filter(Vehicle.code == changes["code"], Vehicle.id != vehicle_id).first():
+        raise HTTPException(status_code=409, detail="This vehicle code is already in use.")
+    for key, value in changes.items():
+        setattr(vehicle, key, value)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="The vehicle could not be saved because its code conflicts with another vehicle.")
     db.refresh(vehicle)
     return vehicle
 
