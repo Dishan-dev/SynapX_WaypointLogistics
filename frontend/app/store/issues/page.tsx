@@ -27,17 +27,25 @@ import { StorePill, StorePillTone } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
 import { getStoredIssues, fetchStoreIssues, saveIssue, StoreIssue } from "@/services/issues-store";
 
-export default function ExceptionsAndIssuesPage() {
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+
+function ExceptionsAndIssuesContent() {
+  const searchParams = useSearchParams();
+  const initialOrderParam = searchParams.get("order") || "";
+  const initialSearchParam = searchParams.get("search") || "";
+  const autoOpenReport = searchParams.get("report") === "true" || !!initialOrderParam;
+
   const [issues, setIssues] = useState<StoreIssue[]>([]);
   const [selectedTab, setSelectedTab] = useState<"all" | "open" | "under_review" | "resolved">("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialSearchParam || initialOrderParam);
   const [typeFilter, setTypeFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("30");
   const [selectedIssue, setSelectedIssue] = useState<StoreIssue | null>(null);
 
   // Report Modal State
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newOrderId, setNewOrderId] = useState("ORD0000001");
+  const [showCreateModal, setShowCreateModal] = useState(autoOpenReport);
+  const [newOrderId, setNewOrderId] = useState(initialOrderParam || "ORD0000001");
   const [newItemName, setNewItemName] = useState("");
   const [newItemSku, setNewItemSku] = useState("");
   const [newType, setNewType] = useState<"Damaged Goods" | "Missing Items" | "Quantity Mismatch" | "Temperature Breach">("Damaged Goods");
@@ -66,6 +74,16 @@ export default function ExceptionsAndIssuesPage() {
     window.addEventListener("waypoint_issues_updated", handleUpdate);
     return () => window.removeEventListener("waypoint_issues_updated", handleUpdate);
   }, []);
+
+  useEffect(() => {
+    if (initialOrderParam) {
+      setNewOrderId(initialOrderParam);
+      setShowCreateModal(true);
+    }
+    if (initialSearchParam) {
+      setSearchQuery(initialSearchParam);
+    }
+  }, [initialOrderParam, initialSearchParam]);
 
   const openCount = issues.filter((i) => i.status === "open").length;
   const underReviewCount = issues.filter((i) => i.status === "under_review").length;
@@ -708,3 +726,12 @@ export default function ExceptionsAndIssuesPage() {
     </div>
   );
 }
+
+export default function ExceptionsAndIssuesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground text-xs">Loading issues...</div>}>
+      <ExceptionsAndIssuesContent />
+    </Suspense>
+  );
+}
+
