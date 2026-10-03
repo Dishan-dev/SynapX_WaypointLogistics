@@ -1,31 +1,24 @@
 """Add dedicated outlet directory, contacts and receiving windows.
 
 Revision ID: c82d14e09f6a
-Revises: af60e6fa37a0
+Revises: 0006_run_dispatch_trip_unique
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "c82d14e09f6a"
-down_revision = "af60e6fa37a0"
+down_revision = "0006_run_dispatch_trip_unique"
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        "outlets",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("code", sa.String(30), nullable=False),
-        sa.Column("name", sa.String(255), nullable=False),
-        sa.Column("address", sa.String(500), nullable=False),
-        sa.Column("district", sa.String(100)),
-        sa.Column("active", sa.Boolean(), nullable=False),
-        sa.Column("delivery_restrictions", sa.Text()),
-        sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), nullable=False),
-    )
-    op.create_index("ix_outlets_code", "outlets", ["code"], unique=True)
+    # Loader foundation already owns outlets and its seeded reference fields.
+    op.add_column("outlets", sa.Column("address", sa.String(500), nullable=True))
+    op.add_column("outlets", sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.true()))
+    op.add_column("outlets", sa.Column("delivery_restrictions", sa.Text(), nullable=True))
+    op.add_column("outlets", sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()))
+    op.add_column("outlets", sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()))
     op.create_table(
         "outlet_contacts",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -53,5 +46,8 @@ def downgrade():
     op.drop_table("outlet_receiving_windows")
     op.drop_index("ix_outlet_contacts_outlet_id", table_name="outlet_contacts")
     op.drop_table("outlet_contacts")
-    op.drop_index("ix_outlets_code", table_name="outlets")
-    op.drop_table("outlets")
+    op.drop_column("outlets", "updated_at")
+    op.drop_column("outlets", "created_at")
+    op.drop_column("outlets", "delivery_restrictions")
+    op.drop_column("outlets", "active")
+    op.drop_column("outlets", "address")
