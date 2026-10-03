@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from datetime import datetime
 from typing import Optional
 from app.models.fleet import VehicleStatus
@@ -44,21 +44,39 @@ class VehicleCreate(VehicleBase):
 
 
 class VehicleUpdate(BaseModel):
-    code: Optional[str] = None
-    vehicle_type: Optional[str] = None
-    capacity_kg: Optional[float] = None
-    capacity_vol_m3: Optional[float] = None
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    expected_updated_at: datetime
+    code: Optional[str] = Field(default=None, min_length=1, max_length=20)
+    vehicle_type: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    capacity_kg: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    capacity_vol_m3: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
+    temperature_mode: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    depot_name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    weekly_fuel_status: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    maintenance_state: Optional[str] = Field(default=None, max_length=100)
     status: Optional[VehicleStatus] = None
-    temperature_mode: Optional[str] = None
-    depot_name: Optional[str] = None
-    weekly_fuel_status: Optional[str] = None
-    trips_today: Optional[int] = None
-    trips_planned: Optional[int] = None
-    maintenance_state: Optional[str] = None
+    assigned_driver_id: Optional[int] = None
     fuel_type: Optional[str] = None
     km_per_l: Optional[float] = None
     weekly_fuel_quota_l: Optional[float] = None
-    assigned_driver_id: Optional[int] = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, v):
+        if isinstance(v, str):
+            return v.upper()
+        return v
+
+    @model_validator(mode="after")
+    def valid_patch(self):
+        fields = self.model_fields_set - {"expected_updated_at"}
+        if not fields:
+            raise ValueError("Provide at least one field to update")
+        if any(getattr(self, name) is None for name in fields - {"maintenance_state", "assigned_driver_id"}):
+            raise ValueError("Only maintenance_state may be cleared")
+        if "status" in fields and self.status not in (VehicleStatus.AVAILABLE, VehicleStatus.UNAVAILABLE):
+            raise ValueError("Allocation and loading statuses are managed by their workflows")
+        return self
 
 class VehicleResponse(VehicleBase):
     id: int
@@ -67,6 +85,12 @@ class VehicleResponse(VehicleBase):
     assigned_driver_name: Optional[str] = None
     assigned_driver_phone: Optional[str] = None
     
+    @field_serializer("status")
+    def serialize_status(self, v):
+        if hasattr(v, "value"):
+            return v.value.lower()
+        return str(v).lower()
+
     model_config = ConfigDict(from_attributes=True)
 
 class VehicleDriverAssignRequest(BaseModel):

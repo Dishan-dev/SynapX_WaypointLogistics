@@ -4,7 +4,8 @@ from app.core.config import settings
 def payload(code="OUT-1"):
     return {
         "code": code, "name": "Kandy Store", "address": "5 Main Street", "district": "Kandy",
-        "active": True, "delivery_restrictions": "Use rear loading bay; no large trucks",
+        "active": True, "brand": "fresh", "depot": "kandy", "dock_type": "rear_dock", "van_only": False,
+        "delivery_restrictions": "Use rear loading bay; no large trucks",
         "contacts": [{"name": "Nimal", "role": "Receiver", "phone": "+94771234567", "email": "nimal@example.com"}],
         "receiving_windows": [{"weekday": 0, "opens_at": "09:00", "closes_at": "12:00"}, {"weekday": 0, "opens_at": "13:00", "closes_at": "17:00"}],
     }
@@ -15,7 +16,12 @@ def test_create_list_update_and_conflict(client):
     assert response.status_code == 201, response.text
     created = response.json()
     assert len(created["contacts"]) == 1 and len(created["receiving_windows"]) == 2
-    assert client.get("/api/v1/outlets/").json()[0]["code"] == "OUT-1"
+    listed = client.get("/api/v1/outlets/").json()[0]
+    assert listed["code"] == "OUT-1"
+    assert listed["address"] == "5 Main Street"
+    assert listed["active"] is True
+    assert len(listed["contacts"]) == 1
+    assert len(listed["receiving_windows"]) == 2
     assert client.get(f"/api/v1/outlets/{created['id']}").status_code == 200
     updated = payload()
     updated.update(expected_updated_at=created["updated_at"], active=False, contacts=[{"name": "Amal", "email": "amal@example.com"}], receiving_windows=[])
