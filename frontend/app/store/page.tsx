@@ -5,7 +5,7 @@ import { StoreMetricCard } from "@/components/store/store-cards";
 import { formatTime, greeting } from "@/components/store/format";
 import { currentManager, mockIssues } from "@/components/store/mock-data";
 import { STORE_DATA_SOURCE, storeNow } from "@/components/store/api/config";
-import { getStoreOrders } from "@/components/store/api/store-data";
+import { getCurrentOutlet, getStoreOrders } from "@/components/store/api/store-data";
 import { getDashboardData } from "@/components/store/dashboard/dashboard-data";
 import { UpcomingDeliveries } from "@/components/store/dashboard/upcoming-deliveries";
 import { RecentRequests } from "@/components/store/dashboard/recent-requests";
@@ -16,7 +16,8 @@ export default async function StoreDashboardPage() {
   const now = storeNow();
   // Delivery issues belong to Dev B's receipts flow; there's no API for them yet.
   const issues = STORE_DATA_SOURCE === "api" ? [] : mockIssues;
-  const data = getDashboardData(await getStoreOrders(), issues);
+  const [orders, outlet] = await Promise.all([getStoreOrders(), getCurrentOutlet().catch(() => null)]);
+  const data = getDashboardData(orders, issues);
   const next = data.nextDelivery;
   const nextEta = next?.eta ? formatTime(next.eta) : null;
   const issueCount = data.openIssues.length;
@@ -90,10 +91,13 @@ export default async function StoreDashboardPage() {
       />
 
       <div className="min-[1400px]:col-span-2 min-[1400px]:row-start-3">
-        <UpcomingDeliveries orders={data.upcomingDeliveries} now={now} />
+        <UpcomingDeliveries orders={data.upcomingDeliveries} outlet={outlet} now={now} />
       </div>
 
-      <RecentRequests orders={data.recentRequests} className="min-[1400px]:col-start-1 min-[1400px]:row-start-4" />
+      <RecentRequests
+        orders={data.recentRequests}
+        outlet={outlet}
+        className="min-[1400px]:col-start-1 min-[1400px]:row-start-4" />
     </div>
   );
 }

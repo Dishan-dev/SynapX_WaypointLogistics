@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { addDays, eachDayOfInterval, format } from "date-fns";
 import {
   currentOutlet,
@@ -34,11 +35,14 @@ import {
 
 const live = () => STORE_DATA_SOURCE === "api";
 
-/** The signed-in manager's outlet. Its brand decides the catalogue and the ordering rules. */
-export async function getCurrentOutlet(): Promise<StoreOutlet> {
+/**
+ * The signed-in manager's outlet. Its brand decides the catalogue and the ordering rules.
+ * Cached per request, so the layout and the page share one call.
+ */
+export const getCurrentOutlet = cache(async (): Promise<StoreOutlet> => {
   if (!live()) return currentOutlet;
   return toStoreOutlet(await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`));
-}
+});
 
 /** Only the items the outlet's brand can order (fresh_items, style_items or tech_items). */
 export async function getCatalogue(): Promise<CatalogueItem[]> {

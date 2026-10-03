@@ -1,24 +1,22 @@
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  brandLabels,
-  currentManager,
-  currentOutlet,
-} from "@/components/store/mock-data";
+import { brandLabels, currentManager, type StoreOutlet } from "@/components/store/mock-data";
 import { NotificationBell } from "@/components/store/notifications/notification-bell";
 
 // Desktop top bar (Figma: Components / Top Bar). Hidden on mobile, where StoreMobileAppBar takes over.
-export function StoreTopBar() {
+export function StoreTopBar({ outlet }: { outlet: StoreOutlet | null }) {
   return (
     <header className="hidden shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-6 py-4 md:flex lg:gap-6 lg:px-10">
       <div className="flex min-w-0 flex-1 items-center gap-4">
         <p className="truncate text-sm font-bold text-foreground">
-          {currentOutlet.code} — {brandLabels[currentOutlet.brand]} · {currentOutlet.district}
+          {outlet ? `${outlet.code} — ${brandLabels[outlet.brand]} · ${outlet.district}` : "Outlet unavailable"}
         </p>
-        <span className="hidden shrink-0 rounded-full border border-border bg-background px-3 py-1.5 text-sm font-medium text-muted-foreground xl:inline">
-          Delivery window · {currentOutlet.windowStart} – {currentOutlet.windowEnd}
-        </span>
+        {outlet && (
+          <span className="hidden shrink-0 rounded-full border border-border bg-background px-3 py-1.5 text-sm font-medium text-muted-foreground xl:inline">
+            Delivery window · {outlet.windowStart} – {outlet.windowEnd}
+          </span>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-4">

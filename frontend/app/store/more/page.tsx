@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { currentOutlet } from "@/components/store/mock-data";
+import { getCurrentOutlet } from "@/components/store/api/store-data";
 import { UnreadCountText } from "@/components/store/notifications/notification-bell";
 
 // Mobile "More" tab (Figma: Mobile / 12 More): pages that don't fit in the bottom nav.
-const moreLinks = [
+const moreLinks = (outletCode: string | undefined) => [
   {
     title: "Shortfalls & Back-orders",
     description: "Items not sent or received in full",
@@ -18,7 +18,7 @@ const moreLinks = [
   },
   {
     title: "Outlet Settings",
-    description: `${currentOutlet.code} details and delivery setup`,
+    description: `${outletCode ?? "Outlet"} details and delivery setup`,
     href: "/store/settings",
   },
   {
@@ -28,13 +28,14 @@ const moreLinks = [
   },
 ];
 
-export default function StoreMorePage() {
+export default async function StoreMorePage() {
+  const outlet = await getCurrentOutlet().catch(() => null);
   return (
     <div className="flex flex-col gap-6">
       <h1 className="sr-only">More</h1>
       <Card className="gap-0 py-0">
         <ul className="divide-y divide-border">
-          {moreLinks.map((link) => (
+          {moreLinks(outlet?.code).map((link) => (
             <li key={link.href}>
               <Link
                 href={link.href}

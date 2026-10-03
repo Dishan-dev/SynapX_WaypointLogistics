@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { currentManager, currentOutlet, OUTLET_UNLOADING } from "@/components/store/mock-data";
+import { currentManager, OUTLET_UNLOADING } from "@/components/store/mock-data";
 import { storeNow } from "@/components/store/api/config";
-import { getStoreOrder } from "@/components/store/api/store-data";
+import { getCurrentOutlet, getStoreOrder } from "@/components/store/api/store-data";
 import { RequestDetailView } from "@/components/store/request-detail/request-detail-view";
 
 export async function generateMetadata({ params }: PageProps<"/store/requests/[orderNumber]">): Promise<Metadata> {
@@ -18,13 +18,13 @@ export default async function RequestDetailPage({
   const { orderNumber } = await params;
   // ?note=SKU-014 opens that item's dispatcher note (linked from Notifications).
   const { note } = await searchParams;
-  const order = await getStoreOrder(orderNumber);
+  const [order, outlet] = await Promise.all([getStoreOrder(orderNumber), getCurrentOutlet()]);
   if (!order) notFound();
 
   return (
     <RequestDetailView
       order={order}
-      outlet={currentOutlet}
+      outlet={outlet}
       manager={currentManager}
       unloading={OUTLET_UNLOADING}
       now={storeNow()}
