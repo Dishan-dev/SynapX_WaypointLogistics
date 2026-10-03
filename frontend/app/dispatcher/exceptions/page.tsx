@@ -8,60 +8,49 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetTrigger } from "@/components/ui/sheet";
 import { Choice, DataGate, ModuleHeader, Notice, PagedTable, Panel } from "@/components/dispatcher/operations/shared";
 import { downloadCsv } from "@/components/dispatcher/operations/data";
-import { exceptionDate, fetchShipments, shipmentExceptions, type ShipmentRecord } from "@/components/dispatcher/operations/exceptions";
+import { exceptionDate, fetchOperationExceptions, type OperationException } from "@/components/dispatcher/operations/exceptions";
 
-type Exception = ReturnType<typeof shipmentExceptions>[number];
-
-function ExceptionDetails({ item }: { item: Exception }) {
-  const s = item.shipment;
-  const trip = s.dispatch_trip;
-  return <Sheet><SheetTrigger asChild><Button variant="outline" aria-label={`View ${s.tracking_number}`}>View</Button></SheetTrigger><SheetContent className="w-full overflow-y-auto sm:max-w-xl">
-    <SheetHeader><SheetTitle>{s.tracking_number}</SheetTitle><SheetDescription>{item.label}</SheetDescription></SheetHeader>
-    <div className="space-y-5 px-4 pb-6"><p className="text-sm">{item.reason}</p>
-      <dl className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">{[
-        ["Order ID", s.order_id], ["Shipment status", s.status.replaceAll("_", " ")], ["Last known location", s.current_location || "Not recorded"], ["Last shipment update", exceptionDate(s.last_updated)],
-        ["Trip", trip?.trip_code || "Not assigned"], ["Driver", trip?.driver_name || "Not recorded"], ["Vehicle", trip?.vehicle_number || "Not recorded"], ["Trip destination", trip?.destination || "Not recorded"], ["Trip ETA", exceptionDate(trip?.estimated_arrival)], ["Actual trip arrival", exceptionDate(trip?.actual_arrival)],
-      ].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words font-medium">{value}</dd></div>)}</dl>
-      <Notice>Times use Asia/Colombo. Last update is a shipment update time, not the time an exception began. Contact the driver through your existing process. Acknowledgements, owners, notes, and resolution history are not stored yet.</Notice>
+function ExceptionDetails({ item }: { item: OperationException }) {
+  return <Sheet><SheetTrigger asChild><Button variant="outline" aria-label={`View ${item.title} ${item.id}`}>View</Button></SheetTrigger><SheetContent className="data-[side=right]:w-full overflow-y-auto sm:max-w-xl">
+    <SheetHeader><SheetTitle>{item.title}</SheetTitle><SheetDescription className="capitalize">{item.source} · {item.status.replaceAll("_", " ")}</SheetDescription></SheetHeader>
+    <div className="space-y-5 px-4 pb-6 text-sm"><p>{item.detail}</p><dl className="grid grid-cols-2 gap-4">{[
+      ["Source", item.source], ["Reference", item.reference || "Not recorded"], ["Trip", item.trip_code || "Not linked"], ["Driver", item.driver_name || "Not recorded"], ["Recorded at", exceptionDate(item.reported_at)], ["Status", item.status.replaceAll("_", " ")],
+    ].map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-words font-medium capitalize">{value}</dd></div>)}</dl>
+      <Notice>Reported incidents come from their source workflow. Passed ETAs, stale run updates, and missing POD are checks that need confirmation. Decisions, acknowledgements, and resolution remain in their respective workflows.</Notice>
     </div>
   </SheetContent></Sheet>;
 }
 
 export default function ExceptionsPage() {
-  const [data, setData] = useState<ShipmentRecord[]>([]);
+  const [data, setData] = useState<OperationException[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [checked, setChecked] = useState<number | null>(null);
+  const [checked, setChecked] = useState<string | null>(null);
   const [request, setRequest] = useState(0);
   const [search, setSearch] = useState("");
-  const [kind, setKind] = useState("all");
+  const [source, setSource] = useState("all");
   const [page, setPage] = useState(1);
   useEffect(() => {
     const controller = new AbortController();
-    fetchShipments(AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])).then((records) => {
-      if (!controller.signal.aborted) { setData(records); setChecked(Date.now()); }
+    fetchOperationExceptions(AbortSignal.any([controller.signal, AbortSignal.timeout(30000)])).then((rows) => {
+      if (!controller.signal.aborted) { setData(rows); setChecked(new Date().toISOString()); }
     }).catch((cause: unknown) => {
-      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Shipments could not be loaded.");
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Exceptions could not be loaded.");
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [request]);
   function refresh() { setLoading(true); setError(null); setRequest((n) => n + 1); }
-  const exceptions = shipmentExceptions(data, checked ?? 0);
-  const filtered = exceptions.filter(({ shipment: s, kind: type }) => (kind === "all" || kind === type) && [s.tracking_number, String(s.order_id), s.current_location, s.dispatch_trip?.trip_code, s.dispatch_trip?.driver_name, s.dispatch_trip?.vehicle_number, s.dispatch_trip?.destination].filter(Boolean).join(" ").toLowerCase().includes(search.trim().toLowerCase()));
+  const filtered = data.filter((item) => (source === "all" || item.source === source) && [item.title, item.detail, item.reference, item.trip_code, item.driver_name].filter(Boolean).join(" ").toLowerCase().includes(search.trim().toLowerCase()));
   return <div className="space-y-6">
-    <ModuleHeader title="Exceptions" description="Review failed shipments and trip arrival risks from current shipment records." loading={loading} refresh={refresh}>
-      <Button variant="outline" disabled={loading || !!error || !filtered.length} onClick={() => downloadCsv("shipment-exceptions.csv", [["Tracking number", "Order ID", "Exception", "Shipment status", "Trip", "Driver", "Vehicle", "Last location", "Trip ETA (Asia/Colombo)", "Last update (Asia/Colombo)", "Checked at (UTC)"], ...filtered.map(({ shipment: s, label }) => [s.tracking_number, s.order_id, label, s.status, s.dispatch_trip?.trip_code ?? "", s.dispatch_trip?.driver_name ?? "", s.dispatch_trip?.vehicle_number ?? "", s.current_location ?? "", exceptionDate(s.dispatch_trip?.estimated_arrival), exceptionDate(s.last_updated), new Date(checked!).toISOString()])])}>Export CSV</Button>
+    <ModuleHeader title="Exceptions" description="Review current loader, driver and shipment issues in one dispatcher view." loading={loading} refresh={refresh}>
+      <Button variant="outline" disabled={loading || !!error || !filtered.length} onClick={() => downloadCsv("dispatcher-exceptions.csv", [["Source", "Exception", "Severity", "Status", "Reference", "Trip", "Driver", "Detail", "Recorded (Asia/Colombo)", "Checked (UTC)"], ...filtered.map((item) => [item.source, item.title, item.severity, item.status, item.reference ?? "", item.trip_code ?? "", item.driver_name ?? "", item.detail, exceptionDate(item.reported_at), checked ?? ""])])}>Export CSV</Button>
     </ModuleHeader>
-    <Notice>This is a read-only snapshot, checked on refresh. Failed status takes priority over a passed trip ETA. Missing ETAs are not treated as late. Exception ownership, resolution, temperature incidents, and loading shortfalls need additional data.</Notice>
+    <Notice>Loader shortfalls, driver issue reports and SOS alerts are recorded incidents. Failed shipments also appear here. Passed trip ETAs, stale run updates and delivered stops without POD are checks for the dispatcher, not confirmed offline or delivery failures.</Notice>
     <DataGate loading={loading} error={error} retry={refresh}>
-      <section aria-label="Exception summary" className="grid gap-4 sm:grid-cols-3"><MetricCard label="Shipments checked" value={data.length} /><MetricCard label="Failed shipments" value={exceptions.filter((e) => e.kind === "failed").length} /><MetricCard label="Trip ETA passed" value={exceptions.filter((e) => e.kind === "eta").length} /></section>
-      <p className="text-xs text-muted-foreground">Checked at {checked ? exceptionDate(new Date(checked).toISOString()) : "—"} (Asia/Colombo). Counts represent shipments, not unique trips.</p>
-      <div role="search" aria-label="Filter exceptions" className="flex flex-wrap gap-3">
-        <Input aria-label="Search exceptions" placeholder="Search tracking, order ID, trip, driver…" className="h-10 bg-card sm:max-w-sm" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
-        <Choice label="Exception type" value={kind} options={[{ value: "all", label: "All exceptions" }, { value: "failed", label: "Failed shipment" }, { value: "eta", label: "Trip ETA passed" }]} onChange={(v) => { setKind(v); setPage(1); }} />
-        {(search || kind !== "all") && <Button variant="ghost" onClick={() => { setSearch(""); setKind("all"); setPage(1); }}>Clear filters</Button>}
-      </div>
-      <Panel title="Shipment exceptions"><PagedTable label="Exceptions" page={page} onPage={setPage} columns={["Shipment / order ID", "Exception", "Trip / vehicle", "Driver", "Last update", "Action"]} empty={!data.length ? "No shipments are recorded yet." : !exceptions.length ? "No failed shipments or passed trip ETAs found in this snapshot." : "No exceptions match your filters."} rows={filtered.map((item) => ({ key: item.shipment.id, cells: [<div key="reference" className="font-medium">{item.shipment.tracking_number}<p className="text-xs text-muted-foreground">Order ID {item.shipment.order_id}</p></div>, <Badge key="type" className={`border-0 ${item.kind === "failed" ? "bg-destructive-muted text-destructive" : "bg-warning-muted text-warning"}`}>{item.label}</Badge>, <div key="trip">{item.shipment.dispatch_trip?.trip_code || "Not assigned"}<p className="text-xs text-muted-foreground">{item.shipment.dispatch_trip?.vehicle_number}</p></div>, item.shipment.dispatch_trip?.driver_name || "Not recorded", exceptionDate(item.shipment.last_updated), <ExceptionDetails key="details" item={item} />] }))} /></Panel>
+      <section aria-label="Exception summary" className="grid gap-4 sm:grid-cols-4"><MetricCard label="Total exceptions" value={data.length} /><MetricCard label="Loader" value={data.filter((item) => item.source === "loader").length} /><MetricCard label="Driver" value={data.filter((item) => item.source === "driver").length} /><MetricCard label="Tracking" value={data.filter((item) => item.source === "tracking").length} /></section>
+      <p className="text-xs text-muted-foreground">Checked at {exceptionDate(checked)} (Asia/Colombo). Refresh to see new reports or decisions.</p>
+      <div role="search" aria-label="Filter exceptions" className="flex flex-wrap gap-3"><Input aria-label="Search exceptions" placeholder="Search issue, trip, driver, reference…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className="h-10 bg-card sm:max-w-sm" /><Choice label="Exception source" value={source} onChange={(value) => { setSource(value); setPage(1); }} options={[{ value: "all", label: "All sources" }, { value: "loader", label: "Loader" }, { value: "driver", label: "Driver" }, { value: "tracking", label: "Tracking" }]} />{(search || source !== "all") && <Button variant="ghost" onClick={() => { setSearch(""); setSource("all"); setPage(1); }}>Clear filters</Button>}</div>
+      <Panel title="Current exceptions"><PagedTable label="Exceptions" page={page} onPage={setPage} columns={["Source", "Exception", "Reference / trip", "Status", "Recorded", "Action"]} empty={!data.length ? "No current exceptions were found." : "No exceptions match your filters."} rows={filtered.map((item) => ({ key: item.id, cells: [<span key="source" className="capitalize">{item.source}</span>, <Badge key="title" className={`border-0 ${item.severity === "critical" ? "bg-destructive-muted text-destructive" : "bg-warning-muted text-warning"}`}>{item.title}</Badge>, <div key="reference">{item.reference || "—"}<p className="text-xs text-muted-foreground">{item.trip_code || "No trip linked"}</p></div>, <span key="status" className="capitalize">{item.status.replaceAll("_", " ")}</span>, exceptionDate(item.reported_at), <ExceptionDetails key="details" item={item} />] }))} /></Panel>
     </DataGate>
   </div>;
 }

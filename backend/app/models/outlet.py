@@ -1,22 +1,8 @@
-from datetime import datetime, time, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Time, UniqueConstraint
+from datetime import time
+from sqlalchemy import ForeignKey, Integer, String, Time, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
-
-
-class Outlet(Base):
-    __tablename__ = "outlets"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(String(30), unique=True, nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    address: Mapped[str] = mapped_column(String(500), nullable=False)
-    district: Mapped[str | None] = mapped_column(String(100))
-    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    delivery_restrictions: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-    contacts: Mapped[list["OutletContact"]] = relationship(back_populates="outlet", cascade="all, delete-orphan", order_by="OutletContact.id")
-    receiving_windows: Mapped[list["OutletReceivingWindow"]] = relationship(back_populates="outlet", cascade="all, delete-orphan", order_by="OutletReceivingWindow.id")
+from app.models.reference import Outlet
 
 
 class OutletContact(Base):

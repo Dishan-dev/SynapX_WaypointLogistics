@@ -4,7 +4,8 @@ from app.core.config import settings
 def payload(code="OUT-1"):
     return {
         "code": code, "name": "Kandy Store", "address": "5 Main Street", "district": "Kandy",
-        "active": True, "delivery_restrictions": "Use rear loading bay; no large trucks",
+        "active": True, "brand": "fresh", "depot": "kandy", "dock_type": "rear_dock", "van_only": False,
+        "delivery_restrictions": "Use rear loading bay; no large trucks",
         "contacts": [{"name": "Nimal", "role": "Receiver", "phone": "+94771234567", "email": "nimal@example.com"}],
         "receiving_windows": [{"weekday": 0, "opens_at": "09:00", "closes_at": "12:00"}, {"weekday": 0, "opens_at": "13:00", "closes_at": "17:00"}],
     }
