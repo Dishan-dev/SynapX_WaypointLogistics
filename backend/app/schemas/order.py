@@ -18,6 +18,8 @@ class OrderItemCreate(OrderItemBase):
 class OrderItemRead(OrderItemBase):
     id: int
     order_id: int
+    quantity_sent: Optional[int] = None
+    dispatcher_note: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

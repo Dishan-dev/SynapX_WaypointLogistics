@@ -343,6 +343,10 @@ export default function DispatcherOrdersPage() {
           setSelectedOrderIds([order.id]);
           setIsAllocationOpen(true);
         }}
+        onOrderUpdated={() => {
+          setRefreshCount((c) => c + 1);
+          setInspectingOrder(null);
+        }}
       />
 
       {/* Quick Allocation Sheet Drawer with Constraint Review (Figma Frames 9:370 & 163:2021) */}
