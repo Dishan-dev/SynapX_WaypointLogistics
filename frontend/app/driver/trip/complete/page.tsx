@@ -8,6 +8,7 @@ import {
   Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { isStopOpen } from "@/lib/driverStop";
 import DeviceClock from "@/components/driver/DeviceClock";
 
 interface DeliveryStop {
@@ -51,7 +52,7 @@ function StopCompleteContent() {
   }, [stopId]);
 
   const totalCount = tripDetail?.stops?.length || 0;
-  const pendingStops = tripDetail?.stops?.filter((s: { status: string }) => s.status === 'pending' || s.status === 'arrived') || [];
+  const pendingStops = tripDetail?.stops?.filter(isStopOpen) || [];
   const nextStop = pendingStops[0];
 
   return (

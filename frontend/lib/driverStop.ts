@@ -35,6 +35,16 @@ export interface StopDetail extends DeliveryStop {
   pod: { id: number; recipient_name: string } | null;
 }
 
+/**
+ * A stop the driver still has to finish: not reached yet, or marked delivered /
+ * partial but its proof isn't saved (they went back from the proof screen).
+ * A failed stop is closed by its outcome and the issue report.
+ */
+export function isStopOpen(stop: { status: string; completed_at: string | null }) {
+  if (stop.status === "pending" || stop.status === "arrived") return true;
+  return (stop.status === "delivered" || stop.status === "partial") && !stop.completed_at;
+}
+
 export function fetchStopDetail(stopId: string | number) {
   return apiFetch<StopDetail>(`/driver/stops/${stopId}`);
 }

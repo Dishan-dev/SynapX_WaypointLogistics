@@ -32,6 +32,7 @@ import { type Map as MapLibreMap } from "maplibre-gl";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { gpsLabel } from "@/lib/gps";
+import { isStopOpen } from "@/lib/driverStop";
 import type { DriverTripDetail, DeliveryStop, GPSPosition } from "@/types/driver-map";
 
 // Heavy map canvas loaded client-side only
@@ -80,14 +81,10 @@ export default function DriverRouteMapPage() {
   const stops = trip?.stops ?? [];
   const sortedStops = [...stops].sort((a, b) => a.sequence - b.sequence);
 
-  // Next stop = first pending or arrived (by sequence)
-  const nextStop = sortedStops.find(
-    (s) => s.status === "pending" || s.status === "arrived"
-  ) ?? null;
+  // Next stop = first one still open (by sequence), including a delivery whose proof isn't saved yet
+  const nextStop = sortedStops.find(isStopOpen) ?? null;
 
-  const allTerminal = stops.length > 0 && stops.every(
-    (s) => ["delivered", "failed", "partial", "rescheduled"].includes(s.status)
-  );
+  const allTerminal = stops.length > 0 && !stops.some(isStopOpen);
 
   const stopsWithCoords = stops.filter((s) => s.latitude && s.longitude);
 

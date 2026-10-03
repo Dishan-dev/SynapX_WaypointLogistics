@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Signal, BatteryFull, PackageCheck, PackageMinus, TriangleAlert, Check,
+  Signal, BatteryFull, PackageCheck, PackageMinus, TriangleAlert, Check, ChevronLeft,
   Map as MapIcon, Home, Layers
 } from "lucide-react";
 import { toast } from "sonner";
@@ -90,8 +90,17 @@ function DeliveryOutcomeContent() {
         </div>
 
         {/* Title bar */}
-        <div className="flex px-5 py-2.5 items-center w-full">
-          <div className="flex flex-col gap-0.5">
+        <div className="flex px-2 py-1 items-center gap-1 w-full">
+          <button
+            type="button"
+            onClick={() => router.push("/driver/trip")}
+            disabled={submitting}
+            aria-label="Back to map"
+            className="flex items-center justify-center w-11 h-11 shrink-0 disabled:opacity-50"
+          >
+            <ChevronLeft size={22} color="#12202E" />
+          </button>
+          <div className="flex flex-col gap-0.5 min-w-0">
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
               {loading ? "Loading..." : stop?.customer_name || "Unknown Stop"}
             </h1>
