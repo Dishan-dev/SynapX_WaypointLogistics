@@ -28,8 +28,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="h-full font-sans antialiased">
-      <body className="min-h-full flex flex-col bg-background text-foreground">
+    <html lang="en" className="h-full font-sans antialiased" suppressHydrationWarning>
+      <body className="min-h-full flex flex-col bg-background text-foreground" suppressHydrationWarning>
         <OfflineSyncBanner />
         <main className="flex-1 flex flex-col">{children}</main>
         <Toaster position="top-right" richColors />

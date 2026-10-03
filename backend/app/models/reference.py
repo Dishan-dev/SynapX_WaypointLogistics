@@ -96,6 +96,8 @@ class Outlet(Base):
     updated_at = deferred(Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False))
     contacts = relationship("OutletContact", back_populates="outlet", cascade="all, delete-orphan", order_by="OutletContact.id")
     receiving_windows = relationship("OutletReceivingWindow", back_populates="outlet", cascade="all, delete-orphan", order_by="OutletReceivingWindow.id")
+    parking_constraint = Column(String(50), default="normal", nullable=False)
+    mall_window = Column(String(50), nullable=True)
 
 
 class Dock(Base):
