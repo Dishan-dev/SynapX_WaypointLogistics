@@ -72,6 +72,19 @@ class Order(Base):
     loader_issues = relationship("LoaderIssue", viewonly=True)
     receipt = relationship("DeliveryReceipt", back_populates="order", uselist=False)
 
+    @property
+    def estimated_arrival(self):
+        if self.shipment and self.shipment.dispatch_trip:
+            return self.shipment.dispatch_trip.estimated_arrival
+        if self.allocation and self.allocation.dispatch_trips:
+            dt = self.allocation.dispatch_trips
+            if isinstance(dt, list):
+                if dt:
+                    return dt[0].estimated_arrival
+            else:
+                return dt.estimated_arrival
+        return None
+
 
 class OrderItem(Base):
     __tablename__ = "order_items"

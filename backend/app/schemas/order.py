@@ -77,5 +77,6 @@ class OrderRead(OrderBase):
     items: List[OrderItemRead] = []
     created_at: datetime
     updated_at: datetime
+    estimated_arrival: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
