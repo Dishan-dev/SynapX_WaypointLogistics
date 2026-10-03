@@ -78,6 +78,9 @@ class OutletRead(BaseModel):
     depot: str
     parking_constraint: Optional[str] = "normal"
     mall_window: Optional[str] = None
+    store_manager: Optional[str] = None
+    store_manager_user_id: Optional[int] = None
+    store_manager_phone: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -94,6 +97,8 @@ class OutletCreate(BaseModel):
     depot: str = "peliyagoda"  # peliyagoda, kandy
     parking_constraint: Optional[str] = "normal"
     mall_window: Optional[str] = None
+    store_manager: Optional[str] = None
+    store_manager_phone: Optional[str] = None
 
 
 class OutletUpdate(BaseModel):
@@ -108,6 +113,14 @@ class OutletUpdate(BaseModel):
     depot: Optional[str] = None
     parking_constraint: Optional[str] = None
     mall_window: Optional[str] = None
+    store_manager: Optional[str] = None
+    store_manager_phone: Optional[str] = None
+
+
+class OutletManagerAssignRequest(BaseModel):
+    store_manager: Optional[str] = None
+    contact_phone: Optional[str] = None
+    user_id: Optional[int] = None
 
 
 # ── Depots Schemas ────────────────────────────────────────

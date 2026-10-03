@@ -52,6 +52,9 @@ export interface FleetVehicle {
   trips_today: number;
   trips_planned: number;
   maintenance_state?: string | null;
+  assigned_driver_id?: number | null;
+  assigned_driver_name?: string | null;
+  assigned_driver_phone?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -69,6 +72,9 @@ export interface OutletRecord {
   window_start?: string;
   window_end?: string;
   depot: string;
+  store_manager?: string | null;
+  store_manager_user_id?: number | null;
+  store_manager_phone?: string | null;
 }
 
 export interface DepotDetail {
@@ -313,6 +319,19 @@ export const adminService = {
     return res.json();
   },
 
+  async assignVehicleDriver(vehicleId: number, driverUserId: number | null): Promise<FleetVehicle> {
+    const res = await adminFetch(`/api/v1/fleet/vehicles/${vehicleId}/assign-driver`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ driver_user_id: driverUserId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to assign driver to vehicle");
+    }
+    return res.json();
+  },
+
   async deleteVehicle(id: number): Promise<void> {
     const res = await adminFetch(`/api/v1/fleet/vehicles/${id}`, {
       method: "DELETE",
@@ -381,6 +400,22 @@ export const adminService = {
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to update outlet");
+    return res.json();
+  },
+
+  async assignOutletManager(
+    outletId: number,
+    payload: { user_id?: number | null; store_manager?: string | null; contact_phone?: string | null }
+  ): Promise<OutletRecord> {
+    const res = await adminFetch(`/api/v1/outlets/${outletId}/assign-manager`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to assign store manager to outlet");
+    }
     return res.json();
   },
 

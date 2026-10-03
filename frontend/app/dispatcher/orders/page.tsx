@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { fetchWithFallback } from "@/lib/api";
 import { RefreshCw, Package, Layers } from "lucide-react";
 import { StocksView } from "@/components/dispatcher/orders/StocksView";
+import { OrderDetailDrawer } from "@/components/dispatcher/orders/OrderDetailDrawer";
 
 export default function DispatcherOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -33,6 +34,7 @@ export default function DispatcherOrdersPage() {
   const [isAllocationOpen, setIsAllocationOpen] = useState(false);
   const [isLateOrdersOpen, setIsLateOrdersOpen] = useState(false);
   const [isCapacityShortfallOpen, setIsCapacityShortfallOpen] = useState(false);
+  const [inspectingOrder, setInspectingOrder] = useState<Order | null>(null);
 
   // Success Banner
   const [successBanner, setSuccessBanner] = useState<{
@@ -326,10 +328,22 @@ export default function DispatcherOrdersPage() {
             onToggleSelectAll={handleToggleSelectAll}
             onOpenAllocation={() => setIsAllocationOpen(true)}
             onDeferOrder={handleDeferOrder}
+            onViewOrder={(order) => setInspectingOrder(order)}
             isLoading={isLoading}
           />
         </>
       )}
+
+      {/* Order Item Details Drawer */}
+      <OrderDetailDrawer
+        order={inspectingOrder}
+        isOpen={!!inspectingOrder}
+        onClose={() => setInspectingOrder(null)}
+        onAllocate={(order) => {
+          setSelectedOrderIds([order.id]);
+          setIsAllocationOpen(true);
+        }}
+      />
 
       {/* Quick Allocation Sheet Drawer with Constraint Review (Figma Frames 9:370 & 163:2021) */}
       <QuickAllocationDrawer

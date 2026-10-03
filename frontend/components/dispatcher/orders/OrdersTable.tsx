@@ -5,7 +5,7 @@ import { type Order } from "@/types/order";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Snowflake, Package, Clock, ShieldAlert, ArrowRight, Ban, CheckCircle2 } from "lucide-react";
+import { Snowflake, Package, Clock, ShieldAlert, ArrowRight, Ban, CheckCircle2, Eye } from "lucide-react";
 import { RepeatDeferralModal } from "./RepeatDeferralModal";
 
 interface OrdersTableProps {
@@ -15,6 +15,7 @@ interface OrdersTableProps {
   onToggleSelectAll: (eligibleOrderIds: number[]) => void;
   onOpenAllocation: () => void;
   onDeferOrder: (order: Order, reason?: string) => Promise<void> | void;
+  onViewOrder?: (order: Order) => void;
   isLoading?: boolean;
 }
 
@@ -25,6 +26,7 @@ export function OrdersTable({
   onToggleSelectAll,
   onOpenAllocation,
   onDeferOrder,
+  onViewOrder,
   isLoading,
 }: OrdersTableProps) {
   const [deferralTarget, setDeferralTarget] = useState<Order | null>(null);
@@ -214,17 +216,15 @@ export function OrdersTable({
                   return (
                     <tr
                       key={order.id}
-                      className={`border-b border-[#E5E5E2] transition-colors ${
+                      className={`border-b border-[#E5E5E2] transition-colors cursor-pointer ${
                         isSelected
-                          ? "bg-[#F0FDF4]/70"
+                          ? "bg-[#F0FDF4]/70 hover:bg-[#e4faea]"
                           : isEligible
-                          ? "hover:bg-slate-50/80 cursor-pointer"
-                          : "bg-slate-50/40 opacity-75"
+                          ? "hover:bg-slate-50/90"
+                          : "bg-slate-50/40 opacity-80 hover:bg-slate-100/60"
                       }`}
                       onClick={() => {
-                        if (isEligible) {
-                          onToggleSelectOrder(order.id);
-                        }
+                        onViewOrder?.(order);
                       }}
                     >
                       <td
@@ -257,7 +257,9 @@ export function OrdersTable({
                         )}
                       </td>
                       <td className="py-3.5 px-4 font-bold text-xs text-[#18385F] whitespace-nowrap">
-                        {order.order_number}
+                        <span className="hover:underline flex items-center gap-1 font-mono">
+                          {order.order_number}
+                        </span>
                       </td>
                       <td className="py-3.5 px-4 min-w-[180px]">
                         <div className="font-semibold text-xs text-[#171A1F]">{order.client_name}</div>
@@ -288,23 +290,35 @@ export function OrdersTable({
                         className="py-3.5 px-4 text-right whitespace-nowrap pr-6"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {isEligible ? (
+                        <div className="inline-flex items-center gap-1.5 justify-end">
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setDeferralTarget(order)}
-                            className="h-8 text-xs font-semibold text-[#6B7280] hover:text-amber-800 hover:bg-amber-50"
+                            onClick={() => onViewOrder?.(order)}
+                            className="h-8 text-xs font-semibold text-[#18385F] hover:text-[#18385F] hover:bg-slate-100"
+                            title="View Order Items"
                           >
-                            <Ban className="size-3 mr-1" />
-                            Defer
+                            <Eye className="size-3 mr-1" />
+                            Items
                           </Button>
-                        ) : order.deferral_reason ? (
-                          <span className="text-xs text-amber-700 italic">
-                            {order.deferral_reason}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-[#6B7280]">—</span>
-                        )}
+                          {isEligible ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDeferralTarget(order)}
+                              className="h-8 text-xs font-semibold text-[#6B7280] hover:text-amber-800 hover:bg-amber-50"
+                            >
+                              <Ban className="size-3 mr-1" />
+                              Defer
+                            </Button>
+                          ) : order.deferral_reason ? (
+                            <span className="text-xs text-amber-700 italic">
+                              {order.deferral_reason}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-[#6B7280]">—</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

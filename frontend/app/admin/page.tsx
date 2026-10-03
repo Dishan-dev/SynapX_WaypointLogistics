@@ -242,6 +242,7 @@ function AdminDashboardContent() {
             {currentTab === "vehicles" && (
               <VehiclesTab
                 vehicles={vehicles}
+                users={users}
                 isLoading={isLoading}
                 onRefresh={loadAllData}
               />
@@ -250,6 +251,7 @@ function AdminDashboardContent() {
             {currentTab === "outlets" && (
               <OutletsTab
                 outlets={outlets}
+                users={users}
                 isLoading={isLoading}
                 onRefresh={loadAllData}
               />

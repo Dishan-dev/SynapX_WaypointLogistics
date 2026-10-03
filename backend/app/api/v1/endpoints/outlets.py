@@ -10,11 +10,32 @@ from sqlalchemy import or_
 
 from app.api import deps
 from app.models.reference import Outlet, Brand, Depot, DockType
+from app.models.outlet_settings import OutletSettings
+from app.models.user import User
 from app.schemas.outlet_settings import OutletSettingsRead, OutletSettingsUpdate
-from app.schemas.admin import OutletRead, OutletCreate, OutletUpdate
+from app.schemas.admin import OutletRead, OutletCreate, OutletUpdate, OutletManagerAssignRequest
 from app.services.outlet_service import outlet_service
 
 router = APIRouter()
+
+def outlet_to_read(o: Outlet, s: Optional[OutletSettings] = None, user_id: Optional[int] = None) -> OutletRead:
+    return OutletRead(
+        id=o.id,
+        code=o.code,
+        name=o.name,
+        brand=o.brand.value.title() if hasattr(o.brand, "value") else str(o.brand).title(),
+        district=o.district,
+        dock_type=o.dock_type.value if hasattr(o.dock_type, "value") else str(o.dock_type),
+        van_only=o.van_only,
+        window_start=o.window_start.strftime("%H:%M") if o.window_start else "06:00",
+        window_end=o.window_end.strftime("%H:%M") if o.window_end else "18:00",
+        depot=o.depot.value.title() if hasattr(o.depot, "value") else str(o.depot).title(),
+        parking_constraint=getattr(o, "parking_constraint", None) or ("van_only" if o.van_only else "normal"),
+        mall_window=getattr(o, "mall_window", None),
+        store_manager=s.store_manager if s else None,
+        store_manager_user_id=user_id,
+        store_manager_phone=s.contact_phone if s else None,
+    )
 
 class OutletCSVImportRequest(BaseModel):
     csv_content: str
@@ -233,23 +254,22 @@ def get_outlets(
 
     outlets = query.order_by(Outlet.id.asc()).offset(skip).limit(limit).all()
 
-    return [
-        OutletRead(
-            id=o.id,
-            code=o.code,
-            name=o.name,
-            brand=o.brand.value.title() if hasattr(o.brand, "value") else str(o.brand).title(),
-            district=o.district,
-            dock_type=o.dock_type.value if hasattr(o.dock_type, "value") else str(o.dock_type),
-            van_only=o.van_only,
-            window_start=o.window_start.strftime("%H:%M") if o.window_start else "06:00",
-            window_end=o.window_end.strftime("%H:%M") if o.window_end else "18:00",
-            depot=o.depot.value.title() if hasattr(o.depot, "value") else str(o.depot).title(),
-            parking_constraint=getattr(o, "parking_constraint", None) or ("van_only" if o.van_only else "normal"),
-            mall_window=getattr(o, "mall_window", None),
-        )
-        for o in outlets
-    ]
+    outlet_ids = [o.id for o in outlets]
+    settings_map = {}
+    if outlet_ids:
+        records = db.query(OutletSettings).filter(OutletSettings.outlet_id.in_(outlet_ids)).all()
+        settings_map = {rec.outlet_id: rec for rec in records}
+
+    users = db.query(User).filter(User.role.in_(["WAREHOUSE_MANAGER", "ADMIN"])).all()
+    user_name_to_id = {u.full_name.strip().lower(): u.id for u in users if u.full_name}
+
+    results = []
+    for o in outlets:
+        s = settings_map.get(o.id)
+        mgr_name = s.store_manager.strip().lower() if (s and s.store_manager) else None
+        u_id = user_name_to_id.get(mgr_name) if mgr_name else None
+        results.append(outlet_to_read(o, s, u_id))
+    return results
 
 
 @router.post("", response_model=OutletRead, status_code=status.HTTP_201_CREATED)
@@ -305,20 +325,25 @@ def create_outlet(
     db.commit()
     db.refresh(new_outlet)
 
-    return OutletRead(
-        id=new_outlet.id,
-        code=new_outlet.code,
-        name=new_outlet.name,
-        brand=new_outlet.brand.value.title() if hasattr(new_outlet.brand, "value") else str(new_outlet.brand).title(),
-        district=new_outlet.district,
-        dock_type=new_outlet.dock_type.value if hasattr(new_outlet.dock_type, "value") else str(new_outlet.dock_type),
-        van_only=new_outlet.van_only,
-        window_start=new_outlet.window_start.strftime("%H:%M") if new_outlet.window_start else "06:00",
-        window_end=new_outlet.window_end.strftime("%H:%M") if new_outlet.window_end else "18:00",
-        depot=new_outlet.depot.value.title() if hasattr(new_outlet.depot, "value") else str(new_outlet.depot).title(),
-        parking_constraint=getattr(new_outlet, "parking_constraint", None) or ("van_only" if new_outlet.van_only else "normal"),
-        mall_window=getattr(new_outlet, "mall_window", None),
-    )
+    settings = None
+    if outlet_in.store_manager or outlet_in.store_manager_phone:
+        settings = OutletSettings(
+            outlet_id=new_outlet.id,
+            store_manager=outlet_in.store_manager,
+            contact_phone=outlet_in.store_manager_phone or "077-0000000",
+            parking="No restrictions",
+        )
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+
+    u_id = None
+    if settings and settings.store_manager:
+        matched_user = db.query(User).filter(User.full_name.ilike(settings.store_manager.strip())).first()
+        if matched_user:
+            u_id = matched_user.id
+
+    return outlet_to_read(new_outlet, settings, u_id)
 
 
 @router.put("/{outlet_id}", response_model=OutletRead)
@@ -370,23 +395,91 @@ def update_outlet(
         parts = outlet_in.window_end.split(":")
         outlet.window_end = time(hour=int(parts[0]), minute=int(parts[1]))
 
+    settings = db.query(OutletSettings).filter(OutletSettings.outlet_id == outlet.id).first()
+    if outlet_in.store_manager is not None or outlet_in.store_manager_phone is not None:
+        if not settings:
+            settings = OutletSettings(
+                outlet_id=outlet.id,
+                store_manager=outlet_in.store_manager,
+                contact_phone=outlet_in.store_manager_phone or "077-0000000",
+                parking="No restrictions",
+            )
+            db.add(settings)
+        else:
+            if outlet_in.store_manager is not None:
+                settings.store_manager = outlet_in.store_manager
+            if outlet_in.store_manager_phone is not None:
+                settings.contact_phone = outlet_in.store_manager_phone
+
     db.commit()
     db.refresh(outlet)
+    if settings:
+        db.refresh(settings)
 
-    return OutletRead(
-        id=outlet.id,
-        code=outlet.code,
-        name=outlet.name,
-        brand=outlet.brand.value.title() if hasattr(outlet.brand, "value") else str(outlet.brand).title(),
-        district=outlet.district,
-        dock_type=outlet.dock_type.value if hasattr(outlet.dock_type, "value") else str(outlet.dock_type),
-        van_only=outlet.van_only,
-        window_start=outlet.window_start.strftime("%H:%M") if outlet.window_start else "06:00",
-        window_end=outlet.window_end.strftime("%H:%M") if outlet.window_end else "18:00",
-        depot=outlet.depot.value.title() if hasattr(outlet.depot, "value") else str(outlet.depot).title(),
-        parking_constraint=getattr(outlet, "parking_constraint", None) or ("van_only" if outlet.van_only else "normal"),
-        mall_window=getattr(outlet, "mall_window", None),
-    )
+    u_id = None
+    if settings and settings.store_manager:
+        matched_user = db.query(User).filter(User.full_name.ilike(settings.store_manager.strip())).first()
+        if matched_user:
+            u_id = matched_user.id
+
+    return outlet_to_read(outlet, settings, u_id)
+
+
+@router.post("/{outlet_id}/assign-manager", response_model=OutletRead)
+def assign_outlet_manager(
+    outlet_id: int,
+    payload: OutletManagerAssignRequest,
+    db: Session = Depends(deps.get_db),
+) -> Any:
+    """
+    Assign or unassign a store manager for an outlet.
+    """
+    outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
+    if not outlet:
+        raise HTTPException(status_code=404, detail="Outlet not found")
+
+    manager_name = payload.store_manager
+    manager_phone = payload.contact_phone
+    user_id = payload.user_id
+
+    if user_id is not None:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Store manager user account not found")
+        manager_name = user.full_name
+        if not manager_phone:
+            manager_phone = "077-0000000"
+
+    settings = db.query(OutletSettings).filter(OutletSettings.outlet_id == outlet.id).first()
+    if not settings:
+        settings = OutletSettings(
+            outlet_id=outlet.id,
+            store_manager=manager_name,
+            contact_phone=manager_phone or "077-0000000",
+            parking="No restrictions",
+        )
+        db.add(settings)
+    else:
+        settings.store_manager = manager_name
+        if manager_phone is not None:
+            settings.contact_phone = manager_phone
+
+    db.commit()
+    db.refresh(settings)
+
+    try:
+        from app.api.v1.endpoints.admin import record_audit
+        record_audit(
+            action_type="OUTLET_MUTATION",
+            entity_name="Outlet Manager Assignment",
+            entity_id=str(outlet.id),
+            summary=f"Assigned store manager '{manager_name or 'Unassigned'}' to outlet {outlet.code}.",
+            severity="INFO",
+        )
+    except Exception:
+        pass
+
+    return outlet_to_read(outlet, settings, user_id)
 
 
 @router.get("/{outlet_id}/settings", response_model=OutletSettingsRead)
