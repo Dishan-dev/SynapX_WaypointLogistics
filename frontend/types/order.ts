@@ -18,6 +18,8 @@ export interface OrderItem {
   item_name: string;
   quantity: number;
   unit_price: number;
+  quantity_sent?: number | null;
+  dispatcher_note?: string | null;
 }
 
 export interface Order {
