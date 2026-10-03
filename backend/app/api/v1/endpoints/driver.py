@@ -37,7 +37,7 @@ def get_trip_detail(
     current_user: User = Depends(deps.require_driver)
 ):
     """Returns single DriverTrip with full stop list."""
-    return driver_service.get_trip_detail(db, trip_id, current_user.id)
+    return driver_service.get_trip_view(db, trip_id, current_user.id)
 
 
 # --- Group B: Trip Actions ---

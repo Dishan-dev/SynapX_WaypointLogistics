@@ -67,14 +67,16 @@ class StopOrderInfo(BaseModel):
     weight_kg: Optional[float] = None
     volume_m3: Optional[float] = None
     notes: Optional[str] = None
+    on_truck: bool = True  # False: on the plan but the loader didn't load it
     items: List[StopOrderItem] = []
 
 
 class DeliveryStopDetail(DeliveryStopRead):
-    """A stop plus the order being delivered there (for the at-stop screens)."""
+    """A stop plus the orders being delivered there (for the at-stop screens)."""
     total_stops: int
     trip_status: DriverTripStatus
-    order: Optional[StopOrderInfo] = None
+    order: Optional[StopOrderInfo] = None  # the first of `orders`
+    orders: List[StopOrderInfo] = []
 
 
 class DriverTripBase(BaseModel):
@@ -91,12 +93,14 @@ class DriverTripSummary(DriverTripBase):
     started_at: Optional[UTCDateTime]
     completed_at: Optional[UTCDateTime]
     created_at: UTCDateTime
+    planned_departure: Optional[UTCDateTime] = None  # the dispatcher's departure time
 
     # Can add fields like stop_count or completed_stops via computed fields if needed
     model_config = ConfigDict(from_attributes=True)
 
 class DriverTripDetail(DriverTripSummary):
     stops: List[DeliveryStopRead] = []
+    last_window_closes: Optional[str] = None  # "HH:MM", latest outlet window end on the run
 
 
 class IssueReportBase(BaseModel):
