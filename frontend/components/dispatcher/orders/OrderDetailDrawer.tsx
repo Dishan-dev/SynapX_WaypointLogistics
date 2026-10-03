@@ -25,6 +25,8 @@ import {
   Ban,
   CheckCircle2,
   AlertCircle,
+  Minus,
+  Plus,
 } from "lucide-react";
 import { fetchWithFallback } from "@/lib/api";
 
@@ -47,6 +49,8 @@ export function OrderDetailDrawer({
   const [isLoadingItems, setIsLoadingItems] = useState(false);
   const [isDeferModalOpen, setIsDeferModalOpen] = useState(false);
   const [deferringItem, setDeferringItem] = useState<OrderItem | null>(null);
+  const [deferMode, setDeferMode] = useState<"partial" | "full">("partial");
+  const [assignedQuantity, setAssignedQuantity] = useState<number>(1);
   const [deferReason, setDeferReason] = useState<string>("Depot stock shortage · insufficient inventory");
   const [isSubmittingDefer, setIsSubmittingDefer] = useState(false);
   const [deferSuccessMsg, setDeferSuccessMsg] = useState<string | null>(null);
@@ -170,20 +174,51 @@ export function OrderDetailDrawer({
 
   const handleOpenDeferItem = (item: OrderItem) => {
     setDeferringItem(item);
-    setDeferReason(`Depot stock shortage on ${item.item_name} (${item.sku})`);
+    const initialAssigned = item.quantity > 1 ? Math.floor(item.quantity / 2) : 0;
+    setAssignedQuantity(initialAssigned);
+    if (initialAssigned === 0) {
+      setDeferMode("full");
+      setDeferReason(`Depot stock shortage on ${item.item_name} (${item.sku}): 0 of ${item.quantity} units available; all deferred.`);
+    } else {
+      setDeferMode("partial");
+      setDeferReason(`Depot stock limitation: only ${initialAssigned} of ${item.quantity} units available in depot; remaining ${item.quantity - initialAssigned} units deferred.`);
+    }
     setIsDeferModalOpen(true);
+  };
+
+  const handleQuantityChange = (qty: number) => {
+    if (!deferringItem) return;
+    const clamped = Math.max(0, Math.min(deferringItem.quantity, qty));
+    setAssignedQuantity(clamped);
+    if (clamped === 0) {
+      setDeferMode("full");
+      setDeferReason(`Depot stock shortage on ${deferringItem.item_name} (${deferringItem.sku}): 0 of ${deferringItem.quantity} units available; all deferred.`);
+    } else if (clamped < deferringItem.quantity) {
+      setDeferMode("partial");
+      setDeferReason(`Depot stock limitation: only ${clamped} of ${deferringItem.quantity} units available in depot; remaining ${deferringItem.quantity - clamped} units deferred.`);
+    } else {
+      setDeferMode("partial");
+      setDeferReason(`Full fulfillment: all ${clamped} units allocated from depot stock.`);
+    }
   };
 
   const handleConfirmDefer = async () => {
     if (!order) return;
     setIsSubmittingDefer(true);
     try {
-      const payload: { reason: string; item_id?: number; item_sku?: string } = {
+      const payload: {
+        reason: string;
+        item_id?: number;
+        item_sku?: string;
+        quantity_sent?: number;
+      } = {
         reason: deferReason,
       };
+
       if (deferringItem) {
         payload.item_id = deferringItem.id;
         payload.item_sku = deferringItem.sku;
+        payload.quantity_sent = deferMode === "partial" ? assignedQuantity : 0;
       }
 
       const res = await fetchWithFallback(`/api/v1/orders/${order.id}/defer`, {
@@ -193,17 +228,21 @@ export function OrderDetailDrawer({
       });
 
       if (res.ok) {
-        setDeferSuccessMsg("Order deferred successfully. The Store Manager has been notified.");
+        setDeferSuccessMsg(
+          deferringItem && deferMode === "partial" && assignedQuantity > 0
+            ? `Assigned ${assignedQuantity} of ${deferringItem.quantity} units. Store Manager notified of partial shortfall.`
+            : "Order deferral recorded. The Store Manager has been notified."
+        );
         setIsDeferModalOpen(false);
         setDeferringItem(null);
         onOrderUpdated?.();
       } else {
         const err = await res.json();
-        alert(err.detail || "Failed to defer order");
+        alert(err.detail || "Failed to process deferral");
       }
     } catch (e) {
       console.error("Deferral failed:", e);
-      alert("Network error while deferring order");
+      alert("Network error while processing deferral");
     } finally {
       setIsSubmittingDefer(false);
     }
@@ -214,7 +253,7 @@ export function OrderDetailDrawer({
       <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
         <DialogContent
           showCloseButton={false}
-          className="sm:max-w-[680px] w-full max-h-[90vh] flex flex-col p-0 rounded-[20px] bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F] overflow-hidden"
+          className="sm:max-w-[700px] w-full max-h-[90vh] flex flex-col p-0 rounded-[20px] bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F] overflow-hidden"
         >
           {/* Header */}
           <div className="px-6 py-5 border-b border-[#E5E5E2] bg-gradient-to-r from-slate-50 via-white to-slate-50">
@@ -352,7 +391,7 @@ export function OrderDetailDrawer({
                 <div className="flex items-center gap-2">
                   <Package className="w-4 h-4 text-[#18385F]" />
                   <h3 className="text-sm font-bold text-slate-800">
-                    Order Items &amp; Quantities
+                    Order Items &amp; Depot Stock Allocations
                   </h3>
                   <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-semibold">
                     {items.length} {items.length === 1 ? "SKU" : "SKUs"}
@@ -367,11 +406,11 @@ export function OrderDetailDrawer({
                 <table className="w-full text-left text-xs border-collapse">
                   <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-semibold">
                     <tr>
-                      <th className="py-2.5 px-3.5 w-12 text-center text-[11px]">#</th>
+                      <th className="py-2.5 px-3.5 w-10 text-center text-[11px]">#</th>
                       <th className="py-2.5 px-3.5 text-[11px]">SKU</th>
                       <th className="py-2.5 px-3.5 text-[11px]">Item Description</th>
-                      <th className="py-2.5 px-3.5 text-right text-[11px]">Quantity</th>
-                      <th className="py-2.5 px-3.5 text-right text-[11px]">Stock Action</th>
+                      <th className="py-2.5 px-3.5 text-right text-[11px]">Quantities</th>
+                      <th className="py-2.5 px-3.5 text-right text-[11px]">Fulfillment Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
@@ -389,6 +428,10 @@ export function OrderDetailDrawer({
                       </tr>
                     ) : (
                       items.map((item, index) => {
+                        const hasSentVal = item.quantity_sent !== null && item.quantity_sent !== undefined;
+                        const isPartial = hasSentVal && item.quantity_sent! < item.quantity && item.quantity_sent! > 0;
+                        const isZeroSent = hasSentVal && item.quantity_sent === 0;
+
                         return (
                           <tr
                             key={item.id || `${item.sku}-${index}`}
@@ -400,14 +443,51 @@ export function OrderDetailDrawer({
                             <td className="py-2.5 px-3.5 font-mono font-medium text-[#18385F] text-[11px] whitespace-nowrap">
                               {item.sku}
                             </td>
-                            <td className="py-2.5 px-3.5 text-slate-800 font-medium">
-                              {item.item_name}
+                            <td className="py-2.5 px-3.5 text-slate-800">
+                              <div className="font-medium text-slate-800">{item.item_name}</div>
+                              {item.dispatcher_note && (
+                                <div className="text-[10px] text-amber-700 italic mt-0.5 flex items-center gap-1">
+                                  <AlertCircle className="size-2.5 shrink-0" />
+                                  <span>{item.dispatcher_note}</span>
+                                </div>
+                              )}
                             </td>
                             <td className="py-2.5 px-3.5 text-right font-bold text-slate-900 whitespace-nowrap">
-                              {item.quantity.toLocaleString()} pcs
+                              {hasSentVal ? (
+                                <div className="flex flex-col items-end">
+                                  <span>
+                                    {item.quantity_sent} of {item.quantity} pcs
+                                  </span>
+                                  {item.quantity_sent! < item.quantity && (
+                                    <span className="text-[10px] text-amber-600 font-normal">
+                                      {item.quantity - item.quantity_sent!} pcs deferred
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span>{item.quantity.toLocaleString()} pcs</span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
-                              {order.status === "DEFERRED" ? (
+                              {isZeroSent ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                  Deferred (0/{item.quantity})
+                                </span>
+                              ) : isPartial ? (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                    Partial ({item.quantity_sent}/{item.quantity})
+                                  </span>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleOpenDeferItem(item)}
+                                    className="h-6 px-1.5 text-[10px] text-slate-500 hover:text-slate-800"
+                                  >
+                                    Edit
+                                  </Button>
+                                </div>
+                              ) : order.status === "DEFERRED" ? (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                                   Deferred
                                 </span>
@@ -417,10 +497,10 @@ export function OrderDetailDrawer({
                                   size="sm"
                                   onClick={() => handleOpenDeferItem(item)}
                                   className="h-6 px-2 text-[10px] font-semibold text-amber-800 border-amber-200 hover:bg-amber-50 hover:border-amber-300"
-                                  title="Defer order due to shortage on this item"
+                                  title="Adjust allocation or defer shortage on this item"
                                 >
                                   <Ban className="size-2.5 mr-1 text-amber-600" />
-                                  Defer Item
+                                  Defer / Partial
                                 </Button>
                               )}
                             </td>
@@ -464,7 +544,7 @@ export function OrderDetailDrawer({
               <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold">Deferral Audit Note:</span> {order.deferral_reason}
+                  <span className="font-bold">Deferral / Shortfall Audit Note:</span> {order.deferral_reason}
                 </div>
               </div>
             )}
@@ -497,7 +577,7 @@ export function OrderDetailDrawer({
                   className="text-xs border-amber-300 text-amber-800 hover:bg-amber-50"
                 >
                   <Ban className="size-3 mr-1 text-amber-600" />
-                  Defer (Depot Shortage)
+                  Defer Entire Order
                 </Button>
               )}
               {onAllocate && (order.status === "CONFIRMED" || order.status === "SUBMITTED") && !order.allocation_id && (
@@ -517,19 +597,21 @@ export function OrderDetailDrawer({
         </DialogContent>
       </Dialog>
 
-      {/* Item Deferral Modal */}
+      {/* Item Deferral / Partial Allocation Modal */}
       <Dialog open={isDeferModalOpen} onOpenChange={setIsDeferModalOpen}>
         <DialogContent
           showCloseButton={false}
-          className="sm:max-w-[440px] p-6 rounded-2xl bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F]"
+          className="sm:max-w-[480px] p-6 rounded-2xl bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F]"
         >
           <div className="flex items-start justify-between">
             <div>
               <DialogTitle className="text-base font-bold text-slate-900">
-                {deferringItem ? "Defer Due to Item Shortage" : "Defer Order (Depot Shortage)"}
+                {deferringItem ? "Adjust Stock Allocation & Defer Shortage" : "Defer Order (Depot Shortage)"}
               </DialogTitle>
               <DialogDescription className="text-xs text-slate-500 mt-0.5">
-                This will mark the order as Deferred and notify the Store Manager on their portal.
+                {deferringItem
+                  ? "Assign the available units from depot stock and defer the remaining balance."
+                  : "This will mark the order as Deferred and notify the Store Manager on their portal."}
               </DialogDescription>
             </div>
             <button
@@ -540,20 +622,77 @@ export function OrderDetailDrawer({
             </button>
           </div>
 
-          <div className="my-3 space-y-3">
+          <div className="my-3 space-y-3.5">
             {deferringItem && (
-              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-xs">
-                <span className="font-semibold text-amber-900 block">Affected SKU:</span>
-                <span className="font-mono text-amber-800">{deferringItem.sku}</span> · {deferringItem.item_name}
-                <div className="text-[11px] text-amber-700 mt-1">
-                  Requested: <span className="font-bold">{deferringItem.quantity} pcs</span>
+              <>
+                <div className="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200 text-xs space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="font-semibold text-amber-900 block">Item SKU:</span>
+                      <span className="font-mono text-amber-800 font-bold">{deferringItem.sku}</span> · {deferringItem.item_name}
+                    </div>
+                    <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[11px]">
+                      Requested: {deferringItem.quantity} pcs
+                    </span>
+                  </div>
+
+                  {/* Quantity adjustment stepper */}
+                  <div className="pt-2 border-t border-amber-200/70">
+                    <label className="text-[11px] font-semibold text-amber-900 block mb-1.5">
+                      Units Available in Depot to Assign:
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <div className="inline-flex items-center border border-amber-300 rounded-lg bg-white overflow-hidden shadow-2xs">
+                        <button
+                          type="button"
+                          onClick={() => handleQuantityChange(assignedQuantity - 1)}
+                          disabled={assignedQuantity <= 0}
+                          className="p-2 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                        >
+                          <Minus className="size-3 text-slate-700" />
+                        </button>
+                        <input
+                          type="number"
+                          value={assignedQuantity}
+                          onChange={(e) => handleQuantityChange(parseInt(e.target.value) || 0)}
+                          min={0}
+                          max={deferringItem.quantity}
+                          className="w-14 text-center font-bold text-xs py-1 border-x border-amber-200 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleQuantityChange(assignedQuantity + 1)}
+                          disabled={assignedQuantity >= deferringItem.quantity}
+                          className="p-2 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
+                        >
+                          <Plus className="size-3 text-slate-700" />
+                        </button>
+                      </div>
+
+                      <div className="text-xs">
+                        <span className="text-slate-600 block">
+                          Deferred balance:{" "}
+                          <span className="font-bold text-rose-700">
+                            {deferringItem.quantity - assignedQuantity} pcs
+                          </span>
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {assignedQuantity === 0
+                            ? "All units deferred to next delivery"
+                            : assignedQuantity < deferringItem.quantity
+                            ? `Partial: ${assignedQuantity} pcs allocated for delivery`
+                            : "Full quantity will be delivered"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </>
             )}
 
             <div>
               <label className="text-xs font-semibold text-slate-700 block mb-1">
-                Reason for Store Manager Notification:
+                Reason / Note for Store Manager:
               </label>
               <textarea
                 value={deferReason}
@@ -578,9 +717,13 @@ export function OrderDetailDrawer({
               size="sm"
               onClick={handleConfirmDefer}
               disabled={isSubmittingDefer}
-              className="text-xs bg-amber-600 hover:bg-amber-700 text-white"
+              className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium"
             >
-              {isSubmittingDefer ? "Notifying Store..." : "Confirm & Notify Store"}
+              {isSubmittingDefer
+                ? "Updating..."
+                : deferringItem && assignedQuantity > 0
+                ? `Confirm ${assignedQuantity} of ${deferringItem.quantity} & Notify Store`
+                : "Confirm Deferral & Notify Store"}
             </Button>
           </div>
         </DialogContent>

@@ -331,34 +331,10 @@ class OrderService:
         new_delivery_date: Optional[date] = None,
         item_id: Optional[int] = None,
         item_sku: Optional[str] = None,
+        quantity_sent: Optional[int] = None,
     ) -> Order:
-        """Dispatcher defers an order. Counts consecutive deferrals and tells the store why (§6)."""
+        """Dispatcher defers an order or partially fulfills an item with stock shortfall (§6)."""
         order = OrderService._get(db, order_id)
-        if OrderStatus.DEFERRED not in TRANSITIONS.get(order.status, set()):
-            raise InvalidStateTransitionError(
-                f"{order.order_number} can't be deferred while {order.status.value.lower()}.",
-                current_state=order.status.value,
-                target_state=OrderStatus.DEFERRED.value,
-            )
-        order.status = OrderStatus.DEFERRED
-
-        # If a specific item is low-stock / deferred, update the item note and format reason
-        if item_id or item_sku:
-            item = None
-            if item_id:
-                item = db.query(OrderItem).filter(OrderItem.id == item_id, OrderItem.order_id == order.id).first()
-            elif item_sku:
-                item = db.query(OrderItem).filter(OrderItem.sku == item_sku, OrderItem.order_id == order.id).first()
-            if item:
-                item.dispatcher_note = f"Deferred: {reason}"
-                reason = f"Depot low stock on {item.item_name} ({item.sku}): {reason}"
-
-        order.deferral_reason = reason
-        order.allocation_id = None
-        order.deferral_count = (order.deferral_count or 0) + 1
-        if new_delivery_date:
-            order.operating_date = new_delivery_date.isoformat()
-            order.cutoff_at = order_rules.cutoff_for(new_delivery_date)
 
         # Fallback outlet matching if outlet_id was not explicitly set on older/seed orders
         if not order.outlet_id and order.client_name:
@@ -370,6 +346,58 @@ class OrderService:
             ).first()
             if matched_outlet:
                 order.outlet_id = matched_outlet.id
+
+        # Find specific item if provided
+        target_item = None
+        if item_id or item_sku:
+            if item_id:
+                target_item = db.query(OrderItem).filter(OrderItem.id == item_id, OrderItem.order_id == order.id).first()
+            elif item_sku:
+                target_item = db.query(OrderItem).filter(OrderItem.sku == item_sku, OrderItem.order_id == order.id).first()
+
+        # Check if this is a partial allocation (e.g. store requested 4, depot assigns 2)
+        is_partial = target_item is not None and quantity_sent is not None and 0 < quantity_sent < target_item.quantity
+
+        if is_partial and target_item:
+            target_item.quantity_sent = quantity_sent
+            target_item.dispatcher_note = reason
+            order.deferral_reason = f"Partial fulfillment: {quantity_sent} of {target_item.quantity} assigned for {target_item.item_name} ({reason})"
+            db.commit()
+            db.refresh(order)
+
+            if order.outlet_id:
+                notification_service.send(
+                    db,
+                    order.outlet_id,
+                    NotificationType.SHORTFALL_WARNING,
+                    {
+                        "order_id": order.id,
+                        "order_number": order.order_number,
+                        "note": f"Shortfall on {target_item.item_name} ({target_item.sku}): assigned {quantity_sent} of {target_item.quantity} units. {reason}",
+                    },
+                )
+            return order
+
+        # Full deferral flow
+        if OrderStatus.DEFERRED not in TRANSITIONS.get(order.status, set()):
+            raise InvalidStateTransitionError(
+                f"{order.order_number} can't be deferred while {order.status.value.lower()}.",
+                current_state=order.status.value,
+                target_state=OrderStatus.DEFERRED.value,
+            )
+        order.status = OrderStatus.DEFERRED
+
+        if target_item:
+            target_item.quantity_sent = 0
+            target_item.dispatcher_note = f"Deferred: {reason}"
+            reason = f"Depot low stock on {target_item.item_name} ({target_item.sku}): {reason}"
+
+        order.deferral_reason = reason
+        order.allocation_id = None
+        order.deferral_count = (order.deferral_count or 0) + 1
+        if new_delivery_date:
+            order.operating_date = new_delivery_date.isoformat()
+            order.cutoff_at = order_rules.cutoff_for(new_delivery_date)
 
         db.commit()
         db.refresh(order)

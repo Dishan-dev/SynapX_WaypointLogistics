@@ -20,6 +20,7 @@ class DeferOrderRequest(BaseModel):
     reason: Optional[str] = "Capacity limit reached"
     item_id: Optional[int] = None
     item_sku: Optional[str] = None
+    quantity_sent: Optional[int] = None
 
 
 @router.get("/metrics", response_model=Dict[str, int])
@@ -173,6 +174,7 @@ def defer_order(order_id: int, req: DeferOrderRequest, db: Session = Depends(dep
         req.reason,
         item_id=req.item_id,
         item_sku=req.item_sku,
+        quantity_sent=req.quantity_sent,
     )
 
 
