@@ -27,17 +27,25 @@ import { StorePill, StorePillTone } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
 import { getStoredIssues, fetchStoreIssues, saveIssue, StoreIssue } from "@/services/issues-store";
 
-export default function ExceptionsAndIssuesPage() {
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+
+function ExceptionsAndIssuesContent() {
+  const searchParams = useSearchParams();
+  const initialOrderParam = searchParams.get("order") || "";
+  const initialSearchParam = searchParams.get("search") || "";
+  const autoOpenReport = searchParams.get("report") === "true" || !!initialOrderParam;
+
   const [issues, setIssues] = useState<StoreIssue[]>([]);
   const [selectedTab, setSelectedTab] = useState<"all" | "open" | "under_review" | "resolved">("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialSearchParam || initialOrderParam);
   const [typeFilter, setTypeFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("30");
   const [selectedIssue, setSelectedIssue] = useState<StoreIssue | null>(null);
 
   // Report Modal State
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newOrderId, setNewOrderId] = useState("ORD0000001");
+  const [showCreateModal, setShowCreateModal] = useState(autoOpenReport);
+  const [newOrderId, setNewOrderId] = useState(initialOrderParam || "ORD0000001");
   const [newItemName, setNewItemName] = useState("");
   const [newItemSku, setNewItemSku] = useState("");
   const [newType, setNewType] = useState<"Damaged Goods" | "Missing Items" | "Quantity Mismatch" | "Temperature Breach">("Damaged Goods");
@@ -45,6 +53,8 @@ export default function ExceptionsAndIssuesPage() {
   const [newReceived, setNewReceived] = useState(8);
   const [newDescription, setNewDescription] = useState("");
   const [newPhoto, setNewPhoto] = useState<{ name: string; url: string; size: string } | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
 
   const loadIssues = async () => {
     // Initial quick load from local storage
@@ -66,6 +76,24 @@ export default function ExceptionsAndIssuesPage() {
     window.addEventListener("waypoint_issues_updated", handleUpdate);
     return () => window.removeEventListener("waypoint_issues_updated", handleUpdate);
   }, []);
+
+  useEffect(() => {
+    if (initialOrderParam) {
+      setNewOrderId(initialOrderParam);
+      setShowCreateModal(true);
+    }
+    if (initialSearchParam) {
+      setSearchQuery(initialSearchParam);
+      const found = issues.find(
+        (i) =>
+          i.id.toLowerCase() === initialSearchParam.toLowerCase() ||
+          i.orderId.toLowerCase() === initialSearchParam.toLowerCase()
+      );
+      if (found) {
+        setSelectedIssue(found);
+      }
+    }
+  }, [initialOrderParam, initialSearchParam, issues]);
 
   const openCount = issues.filter((i) => i.status === "open").length;
   const underReviewCount = issues.filter((i) => i.status === "under_review").length;
@@ -93,6 +121,9 @@ export default function ExceptionsAndIssuesPage() {
 
     return true;
   });
+
+  const totalPages = Math.ceil(filteredIssues.length / pageSize) || 1;
+  const paginatedIssues = filteredIssues.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -290,14 +321,14 @@ export default function ExceptionsAndIssuesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
-              {filteredIssues.length === 0 ? (
+              {paginatedIssues.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-muted-foreground">
                     No exceptions or issues match your criteria.
                   </td>
                 </tr>
               ) : (
-                filteredIssues.map((issue) => (
+                paginatedIssues.map((issue) => (
                   <tr
                     key={issue.id}
                     onClick={() => setSelectedIssue(issue)}
@@ -351,6 +382,41 @@ export default function ExceptionsAndIssuesPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Footer */}
+        {filteredIssues.length > 0 && (
+          <div className="p-3.5 border-t border-border/60 bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <span className="text-muted-foreground">
+              Showing {(currentPage - 1) * pageSize + 1} &ndash;{" "}
+              {Math.min(currentPage * pageSize, filteredIssues.length)} of {filteredIssues.length} issues
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="h-8 text-xs font-semibold"
+              >
+                Previous
+              </Button>
+              <span className="px-2 text-xs font-medium text-muted-foreground">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="h-8 text-xs font-semibold"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Side Panel / Issue Details Drawer (Figma 16:816 & 16:939) */}
@@ -708,3 +774,12 @@ export default function ExceptionsAndIssuesPage() {
     </div>
   );
 }
+
+export default function ExceptionsAndIssuesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground text-xs">Loading issues...</div>}>
+      <ExceptionsAndIssuesContent />
+    </Suspense>
+  );
+}
+

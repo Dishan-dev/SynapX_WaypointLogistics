@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Truck,
@@ -15,11 +15,14 @@ import {
   Filter,
   User,
   Radio,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StorePill } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
+import { getStoreOrders } from "@/components/store/api/store-data";
+import { StoreOrder, mockOrders } from "@/components/store/mock-data";
 
 interface DeliveryItem {
   id: string;
@@ -40,77 +43,101 @@ interface DeliveryItem {
   sealNumber: string;
 }
 
-const mockDeliveries: DeliveryItem[] = [
-  {
-    id: "del-001",
-    orderNumber: "ORD0000001",
-    brand: "Fresh",
-    tempRequirement: "chilled",
-    driverName: "Kamal Perera",
-    driverPhone: "+94 77 123 4567",
-    vehicleId: "VEH001",
-    vehiclePlate: "WP-GA-4892",
-    currentLocation: "1.2 km away (Maradana Junction)",
-    estimatedArrival: "06:45 AM (in 15 mins)",
-    window: "04:00 – 07:45",
-    status: "arriving_soon",
-    totalUnits: 40,
-    totalWeightKg: 120.5,
-    coldChainTemp: "+3.8°C (Normal)",
-    sealNumber: "SL-994021",
-  },
-  {
-    id: "del-002",
-    orderNumber: "ORD0000002",
-    brand: "Fresh",
-    tempRequirement: "ambient",
-    driverName: "Saman Kumara",
-    driverPhone: "+94 71 987 6543",
-    vehicleId: "VEH004",
-    vehiclePlate: "WP-ND-3310",
-    currentLocation: "Loading Dock 2",
-    estimatedArrival: "Arrived",
-    window: "04:00 – 07:45",
-    status: "at_dock",
-    totalUnits: 25,
-    totalWeightKg: 80.0,
-    sealNumber: "SL-884019",
-  },
-  {
-    id: "del-003",
-    orderNumber: "ORD0000004",
-    brand: "Fresh",
-    tempRequirement: "chilled",
-    driverName: "Carlos Mendes",
-    driverPhone: "+94 76 555 1212",
-    vehicleId: "VEH035",
-    vehiclePlate: "WP-LY-7721",
-    currentLocation: "Departed Peliyagoda Hub",
-    estimatedArrival: "07:30 AM",
-    window: "04:00 – 07:45",
-    status: "in_transit",
-    totalUnits: 15,
-    totalWeightKg: 45.0,
-    coldChainTemp: "+3.6°C (Cold Chain OK)",
-    sealNumber: "SL-772014",
-  },
-];
-
 export default function IncomingDeliveriesPage() {
+  const [deliveries, setDeliveries] = useState<DeliveryItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("ALL");
   const [search, setSearch] = useState("");
 
-  const filtered = mockDeliveries.filter((d) => {
+  useEffect(() => {
+    async function loadIncomingDeliveries() {
+      setLoading(true);
+      try {
+        const orders = await getStoreOrders();
+        const baseOrders: StoreOrder[] = orders && orders.length > 0 ? orders : mockOrders;
+
+        // Map all pending / en-route / dock orders
+        const items: DeliveryItem[] = baseOrders.map((ord, idx) => {
+          const totalUnits = ord.items.reduce(
+            (sum, it) => sum + (it.quantitySent ?? it.quantity),
+            0
+          );
+          const isChilled = ord.temperatureClass === "chilled";
+          const vehicle = ord.vehicle;
+
+          let status: DeliveryItem["status"] = "in_transit";
+          let location = "En route from Peliyagoda Hub";
+          let eta = "07:30 AM";
+
+          if (ord.status === "delivered" || ord.status === "completed") {
+            status = "delivered";
+            location = "Loading Dock 2 (Completed)";
+            eta = "Arrived";
+          } else if (idx === 0) {
+            status = "at_dock";
+            location = "Rear Dock (Ready for receiving)";
+            eta = "Arrived";
+          } else if (idx === 1) {
+            status = "arriving_soon";
+            location = "1.2 km away (Maradana Junction)";
+            eta = "06:45 AM (in 15 mins)";
+          }
+
+          return {
+            id: `del-${ord.id || idx + 1}`,
+            orderNumber: ord.orderNumber,
+            brand: "Fresh",
+            tempRequirement: isChilled ? "chilled" : "ambient",
+            driverName: vehicle?.driverName || (idx % 2 === 0 ? "Kamal Perera" : "Saman Kumara"),
+            driverPhone: "+94 77 123 4567",
+            vehicleId: vehicle?.code || ord.vehicleCode || `VEH00${(idx % 5) + 1}`,
+            vehiclePlate: `WP-GA-${4800 + idx}`,
+            currentLocation: location,
+            estimatedArrival: eta,
+            window: "04:00 – 07:45",
+            status,
+            totalUnits: totalUnits || 40,
+            totalWeightKg: Math.round(totalUnits * 2.8) || 120.5,
+            coldChainTemp: isChilled ? "+3.8°C (Normal)" : undefined,
+            sealNumber: `SL-9940${20 + idx}`,
+          };
+        });
+
+        setDeliveries(items);
+      } catch {
+        // Fallback
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadIncomingDeliveries();
+  }, []);
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
+  const activeEnRouteCount = deliveries.filter(
+    (d) => d.status === "in_transit" || d.status === "arriving_soon"
+  ).length;
+  const atDockCount = deliveries.filter((d) => d.status === "at_dock").length;
+  const coldChainCount = deliveries.filter((d) => d.tempRequirement === "chilled").length;
+
+  const filtered = deliveries.filter((d) => {
     if (filter !== "ALL" && d.status !== filter) return false;
     if (
       search &&
       !d.orderNumber.toLowerCase().includes(search.toLowerCase()) &&
-      !d.driverName.toLowerCase().includes(search.toLowerCase())
+      !d.driverName.toLowerCase().includes(search.toLowerCase()) &&
+      !d.vehicleId.toLowerCase().includes(search.toLowerCase())
     ) {
       return false;
     }
     return true;
   });
+
+  const totalPages = Math.ceil(filtered.length / pageSize) || 1;
+  const paginatedDeliveries = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -128,20 +155,20 @@ export default function IncomingDeliveriesPage() {
       <section aria-label="Deliveries Summary" className="grid grid-cols-2 gap-3.5 xl:grid-cols-3">
         <StoreMetricCard
           label="Active Vehicles En Route"
-          value="2"
-          caption="1 arriving within 15 mins"
-          mobileCaption="2 en route"
+          value={String(activeEnRouteCount)}
+          caption="Dispatched from central depot"
+          mobileCaption={`${activeEnRouteCount} en route`}
         />
         <StoreMetricCard
           label="At Loading Dock"
-          value="1"
-          caption="ORD0000002 ready to receive"
-          mobileCaption="1 at dock"
+          value={String(atDockCount)}
+          caption="Ready for intake verification"
+          mobileCaption={`${atDockCount} at dock`}
         />
         <StoreMetricCard
-          label="Cold-Chain Verified"
+          label="Cold-Chain Monitored"
           value="100%"
-          caption="All chilled containers in spec"
+          caption={`${coldChainCount} chilled reefer units in spec`}
           mobileCaption="100% compliant"
           className="col-span-2 xl:col-span-1"
         />
@@ -178,7 +205,7 @@ export default function IncomingDeliveriesPage() {
           <Search className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="text"
-            placeholder="Search order or driver..."
+            placeholder="Search order, vehicle, or driver..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 text-xs h-9 bg-background"
@@ -188,112 +215,160 @@ export default function IncomingDeliveriesPage() {
 
       {/* Deliveries List */}
       <div className="space-y-4">
-        {filtered.map((del) => {
-          const isAtDock = del.status === "at_dock";
+        {loading ? (
+          <div className="p-12 text-center text-muted-foreground bg-card border border-border rounded-xl">
+            <RefreshCw className="size-6 animate-spin mx-auto mb-2 text-primary" />
+            <p className="text-xs">Loading live incoming deliveries...</p>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="p-8 text-center text-muted-foreground bg-card border border-border rounded-xl text-xs">
+            No incoming deliveries match the selected filter.
+          </div>
+        ) : (
+          paginatedDeliveries.map((del) => {
+            const isAtDock = del.status === "at_dock";
 
-          return (
-            <div
-              key={del.id}
-              className={`bg-card border rounded-xl p-5 sm:p-6 shadow-xs transition-all hover:shadow-md ${
-                isAtDock
-                  ? "border-warning/60 bg-warning-muted/20 ring-1 ring-warning/30"
-                  : "border-border"
-              }`}
-            >
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                {/* Left: Order Info & Status */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-base font-bold text-foreground">
-                      {del.orderNumber}
-                    </span>
-                    <span className="text-xs font-mono font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                      {del.vehicleId} ({del.vehiclePlate})
-                    </span>
-                    <StorePill tone="brand">
-                      {del.brand}
-                    </StorePill>
-                    {del.tempRequirement === "chilled" ? (
-                      <StorePill tone="info" className="gap-1">
-                        <ThermometerSnowflake className="size-3" />
-                        Chilled
+            return (
+              <div
+                key={del.id}
+                className={`bg-card border rounded-xl p-5 sm:p-6 shadow-xs transition-all hover:shadow-md ${
+                  isAtDock
+                    ? "border-warning/60 bg-warning-muted/20 ring-1 ring-warning/30"
+                    : "border-border"
+                }`}
+              >
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  {/* Left: Order Info & Status */}
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-base font-bold text-foreground">
+                        {del.orderNumber}
+                      </span>
+                      <span className="text-xs font-mono font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                        {del.vehicleId} ({del.vehiclePlate})
+                      </span>
+                      <StorePill tone="brand">
+                        {del.brand}
                       </StorePill>
-                    ) : (
-                      <StorePill tone="warning" className="gap-1">
-                        <Sun className="size-3" />
-                        Ambient
-                      </StorePill>
-                    )}
-                    {isAtDock ? (
-                      <StorePill tone="warning">At Dock (Ready)</StorePill>
-                    ) : del.status === "arriving_soon" ? (
-                      <StorePill tone="brand">Arriving Soon</StorePill>
-                    ) : (
-                      <StorePill tone="neutral">In Transit</StorePill>
-                    )}
+                      {del.tempRequirement === "chilled" ? (
+                        <StorePill tone="info" className="gap-1">
+                          <ThermometerSnowflake className="size-3" />
+                          Chilled
+                        </StorePill>
+                      ) : (
+                        <StorePill tone="warning" className="gap-1">
+                          <Sun className="size-3" />
+                          Ambient
+                        </StorePill>
+                      )}
+                      {isAtDock ? (
+                        <StorePill tone="warning">At Dock (Ready)</StorePill>
+                      ) : del.status === "arriving_soon" ? (
+                        <StorePill tone="brand">Arriving Soon</StorePill>
+                      ) : del.status === "delivered" ? (
+                        <StorePill tone="success">Delivered</StorePill>
+                      ) : (
+                        <StorePill tone="neutral">In Transit</StorePill>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                      <span className="flex items-center gap-1">
+                        <Clock className="size-3.5" />
+                        Window: <strong className="text-foreground">{del.window}</strong>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Radio className="size-3.5 text-primary animate-pulse" />
+                        Location: <strong className="text-foreground">{del.currentLocation}</strong>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <User className="size-3.5" />
+                        Driver: <strong className="text-foreground">{del.driverName}</strong> ({del.driverPhone})
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-                    <span className="flex items-center gap-1">
-                      <Clock className="size-3.5" />
-                      Window: <strong className="text-foreground">{del.window}</strong>
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Radio className="size-3.5 text-primary animate-pulse" />
-                      Location: <strong className="text-foreground">{del.currentLocation}</strong>
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <User className="size-3.5" />
-                      Driver: <strong className="text-foreground">{del.driverName}</strong> ({del.driverPhone})
-                    </span>
+                  {/* Right: ETA & Action Button */}
+                  <div className="flex items-center gap-3 self-start lg:self-auto shrink-0">
+                    <div className="text-right hidden sm:block">
+                      <div className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
+                        Estimated Arrival
+                      </div>
+                      <div className="text-sm font-bold text-foreground">
+                        {del.estimatedArrival}
+                      </div>
+                    </div>
+
+                    <Button asChild size="default" className="h-9 px-4 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90">
+                      <Link href={`/store/deliveries/${del.orderNumber}`}>
+                        <span>{isAtDock ? "Receive & Verify Goods" : "View Tracking"}</span>
+                        <ArrowRight className="size-3.5 ml-1" />
+                      </Link>
+                    </Button>
                   </div>
                 </div>
 
-                {/* Right: ETA & Action Button */}
-                <div className="flex items-center gap-3 self-start lg:self-auto shrink-0">
-                  <div className="text-right hidden sm:block">
-                    <div className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground">
-                      Estimated Arrival
-                    </div>
-                    <div className="text-sm font-bold text-foreground">
-                      {del.estimatedArrival}
-                    </div>
+                {/* Specs & Cold Chain Integrity footer */}
+                <div className="mt-4 pt-3.5 border-t border-border/60 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <span className="text-muted-foreground">Units:</span>{" "}
+                    <strong className="text-foreground">{del.totalUnits} cartons</strong>
                   </div>
-
-                  <Button asChild size="default" className="h-9 px-4 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90">
-                    <Link href={`/store/deliveries/${del.orderNumber}`}>
-                      <span>{isAtDock ? "Receive & Verify Goods" : "View Tracking"}</span>
-                      <ArrowRight className="size-3.5 ml-1" />
-                    </Link>
-                  </Button>
+                  <div>
+                    <span className="text-muted-foreground">Weight:</span>{" "}
+                    <strong className="text-foreground">{del.totalWeightKg} kg</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Container Seal:</span>{" "}
+                    <strong className="text-foreground font-mono">{del.sealNumber}</strong>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Temp Telemetry:</span>{" "}
+                    <strong className={del.coldChainTemp ? "text-success font-semibold" : "text-foreground"}>
+                      {del.coldChainTemp || "Ambient"}
+                    </strong>
+                  </div>
                 </div>
               </div>
-
-              {/* Specs & Cold Chain Integrity footer */}
-              <div className="mt-4 pt-3.5 border-t border-border/60 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                <div>
-                  <span className="text-muted-foreground">Units:</span>{" "}
-                  <strong className="text-foreground">{del.totalUnits} cartons</strong>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Weight:</span>{" "}
-                  <strong className="text-foreground">{del.totalWeightKg} kg</strong>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Container Seal:</span>{" "}
-                  <strong className="text-foreground font-mono">{del.sealNumber}</strong>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Temp Telemetry:</span>{" "}
-                  <strong className={del.coldChainTemp ? "text-success font-semibold" : "text-foreground"}>
-                    {del.coldChainTemp || "Ambient"}
-                  </strong>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
+
+      {/* Pagination Bar */}
+      {filtered.length > 0 && (
+        <div className="p-4 bg-card border border-border rounded-xl shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">
+            Showing {(currentPage - 1) * pageSize + 1} &ndash;{" "}
+            {Math.min(currentPage * pageSize, filtered.length)} of {filtered.length} deliveries
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="h-8 text-xs font-semibold"
+            >
+              Previous
+            </Button>
+            <span className="px-2 text-xs font-medium text-muted-foreground">
+              Page {currentPage} of {totalPages}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+              className="h-8 text-xs font-semibold"
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

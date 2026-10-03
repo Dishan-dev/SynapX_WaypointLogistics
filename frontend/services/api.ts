@@ -23,7 +23,7 @@ export interface ReceiptCreatePayload {
   synced_from_offline?: boolean;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // --- Receipts API & Offline Helpers ---
 
