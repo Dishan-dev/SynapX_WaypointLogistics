@@ -1,13 +1,15 @@
 from datetime import datetime
 from typing import Generator, Optional
 from zoneinfo import ZoneInfo
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.user import User, UserRole
+from app.models.depot_dispatcher import DepotDispatcherAssignment
+from app.models.reference import Depot
 from app.schemas.auth import TokenPayload
 
 # Make token optional so KEYCLOAK_DEV_MODE endpoints don't require the header
@@ -76,15 +78,22 @@ def get_current_user(
     sub = str(payload.get("sub"))
     email = payload.get("email") or payload.get("preferred_username")
 
-    user = None
-    try:
-        user_id = int(sub)
-        user = db.query(User).filter(User.id == user_id).first()
-    except (ValueError, TypeError):
-        pass
+    user = db.query(User).filter(User.keycloak_id == sub).first()
+    if not user:
+        try:
+            user_id = int(sub)
+            user = db.query(User).filter(User.id == user_id).first()
+        except (ValueError, TypeError):
+            pass
 
     if not user and email:
         user = db.query(User).filter(User.email == email).first()
+
+    # Link existing local operational users to their stable Keycloak subject
+    # the first time they sign in.  Subsequent depot assignments use this link.
+    if user and not user.keycloak_id and ("realm_access" in payload or "preferred_username" in payload):
+        user.keycloak_id = sub
+        db.commit()
 
     # If user not found in local DB and token is from Keycloak, automatically provision
     if not user and ("realm_access" in payload or "preferred_username" in payload):
@@ -100,6 +109,7 @@ def get_current_user(
             mapped_role = UserRole.WAREHOUSE_MANAGER
 
         user = User(
+            keycloak_id=sub,
             email=email or f"kc-{sub}@waypoint.synapx.lk",
             full_name=payload.get("name") or payload.get("preferred_username") or "Keycloak Operator",
             hashed_password="KEYCLOAK_MANAGED_USER",
@@ -119,6 +129,45 @@ def get_current_user(
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
+
+
+def get_dispatcher_depot(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    x_waypoint_depot: Optional[str] = Header(default=None, alias="X-Waypoint-Depot"),
+) -> Depot:
+    """Return the operational depot allowed for a dispatcher request.
+
+    A signed-in dispatcher is locked to their admin-assigned depot. Only an
+    administrator can choose a header scope. Development mode keeps the
+    temporary header/default so local work can continue before identities are
+    provisioned in Keycloak.
+    """
+    raw = (x_waypoint_depot or settings.DISPATCHER_DEFAULT_DEPOT).strip().lower()
+    try:
+        requested = Depot(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Depot scope must be either 'peliyagoda' or 'kandy'.",
+        ) from exc
+
+    if current_user.role == UserRole.ADMIN:
+        return requested
+
+    assignment = db.query(DepotDispatcherAssignment).filter(
+        DepotDispatcherAssignment.user_id == current_user.id
+    ).first()
+    if assignment:
+        return assignment.depot
+
+    if settings.KEYCLOAK_DEV_MODE and current_user.id == 0:
+        return requested
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Your Keycloak dispatcher account has not been assigned to a depot. Please contact your administrator.",
+    )
 
 
 def require_dispatcher_or_admin(
@@ -144,6 +193,18 @@ def require_dispatcher_or_admin(
             detail="Only dispatchers and admins can perform this action.",
         )
     return user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Require the Keycloak-mapped administrator role outside development."""
+    if settings.KEYCLOAK_DEV_MODE:
+        return current_user
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System administrator access is required.",
+        )
+    return current_user
 
 
 def require_driver(current_user: User = Depends(get_current_user)) -> User:

@@ -1,3 +1,5 @@
+import { dispatcherDepotHeaders } from "@/lib/dispatcher-depot";
+
 export interface FleetVehicle {
   id: number;
   code: string;
@@ -13,7 +15,6 @@ export interface FleetVehicle {
   maintenance_state: string | null;
   updated_at: string;
 }
-
 export const normalize = (value: string) => value.trim().toLowerCase();
 
 export function formatCapacity(value: number, unit: string) {
@@ -32,6 +33,7 @@ export async function fetchFleet(signal: AbortSignal): Promise<FleetVehicle[]> {
     const response = await fetch(`${base}/api/v1/fleet/vehicles?skip=${skip}&limit=${limit}`, {
       signal,
       cache: "no-store",
+      headers: dispatcherDepotHeaders(),
     });
     if (!response.ok) throw new Error(`Fleet request failed (${response.status}).`);
     const page: FleetVehicle[] = await response.json();

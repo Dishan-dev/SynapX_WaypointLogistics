@@ -2,6 +2,7 @@ from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, field_validator, computed_field
 from app.models.order import OrderStatus
+from app.models.reference import Depot
 
 
 class OrderItemBase(BaseModel):
@@ -40,6 +41,7 @@ class OrderBase(BaseModel):
     operating_date: Optional[str] = None
     deferral_reason: Optional[str] = None
     allocation_id: Optional[int] = None
+    depot: Depot = Depot.PELIYAGODA
 
     @field_validator("status", mode="before")
     @classmethod

@@ -10,6 +10,7 @@ import { LoadingShortfallDialog } from "@/components/dispatcher/LoadingShortfall
 import { ManifestDialog } from "@/components/dispatcher/ManifestDialog";
 
 import { toast } from "sonner";
+import { dispatcherDepotHeaders } from "@/lib/dispatcher-depot";
 
 const STATUS_OPTIONS = [
   { label: "All Statuses", value: "" },
@@ -69,7 +70,7 @@ export default function DeliveryRunsPage() {
   const fetchRuns = useCallback(async (isBackground = false) => {
     if (!isBackground) setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/delivery-runs/`);
+      const res = await fetch(`${API_BASE}/api/v1/delivery-runs/`, { headers: dispatcherDepotHeaders() });
       if (res.ok) {
         const data: DeliveryRun[] = await res.json();
         setRuns(data);

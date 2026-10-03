@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from datetime import timezone
 
-from app.api.deps import get_db, require_dispatcher_or_admin
+from app.api.deps import get_db, get_dispatcher_depot, require_dispatcher_or_admin
 from app.models.user import User
 from app.models.fleet import Vehicle, DriverProfile, VehicleStatus
 from app.schemas.fleet import (
@@ -20,6 +20,8 @@ from app.schemas.fleet import (
     DriverProfileResponse,
 )
 from app.models.allocation import Allocation, AllocationStatus
+from app.models.reference import Depot
+from sqlalchemy import func
 
 router = APIRouter()
 
@@ -202,14 +204,15 @@ def get_vehicles(
     db: Session = Depends(get_db),
     status: Optional[str] = None,
     skip: int = 0,
-    limit: int = 200
+    limit: int = 200,
+    depot: Depot = Depends(get_dispatcher_depot),
 ) -> Any:
     """
     Retrieve vehicles with assigned driver info. Optionally filter by status.
     """
     query = db.query(Vehicle).options(
         joinedload(Vehicle.driver).joinedload(DriverProfile.user)
-    )
+    ).filter(func.lower(Vehicle.depot_name) == depot.value)
     if status and status != "ALL":
         query = query.filter(Vehicle.status == status.upper())
     vehicles = query.offset(skip).limit(limit).all()
@@ -220,6 +223,7 @@ def create_vehicle(
     vehicle_in: VehicleCreate,
     db: Session = Depends(get_db),
     _: User = Depends(require_dispatcher_or_admin),
+    depot: Depot = Depends(get_dispatcher_depot),
 ) -> Any:
     """
     Create new vehicle.
@@ -231,6 +235,9 @@ def create_vehicle(
             detail="The vehicle with this code already exists in the system.",
         )
     v_data = vehicle_in.model_dump(exclude={"assigned_driver_id"})
+    # A dispatcher cannot create fleet capacity for another depot through a
+    # crafted payload.
+    v_data["depot_name"] = depot.value
     vehicle = Vehicle(**v_data)
     db.add(vehicle)
     try:
@@ -261,8 +268,12 @@ def update_vehicle_patch(
     vehicle_in: VehicleUpdate,
     db: Session = Depends(get_db),
     _: User = Depends(require_dispatcher_or_admin),
+    depot: Depot = Depends(get_dispatcher_depot),
 ) -> Any:
-    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).with_for_update().first()
+    vehicle = db.query(Vehicle).filter(
+        Vehicle.id == vehicle_id,
+        func.lower(Vehicle.depot_name) == depot.value,
+    ).with_for_update().first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
     def utc_naive(value):
@@ -270,6 +281,8 @@ def update_vehicle_patch(
     if hasattr(vehicle_in, "expected_updated_at") and vehicle_in.expected_updated_at and utc_naive(vehicle.updated_at) != utc_naive(vehicle_in.expected_updated_at):
         raise HTTPException(status_code=409, detail="Vehicle changed since you opened it. Close the form, refresh, and try again.")
     changes = vehicle_in.model_dump(exclude_unset=True, exclude={"expected_updated_at"})
+    if "depot_name" in changes and changes["depot_name"].strip().lower() != depot.value:
+        raise HTTPException(status_code=403, detail="Vehicles cannot be moved between depots from this workspace.")
     changes = {key: value for key, value in changes.items() if getattr(vehicle, key) != value}
     protected = {"status", "code", "vehicle_type", "capacity_kg", "capacity_vol_m3", "temperature_mode", "depot_name"}
     if protected.intersection(changes):

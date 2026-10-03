@@ -7,23 +7,44 @@ from app.models.reference import Brand, Depot, DockType
 # ── User Schemas ──────────────────────────────────────────
 
 class AdminUserRead(BaseModel):
-    id: int
+    id: Optional[int] = None
+    keycloak_id: Optional[str] = None
+    username: Optional[str] = None
     email: str
     full_name: str
     role: str
     role_display: str
+    assigned_depot: Optional[str] = None  # peliyagoda, kandy, or None
     is_active: bool
+    email_verified: bool = True
+    is_keycloak_managed: bool = True
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
+class AdminUserPasswordReset(BaseModel):
+    password: str
+    temporary: bool = False
+
+
+class KeycloakSyncResult(BaseModel):
+    success: bool
+    message: str
+    synced_count: int
+    created_count: int
+    updated_count: int
+    keycloak_total: int
+    db_total: int
+
+
 class AdminUserCreate(BaseModel):
     email: EmailStr
     full_name: str
     password: str
-    role: str = "DISPATCHER"  # ADMIN, DISPATCHER, WAREHOUSE_MANAGER, DRIVER, CLIENT
+    role: str = "DISPATCHER"  # ADMIN, DISPATCHER, WAREHOUSE_MANAGER, DRIVER, CLIENT, LOADER
+    assigned_depot: Optional[str] = None
     is_active: bool = True
 
 
@@ -31,6 +52,7 @@ class AdminUserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
     role: Optional[str] = None
+    assigned_depot: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = None
 
@@ -124,6 +146,17 @@ class OutletManagerAssignRequest(BaseModel):
 
 
 # ── Depots Schemas ────────────────────────────────────────
+
+class DepotDispatcherRead(BaseModel):
+    id: int
+    full_name: str
+    email: EmailStr
+    keycloak_id: Optional[str] = None
+
+
+class DepotDispatcherAssignRequest(BaseModel):
+    user_id: Optional[int] = None
+    keycloak_id: Optional[str] = None
 
 class DepotSummary(BaseModel):
     key: str

@@ -90,6 +90,7 @@ class OrderService:
             operating_date=order_in.operating_date,
             deferral_reason=order_in.deferral_reason,
             allocation_id=order_in.allocation_id,
+            depot=order_in.depot,
         )
         db.add(db_order)
         db.flush()
@@ -188,6 +189,7 @@ class OrderService:
                 order_number=number,
                 client_name=outlet.name,
                 destination_address=f"{outlet.name}, {outlet.district}",
+                depot=outlet.depot,
                 status=OrderStatus.SUBMITTED,
                 total_amount=sum(item.quantity * item.unit_price for item in lines),
                 # Stored capitalised ("Fresh"), matching the Dispatcher's orders and filters.
