@@ -11,6 +11,7 @@ import { AllocationSuccessBanner } from "@/components/dispatcher/orders/Allocati
 import { MetricCard } from "@/components/dispatcher/MetricCard";
 import { Button } from "@/components/ui/button";
 import { fetchWithFallback } from "@/lib/api";
+import { DEPOT_CHANGE_EVENT } from "@/lib/dispatcher-depot";
 import { RefreshCw, Package, Layers } from "lucide-react";
 import { StocksView } from "@/components/dispatcher/orders/StocksView";
 import { OrderDetailDrawer } from "@/components/dispatcher/orders/OrderDetailDrawer";
@@ -93,12 +94,17 @@ export default function DispatcherOrdersPage() {
     const onFocus = () => {
       loadOrdersAndMetrics();
     };
+    const onDepotChange = () => {
+      loadOrdersAndMetrics();
+    };
     window.addEventListener("focus", onFocus);
+    window.addEventListener(DEPOT_CHANGE_EVENT, onDepotChange);
 
     return () => {
       ignore = true;
       clearInterval(interval);
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(DEPOT_CHANGE_EVENT, onDepotChange);
     };
   }, [statusFilter, brandFilter, districtFilter, searchQuery, refreshCount]);
 

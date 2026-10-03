@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import or_, and_, func
 from app.api import deps
 from app.models.order import Order, OrderStatus
+from app.models.reference import Depot
 from app.schemas.order import OrderCreate, OrderRead, OrderUpdate
 from app.services.order_service import order_service
 from pydantic import BaseModel
@@ -27,8 +28,9 @@ class DeferOrderRequest(BaseModel):
 def get_order_metrics(
     operating_date: Optional[str] = None,
     db: Session = Depends(deps.get_db),
+    depot: Depot = Depends(deps.get_dispatcher_depot),
 ):
-    query = db.query(Order)
+    query = db.query(Order).filter(Order.depot == depot)
     if operating_date:
         query = query.filter(Order.operating_date == operating_date)
 
@@ -75,8 +77,9 @@ def list_orders(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(deps.get_db),
+    depot: Depot = Depends(deps.get_dispatcher_depot),
 ):
-    query = db.query(Order).options(selectinload(Order.items))
+    query = db.query(Order).options(selectinload(Order.items)).filter(Order.depot == depot)
 
     if is_late is not None:
         query = query.filter(Order.is_late == is_late)
@@ -129,16 +132,26 @@ def list_orders(
 
 
 @router.post("/", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
-def create_order(order_in: OrderCreate, db: Session = Depends(deps.get_db)):
+def create_order(
+    order_in: OrderCreate,
+    db: Session = Depends(deps.get_db),
+    depot: Depot = Depends(deps.get_dispatcher_depot),
+):
     existing = db.query(Order).filter(Order.order_number == order_in.order_number).first()
     if existing:
         raise HTTPException(status_code=400, detail="Order number already exists")
+    # Depot belongs to the dispatcher scope, never to an arbitrary request body.
+    order_in.depot = depot
     return order_service.create_order(db=db, order_in=order_in)
 
 
 @router.post("/bulk-allocate")
-def bulk_allocate_orders(req: BulkAllocateRequest, db: Session = Depends(deps.get_db)):
-    orders = db.query(Order).filter(Order.id.in_(req.order_ids)).all()
+def bulk_allocate_orders(
+    req: BulkAllocateRequest,
+    db: Session = Depends(deps.get_db),
+    depot: Depot = Depends(deps.get_dispatcher_depot),
+):
+    orders = db.query(Order).filter(Order.id.in_(req.order_ids), Order.depot == depot).all()
     if not orders:
         raise HTTPException(status_code=404, detail="No matching orders found")
 
@@ -163,8 +176,13 @@ def bulk_allocate_orders(req: BulkAllocateRequest, db: Session = Depends(deps.ge
 
 
 @router.post("/{order_id}/defer", response_model=OrderRead)
-def defer_order(order_id: int, req: DeferOrderRequest, db: Session = Depends(deps.get_db)):
-    order = db.query(Order).filter(Order.id == order_id).first()
+def defer_order(
+    order_id: int,
+    req: DeferOrderRequest,
+    db: Session = Depends(deps.get_db),
+    depot: Depot = Depends(deps.get_dispatcher_depot),
+):
+    order = db.query(Order).filter(Order.id == order_id, Order.depot == depot).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
@@ -179,16 +197,25 @@ def defer_order(order_id: int, req: DeferOrderRequest, db: Session = Depends(dep
 
 
 @router.get("/{order_id}", response_model=OrderRead)
-def get_order(order_id: int, db: Session = Depends(deps.get_db)):
-    order = db.query(Order).options(selectinload(Order.items)).filter(Order.id == order_id).first()
+def get_order(
+    order_id: int,
+    db: Session = Depends(deps.get_db),
+    depot: Depot = Depends(deps.get_dispatcher_depot),
+):
+    order = db.query(Order).options(selectinload(Order.items)).filter(Order.id == order_id, Order.depot == depot).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
 
 @router.patch("/{order_id}", response_model=OrderRead)
-def update_order(order_id: int, order_in: OrderUpdate, db: Session = Depends(deps.get_db)):
-    order = db.query(Order).filter(Order.id == order_id).first()
+def update_order(
+    order_id: int,
+    order_in: OrderUpdate,
+    db: Session = Depends(deps.get_db),
+    depot: Depot = Depends(deps.get_dispatcher_depot),
+):
+    order = db.query(Order).filter(Order.id == order_id, Order.depot == depot).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     update_data = order_in.model_dump(exclude_unset=True)

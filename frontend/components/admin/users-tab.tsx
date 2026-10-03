@@ -17,6 +17,7 @@ import {
   AlertCircle,
   Copy,
   Check,
+  MapPin,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,7 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
     email: "",
     password: "",
     role: "DISPATCHER",
+    assigned_depot: "peliyagoda",
     is_active: true,
   });
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
@@ -83,6 +85,7 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
     full_name: "",
     email: "",
     role: "DISPATCHER",
+    assigned_depot: "unassigned",
     password: "",
     is_active: true,
   });
@@ -160,13 +163,24 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
 
     setIsSubmittingCreate(true);
     try {
-      await adminService.createUser(createForm);
+      await adminService.createUser({
+        full_name: createForm.full_name,
+        email: createForm.email,
+        password: createForm.password,
+        role: createForm.role,
+        assigned_depot:
+          createForm.role === "DISPATCHER" && createForm.assigned_depot !== "unassigned"
+            ? createForm.assigned_depot
+            : null,
+        is_active: createForm.is_active,
+      });
       setIsCreateOpen(false);
       setCreateForm({
         full_name: "",
         email: "",
         password: "",
         role: "DISPATCHER",
+        assigned_depot: "peliyagoda",
         is_active: true,
       });
       setNotification({
@@ -188,6 +202,7 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
       full_name: user.full_name,
       email: user.email,
       role: user.role,
+      assigned_depot: user.assigned_depot ? user.assigned_depot.toLowerCase() : "unassigned",
       password: "",
       is_active: user.is_active,
     });
@@ -209,6 +224,12 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
         full_name: editForm.full_name,
         email: editForm.email,
         role: editForm.role,
+        assigned_depot:
+          editForm.role === "DISPATCHER"
+            ? editForm.assigned_depot === "unassigned"
+              ? null
+              : editForm.assigned_depot
+            : null,
         is_active: editForm.is_active,
         password: editForm.password ? editForm.password : undefined,
       });
@@ -472,7 +493,34 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell className="py-3">{getRoleBadge(user.role)}</TableCell>
+                  <TableCell className="py-3">
+                    <div className="flex flex-col gap-1 items-start">
+                      {getRoleBadge(user.role)}
+                      {user.role === "DISPATCHER" && (
+                        user.assigned_depot ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] py-0 px-1.5 font-medium flex items-center gap-1 ${
+                              user.assigned_depot.toLowerCase() === "kandy"
+                                ? "bg-purple-50 text-purple-700 border-purple-200"
+                                : "bg-blue-50 text-blue-700 border-blue-200"
+                            }`}
+                          >
+                            <MapPin className="size-2.5" />
+                            <span>{user.assigned_depot.toLowerCase() === "kandy" ? "Kandy Hub" : "Peliyagoda Hub"}</span>
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] py-0 px-1.5 font-medium bg-amber-50 text-amber-700 border-amber-200 flex items-center gap-1"
+                          >
+                            <AlertCircle className="size-2.5 text-amber-600" />
+                            <span>Unassigned Hub</span>
+                          </Badge>
+                        )
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell className="py-3">
                     <div className="flex items-center gap-2">
                       <Switch
@@ -634,6 +682,31 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
               </Select>
             </div>
 
+            {createForm.role === "DISPATCHER" && (
+              <div className="space-y-1.5 p-3 rounded-lg border border-blue-100 bg-blue-50/40">
+                <Label className="text-xs font-semibold flex items-center gap-1.5 text-blue-950">
+                  <MapPin className="size-3.5 text-blue-600" />
+                  <span>Assigned Depot Hub</span>
+                </Label>
+                <Select
+                  value={createForm.assigned_depot}
+                  onValueChange={(val) => setCreateForm({ ...createForm, assigned_depot: val })}
+                >
+                  <SelectTrigger className="text-xs bg-white">
+                    <SelectValue placeholder="Select Depot Assignment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="peliyagoda">Peliyagoda Central Depot (Western Province)</SelectItem>
+                    <SelectItem value="kandy">Kandy Regional Depot (Central Province)</SelectItem>
+                    <SelectItem value="unassigned">Unassigned (Assign later)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  The dispatcher will strictly access orders, fleet, and manifests for this depot.
+                </p>
+              </div>
+            )}
+
             <div className="flex items-center justify-between rounded-lg border border-border p-3">
               <div className="space-y-0.5">
                 <Label className="text-xs font-semibold">Account Status</Label>
@@ -728,6 +801,31 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
                 </SelectContent>
               </Select>
             </div>
+
+            {editForm.role === "DISPATCHER" && (
+              <div className="space-y-1.5 p-3 rounded-lg border border-blue-100 bg-blue-50/40">
+                <Label className="text-xs font-semibold flex items-center gap-1.5 text-blue-950">
+                  <MapPin className="size-3.5 text-blue-600" />
+                  <span>Assigned Depot Hub</span>
+                </Label>
+                <Select
+                  value={editForm.assigned_depot}
+                  onValueChange={(val) => setEditForm({ ...editForm, assigned_depot: val })}
+                >
+                  <SelectTrigger className="text-xs bg-white">
+                    <SelectValue placeholder="Select Depot Assignment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="peliyagoda">Peliyagoda Central Depot (Western Province)</SelectItem>
+                    <SelectItem value="kandy">Kandy Regional Depot (Central Province)</SelectItem>
+                    <SelectItem value="unassigned">Unassigned (Clear Assignment)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Dispatcher portal data will be strictly isolated to this operational depot.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">New Password (leave blank to keep unchanged)</Label>

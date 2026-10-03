@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import inspect, or_, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, selectinload, undefer
 
 from app.api import deps
 from app.api.deps import get_db, require_dispatcher_or_admin
@@ -240,7 +240,18 @@ def legacy_outlets(db: Session, skip: int, limit: int, outlet_id: int | None = N
 
 
 def detail_query(db: Session):
-    return db.query(Outlet).options(selectinload(Outlet.contacts), selectinload(Outlet.receiving_windows))
+    # Outlet profile fields are deferred for compatibility with loader-only
+    # deployments. Once profiles are available, load them in the list query to
+    # avoid one additional SQL query per outlet during response serialization.
+    return db.query(Outlet).options(
+        undefer(Outlet.address),
+        undefer(Outlet.active),
+        undefer(Outlet.delivery_restrictions),
+        undefer(Outlet.created_at),
+        undefer(Outlet.updated_at),
+        selectinload(Outlet.contacts),
+        selectinload(Outlet.receiving_windows),
+    )
 
 
 @router.get("", response_model=List[OutletRead])

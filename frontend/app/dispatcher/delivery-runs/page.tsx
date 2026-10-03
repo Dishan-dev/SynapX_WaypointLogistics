@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 
 import { toast } from "sonner";
+import { dispatcherDepotHeaders } from "@/lib/dispatcher-depot";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001";
 
@@ -62,7 +63,7 @@ export default function DeliveryRunsPage() {
   const fetchRuns = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/delivery-runs/`);
+      const res = await fetch(`${API_BASE}/api/v1/delivery-runs/`, { headers: dispatcherDepotHeaders() });
       if (res.ok) {
         const data: DeliveryRun[] = await res.json();
         setRuns(data);

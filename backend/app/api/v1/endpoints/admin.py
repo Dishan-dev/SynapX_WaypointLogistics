@@ -9,6 +9,8 @@ from app.api import deps
 from app.core import security, keycloak_admin
 from app.core.config import settings
 from app.models.user import User, UserRole
+from app.models.depot_dispatcher import DepotDispatcherAssignment
+from app.models.reference import Depot
 from app.models.loader_user import LoaderUser
 from app.models.fleet import Vehicle, VehicleStatus
 from app.models.reference import (
@@ -32,6 +34,7 @@ from app.schemas.admin import (
     RolePermissionItem,
     RoleAssignRequest,
     DepotSummary,
+    DepotDispatcherAssignRequest,
     OperationalConfig,
     DeliveryWindowConfig,
     TripConstraintConfig,
@@ -313,6 +316,12 @@ def list_admin_users(
     include_loaders: bool = True,
     db: Session = Depends(deps.get_db),
 ) -> Any:
+    # Pre-fetch all active depot dispatcher assignments for quick lookup
+    depot_assignments = {
+        a.user_id: a.depot.value if hasattr(a.depot, "value") else str(a.depot).lower()
+        for a in db.query(DepotDispatcherAssignment).all()
+    }
+
     # When Keycloak Admin is configured, Keycloak is the authoritative single source of truth!
     if keycloak_admin.is_keycloak_admin_configured():
         kc_users = keycloak_admin.list_keycloak_users(max_users=500)
@@ -373,6 +382,8 @@ def list_admin_users(
                 is_active=enabled,
             )
 
+            user_assigned_depot = depot_assignments.get(shadow.id) if shadow else None
+
             result.append(
                 AdminUserRead(
                     id=shadow.id if shadow else None,
@@ -382,6 +393,7 @@ def list_admin_users(
                     full_name=full_name,
                     role=mapped_role,
                     role_display=role_to_display(mapped_role),
+                    assigned_depot=user_assigned_depot,
                     is_active=enabled,
                     email_verified=email_verified,
                     is_keycloak_managed=True,
@@ -415,6 +427,7 @@ def list_admin_users(
                         full_name=l.full_name,
                         role="LOADER",
                         role_display="Dock Loader",
+                        assigned_depot=None,
                         is_active=l.is_active,
                         is_keycloak_managed=False,
                         created_at=l.created_at,
@@ -458,12 +471,14 @@ def list_admin_users(
                 full_name=u.full_name,
                 role=mapped_role,
                 role_display=role_to_display(val),
+                assigned_depot=depot_assignments.get(u.id),
                 is_active=u.is_active,
                 is_keycloak_managed=bool(u.keycloak_id is not None),
                 created_at=u.created_at,
                 updated_at=u.updated_at,
             )
         )
+
 
     # Optionally include Loader workers if looking at all users or LOADER filter
     if include_loaders and (not role or role.upper() == "LOADER"):
@@ -569,6 +584,20 @@ def create_admin_user(
             db.add(new_loader)
             db.commit()
 
+    # 4. If role is DISPATCHER and assigned_depot is provided, assign dispatcher to depot
+    assigned_depot_result = None
+    if role_str == "DISPATCHER" and user_in.assigned_depot:
+        depot_val = user_in.assigned_depot.strip().lower()
+        if depot_val in ("peliyagoda", "kandy"):
+            target_depot = Depot.PELIYAGODA if depot_val == "peliyagoda" else Depot.KANDY
+            # Delete any existing assignment on that depot or user
+            db.query(DepotDispatcherAssignment).filter(
+                or_(DepotDispatcherAssignment.depot == target_depot, DepotDispatcherAssignment.user_id == new_user.id)
+            ).delete()
+            db.add(DepotDispatcherAssignment(depot=target_depot, user_id=new_user.id))
+            db.commit()
+            assigned_depot_result = depot_val
+
     val = new_user.role.value if hasattr(new_user.role, "value") else str(new_user.role)
     mapped_role = "STORE_MANAGER" if val in ("STORE_MANAGER", "WAREHOUSE_MANAGER") else val
 
@@ -588,11 +617,13 @@ def create_admin_user(
         full_name=new_user.full_name,
         role=mapped_role,
         role_display=role_to_display(mapped_role),
+        assigned_depot=assigned_depot_result,
         is_active=new_user.is_active,
         is_keycloak_managed=True,
         created_at=new_user.created_at,
         updated_at=new_user.updated_at,
     )
+
 
 
 @router.put("/users/{user_id}", response_model=AdminUserRead)
@@ -698,6 +729,28 @@ def update_admin_user(
             is_active=target_active,
         )
 
+    # Handle depot assignment update if requested
+    if user_in.assigned_depot is not None:
+        depot_val = user_in.assigned_depot.strip().lower()
+        if depot_val in ("peliyagoda", "kandy"):
+            target_depot = Depot.PELIYAGODA if depot_val == "peliyagoda" else Depot.KANDY
+            # Remove any existing assignment for this user across all depots
+            db.query(DepotDispatcherAssignment).filter(DepotDispatcherAssignment.user_id == local_u.id).delete()
+            # Reassign target depot
+            existing_depot_assignment = db.get(DepotDispatcherAssignment, target_depot)
+            if existing_depot_assignment:
+                existing_depot_assignment.user_id = local_u.id
+            else:
+                db.add(DepotDispatcherAssignment(depot=target_depot, user_id=local_u.id))
+            db.commit()
+        elif depot_val in ("unassigned", "none", ""):
+            db.query(DepotDispatcherAssignment).filter(DepotDispatcherAssignment.user_id == local_u.id).delete()
+            db.commit()
+
+    # Query current assignment
+    cur_assignment = db.query(DepotDispatcherAssignment).filter(DepotDispatcherAssignment.user_id == local_u.id).first()
+    assigned_depot_val = cur_assignment.depot.value if cur_assignment and hasattr(cur_assignment.depot, "value") else (str(cur_assignment.depot).lower() if cur_assignment else None)
+
     val = local_u.role.value if hasattr(local_u.role, "value") else str(local_u.role)
     mapped_role = "STORE_MANAGER" if val == "WAREHOUSE_MANAGER" else val
 
@@ -717,6 +770,7 @@ def update_admin_user(
         full_name=local_u.full_name,
         role=mapped_role,
         role_display=role_to_display(val),
+        assigned_depot=assigned_depot_val,
         is_active=local_u.is_active,
         is_keycloak_managed=True,
         created_at=local_u.created_at,
@@ -1019,6 +1073,78 @@ def assign_user_role(
 
 # ── 4. Depots Endpoint ────────────────────────────────────
 
+def _depot_dispatcher(db: Session, depot: Depot) -> Optional[Dict[str, Any]]:
+    assignment = db.get(DepotDispatcherAssignment, depot)
+    if not assignment or not assignment.dispatcher:
+        return None
+    user = assignment.dispatcher
+    return {
+        "id": user.id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "keycloak_id": user.keycloak_id,
+    }
+
+
+@router.put("/depots/{depot}/dispatcher")
+def assign_depot_dispatcher(
+    depot: Depot,
+    payload: DepotDispatcherAssignRequest,
+    db: Session = Depends(deps.get_db),
+    _: User = Depends(deps.require_admin),
+) -> Any:
+    """Set or clear the single dispatcher responsible for a depot."""
+    assignment = db.get(DepotDispatcherAssignment, depot)
+
+    if payload.user_id is None and not payload.keycloak_id:
+        if assignment:
+            previous = assignment.dispatcher.full_name if assignment.dispatcher else "dispatcher"
+            db.delete(assignment)
+            db.commit()
+            record_audit(
+                action_type="DEPOT_DISPATCHER_UNASSIGNED",
+                entity_name="Depot Dispatcher",
+                entity_id=depot.value,
+                summary=f"Removed {previous} as the dispatcher for {depot.value.title()}.",
+                severity="INFO",
+            )
+        return {"depot": depot.value, "dispatcher": None}
+
+    user = None
+    if payload.user_id is not None:
+        user = db.query(User).filter(User.id == payload.user_id).first()
+    elif payload.keycloak_id is not None:
+        user = db.query(User).filter(User.keycloak_id == payload.keycloak_id).first()
+
+    if not user or not user.is_active:
+        raise HTTPException(status_code=404, detail="Active dispatcher user not found")
+    if user.role != UserRole.DISPATCHER:
+        raise HTTPException(status_code=422, detail="Only users with the Dispatcher role can be assigned to a depot")
+
+    # A dispatcher can only be responsible for one depot. Moving them is
+    # explicit: remove their previous assignment as part of this transaction.
+    existing_for_user = db.query(DepotDispatcherAssignment).filter(
+        DepotDispatcherAssignment.user_id == user.id
+    ).first()
+    if existing_for_user and existing_for_user.depot != depot:
+        db.delete(existing_for_user)
+
+    if assignment:
+        assignment.user_id = user.id
+    else:
+        assignment = DepotDispatcherAssignment(depot=depot, user_id=user.id)
+        db.add(assignment)
+    db.commit()
+
+    record_audit(
+        action_type="DEPOT_DISPATCHER_ASSIGNED",
+        entity_name="Depot Dispatcher",
+        entity_id=depot.value,
+        summary=f"Assigned {user.full_name} ({user.email}) as dispatcher for {depot.value.title()}.",
+        severity="INFO",
+    )
+    return {"depot": depot.value, "dispatcher": _depot_dispatcher(db, depot)}
+
 @router.get("/depots")
 def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
     vehicles = db.query(Vehicle).all()
@@ -1111,6 +1237,7 @@ def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
             "vehicles": p_vehicles,
             "outlet_count": len(p_outlets),
             "outlets": p_outlets,
+            "dispatcher": _depot_dispatcher(db, Depot.PELIYAGODA),
         },
         "kandy": {
             "key": "kandy",
@@ -1131,6 +1258,7 @@ def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
             "vehicles": k_vehicles,
             "outlet_count": len(k_outlets),
             "outlets": k_outlets,
+            "dispatcher": _depot_dispatcher(db, Depot.KANDY),
         }
     }
 

@@ -260,8 +260,13 @@ function AdminDashboardContent() {
             {currentTab === "depots" && (
               <DepotsTab
                 depotsData={depotsData}
+                users={users}
                 isLoading={isLoading}
                 onRefresh={loadAllData}
+                onAssignDispatcher={async (depot, userId) => {
+                  await adminService.assignDepotDispatcher(depot, userId);
+                  await loadAllData();
+                }}
               />
             )}
 

@@ -1,6 +1,7 @@
 import enum
 from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum
+from sqlalchemy.orm import relationship
 from app.core.database import Base
 
 
@@ -26,3 +27,9 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    depot_dispatcher_assignment = relationship(
+        "DepotDispatcherAssignment",
+        back_populates="dispatcher",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
