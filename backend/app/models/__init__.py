@@ -5,7 +5,6 @@ from app.models.inventory import InventoryItem, Warehouse
 from app.models.shipment import Shipment, DispatchTrip
 from app.models.fleet import Vehicle, DriverProfile
 from app.models.allocation import Allocation
-from app.models.outlet import Outlet, OutletContact, OutletReceivingWindow
 from app.models.notification import Notification
 from app.models.receipts import DeliveryReceipt
 from app.models.outlet_settings import OutletSettings
@@ -53,8 +52,6 @@ __all__ = [
     "DriverProfile",
     "Allocation",
     "Outlet",
-    "OutletContact",
-    "OutletReceivingWindow",
     "Notification",
     "DeliveryReceipt",
     "OutletSettings",

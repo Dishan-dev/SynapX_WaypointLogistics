@@ -30,11 +30,11 @@ export function OrdersTable({
   const [deferralTarget, setDeferralTarget] = useState<Order | null>(null);
   const [isDeferring, setIsDeferring] = useState(false);
 
-  // Eligible orders: Confirmed, not allocated, and not late
+  // Eligible orders: Submitted or Confirmed, not allocated, and not late
   const eligibleOrders = useMemo(() => {
     return orders.filter(
       (o) =>
-        o.status === "CONFIRMED" &&
+        (o.status === "CONFIRMED" || o.status === "SUBMITTED") &&
         !o.allocation_id &&
         !o.is_late
     );
@@ -101,6 +101,13 @@ export function OrdersTable({
         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-50 text-orange-700 border border-orange-200 whitespace-nowrap">
           <ShieldAlert className="size-3 text-orange-600" />
           Priority
+        </span>
+      );
+    }
+    if (order.status === "SUBMITTED") {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 whitespace-nowrap">
+          Submitted
         </span>
       );
     }
@@ -190,7 +197,10 @@ export function OrdersTable({
                 </tr>
               ) : (
                 orders.map((order) => {
-                  const isEligible = order.status === "CONFIRMED" && !order.allocation_id && !order.is_late;
+                  const isEligible =
+                    (order.status === "CONFIRMED" || order.status === "SUBMITTED") &&
+                    !order.allocation_id &&
+                    !order.is_late;
                   const isSelected = selectedOrderIds.includes(order.id);
 
                   return (

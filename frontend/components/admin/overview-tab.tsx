@@ -31,7 +31,7 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({ data, isLoading, onRefresh, onNavigateTab }: OverviewTabProps) {
-  if (isLoading || !data) {
+  if (isLoading) {
     return (
       <div className="space-y-6 animate-pulse">
         <div className="h-8 bg-slate-200 rounded w-1/3" />
@@ -44,6 +44,20 @@ export function OverviewTab({ data, isLoading, onRefresh, onNavigateTab }: Overv
           <div className="h-64 bg-slate-200 rounded-lg lg:col-span-2" />
           <div className="h-64 bg-slate-200 rounded-lg" />
         </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="p-8 text-center space-y-3 bg-red-50/60 border border-red-200 rounded-lg">
+        <ShieldAlert className="size-8 text-red-500 mx-auto" />
+        <h3 className="font-bold text-red-900 text-sm">Unable to load admin metrics</h3>
+        <p className="text-xs text-red-700">Could not connect to the backend server. Please verify the API is running.</p>
+        <Button variant="outline" size="sm" onClick={onRefresh} className="text-xs">
+          <RefreshCw className="size-3.5 mr-1.5" />
+          Retry Connection
+        </Button>
       </div>
     );
   }

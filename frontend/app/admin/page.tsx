@@ -102,6 +102,14 @@ function AdminDashboardContent() {
       if (calDaysRes.status === "fulfilled") setCalendarDays(calDaysRes.value);
       if (auditLogsRes.status === "fulfilled") setAuditLogs(auditLogsRes.value);
       if (settingsRes.status === "fulfilled") setSystemSettings(settingsRes.value);
+
+      const rejected = [
+        overviewRes, usersRes, rolesRes, vehiclesRes, outletsRes,
+        depotsRes, opConfigRes, calDaysRes, auditLogsRes, settingsRes
+      ].filter((r) => r.status === "rejected");
+      if (rejected.length > 0) {
+        console.warn(`[AdminDashboard] ${rejected.length} admin requests failed:`, rejected);
+      }
     } catch (err) {
       console.error("Failed to load admin data:", err);
     } finally {

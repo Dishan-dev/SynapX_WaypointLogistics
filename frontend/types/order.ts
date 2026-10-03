@@ -1,11 +1,14 @@
 export type OrderStatus =
   | "DRAFT"
+  | "SUBMITTED"
   | "CONFIRMED"
   | "PROCESSING"
   | "ALLOCATED"
+  | "READY_FOR_DISPATCH"
   | "DEFERRED"
   | "DISPATCHED"
   | "DELIVERED"
+  | "COMPLETED"
   | "CANCELLED";
 
 export interface OrderItem {

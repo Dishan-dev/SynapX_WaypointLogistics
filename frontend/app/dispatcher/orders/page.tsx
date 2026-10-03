@@ -11,6 +11,7 @@ import { AllocationSuccessBanner } from "@/components/dispatcher/orders/Allocati
 import { MetricCard } from "@/components/dispatcher/MetricCard";
 import { Button } from "@/components/ui/button";
 import { fetchWithFallback } from "@/lib/api";
+import { RefreshCw } from "lucide-react";
 
 export default function DispatcherOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -82,8 +83,18 @@ export default function DispatcherOrdersPage() {
 
     loadOrdersAndMetrics();
 
+    // Auto-poll every 5 seconds so new store manager orders show up automatically
+    const interval = setInterval(loadOrdersAndMetrics, 5000);
+
+    const onFocus = () => {
+      loadOrdersAndMetrics();
+    };
+    window.addEventListener("focus", onFocus);
+
     return () => {
       ignore = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
     };
   }, [statusFilter, brandFilter, districtFilter, searchQuery, refreshCount]);
 
@@ -176,8 +187,19 @@ export default function DispatcherOrdersPage() {
           </p>
         </div>
 
-        {/* Action Triggers: Late Orders & Capacity Shortfall Warning */}
+        {/* Action Triggers: Refresh, Late Orders & Capacity Shortfall Warning */}
         <div className="flex flex-wrap items-center gap-3">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setRefreshCount((c) => c + 1)}
+            disabled={isLoading}
+            className="text-xs h-9 bg-white border-border text-[#18385F] hover:bg-slate-50 font-semibold gap-1.5 shrink-0"
+          >
+            <RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </Button>
+
           {/* Capacity Shortfall Warning matching Figma frame 229:2309 */}
           <div className="flex items-center justify-between gap-3 p-3 px-3.5 rounded-lg bg-[#FDF2F2] border border-[#FEE2E2] shadow-xs">
             <div className="flex items-center gap-2">
