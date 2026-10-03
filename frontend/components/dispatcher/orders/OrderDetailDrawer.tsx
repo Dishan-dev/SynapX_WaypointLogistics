@@ -21,8 +21,10 @@ import {
   X,
   ShieldCheck,
   AlertTriangle,
-  Receipt,
   FileSpreadsheet,
+  Ban,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { fetchWithFallback } from "@/lib/api";
 
@@ -31,6 +33,7 @@ interface OrderDetailDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onAllocate?: (order: Order) => void;
+  onOrderUpdated?: () => void;
 }
 
 export function OrderDetailDrawer({
@@ -38,14 +41,21 @@ export function OrderDetailDrawer({
   isOpen,
   onClose,
   onAllocate,
+  onOrderUpdated,
 }: OrderDetailDrawerProps) {
   const [items, setItems] = useState<OrderItem[]>([]);
   const [isLoadingItems, setIsLoadingItems] = useState(false);
+  const [isDeferModalOpen, setIsDeferModalOpen] = useState(false);
+  const [deferringItem, setDeferringItem] = useState<OrderItem | null>(null);
+  const [deferReason, setDeferReason] = useState<string>("Depot stock shortage · insufficient inventory");
+  const [isSubmittingDefer, setIsSubmittingDefer] = useState(false);
+  const [deferSuccessMsg, setDeferSuccessMsg] = useState<string | null>(null);
 
   // Sync or fetch items when order changes
   useEffect(() => {
     if (!order || !isOpen) {
       setItems([]);
+      setDeferSuccessMsg(null);
       return;
     }
 
@@ -158,308 +168,423 @@ export function OrderDetailDrawer({
     }
   };
 
-  const totalCalculatedAmount = items.reduce(
-    (sum, item) => sum + (item.quantity * item.unit_price || 0),
-    0
-  );
-  const displayTotal = order.total_amount > 0 ? order.total_amount : totalCalculatedAmount;
+  const handleOpenDeferItem = (item: OrderItem) => {
+    setDeferringItem(item);
+    setDeferReason(`Depot stock shortage on ${item.item_name} (${item.sku})`);
+    setIsDeferModalOpen(true);
+  };
+
+  const handleConfirmDefer = async () => {
+    if (!order) return;
+    setIsSubmittingDefer(true);
+    try {
+      const payload: { reason: string; item_id?: number; item_sku?: string } = {
+        reason: deferReason,
+      };
+      if (deferringItem) {
+        payload.item_id = deferringItem.id;
+        payload.item_sku = deferringItem.sku;
+      }
+
+      const res = await fetchWithFallback(`/api/v1/orders/${order.id}/defer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        setDeferSuccessMsg("Order deferred successfully. The Store Manager has been notified.");
+        setIsDeferModalOpen(false);
+        setDeferringItem(null);
+        onOrderUpdated?.();
+      } else {
+        const err = await res.json();
+        alert(err.detail || "Failed to defer order");
+      }
+    } catch (e) {
+      console.error("Deferral failed:", e);
+      alert("Network error while deferring order");
+    } finally {
+      setIsSubmittingDefer(false);
+    }
+  };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent
-        showCloseButton={false}
-        className="sm:max-w-[680px] w-full max-h-[90vh] flex flex-col p-0 rounded-[20px] bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F] overflow-hidden"
-      >
-        {/* Header */}
-        <div className="px-6 py-5 border-b border-[#E5E5E2] bg-gradient-to-r from-slate-50 via-white to-slate-50">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="font-mono text-lg font-bold text-[#18385F] tracking-tight">
-                  {order.order_number}
-                </span>
-                {getBrandBadge(order.brand)}
-                {getStatusBadge(order.status)}
-                {order.is_priority && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                    High Priority
+    <>
+      <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent
+          showCloseButton={false}
+          className="sm:max-w-[680px] w-full max-h-[90vh] flex flex-col p-0 rounded-[20px] bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F] overflow-hidden"
+        >
+          {/* Header */}
+          <div className="px-6 py-5 border-b border-[#E5E5E2] bg-gradient-to-r from-slate-50 via-white to-slate-50">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <span className="font-mono text-lg font-bold text-[#18385F] tracking-tight">
+                    {order.order_number}
                   </span>
-                )}
+                  {getBrandBadge(order.brand)}
+                  {getStatusBadge(order.status)}
+                  {order.is_priority && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                      High Priority
+                    </span>
+                  )}
+                </div>
+                <DialogTitle className="sr-only">Order Details for {order.order_number}</DialogTitle>
+                <DialogDescription className="text-xs text-[#6B7280] mt-1 font-normal">
+                  Destination: <span className="font-semibold text-slate-800">{order.client_name}</span> · {order.destination_address}
+                </DialogDescription>
               </div>
-              <DialogTitle className="sr-only">Order Details for {order.order_number}</DialogTitle>
-              <DialogDescription className="text-xs text-[#6B7280] mt-1 font-normal">
-                Destination: <span className="font-semibold text-slate-800">{order.client_name}</span> · {order.destination_address}
-              </DialogDescription>
+
+              <button
+                onClick={onClose}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                aria-label="Close dialog"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
+            {/* Quick Metrics Banner */}
+            <div className="grid grid-cols-4 gap-2.5 mt-4 pt-3.5 border-t border-slate-200/70">
+              <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs">
+                <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">
+                  Total Units
+                </span>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <Package className="w-3.5 h-3.5 text-indigo-500" />
+                  <span className="text-sm font-bold text-slate-800">
+                    {orderUnits.toLocaleString()} pcs
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs">
+                <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">
+                  Weight
+                </span>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <Layers className="w-3.5 h-3.5 text-amber-500" />
+                  <span className="text-sm font-bold text-slate-800">
+                    {orderWeight.toLocaleString()} kg
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs">
+                <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">
+                  Volume
+                </span>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-600" />
+                  <span className="text-sm font-bold text-slate-800">
+                    {orderVolume.toFixed(2)} m³
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs">
+                <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">
+                  Thermal Zone
+                </span>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  {isChilled ? (
+                    <>
+                      <Snowflake className="w-3.5 h-3.5 text-sky-500" />
+                      <span className="text-sm font-bold text-sky-700">Chilled</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sun className="w-3.5 h-3.5 text-amber-500" />
+                      <span className="text-sm font-bold text-slate-700">Ambient</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Content Body: Scrollable */}
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            {deferSuccessMsg && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{deferSuccessMsg}</span>
+              </div>
+            )}
+
+            {/* Outlet & Delivery Logistics Info */}
+            <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 text-xs">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-slate-500 font-medium">
+                  <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                  <span>Delivery Destination</span>
+                </div>
+                <p className="font-semibold text-slate-800 pl-5">
+                  {order.client_name}
+                </p>
+                <p className="text-slate-600 pl-5 text-[11px] leading-relaxed">
+                  {order.destination_address}
+                  {order.district ? ` (${order.district})` : ""}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-slate-500 font-medium">
+                  <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span>Fulfillment Window</span>
+                </div>
+                <p className="font-semibold text-slate-800 pl-5">
+                  {order.delivery_window || "Standard Logistics Window (08:00 - 16:00)"}
+                </p>
+                <p className="text-slate-600 pl-5 text-[11px] flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-slate-400" />
+                  <span>Date: {order.operating_date || "Current Operations"}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Line Items Table without pricing */}
+            <div>
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center gap-2">
+                  <Package className="w-4 h-4 text-[#18385F]" />
+                  <h3 className="text-sm font-bold text-slate-800">
+                    Order Items &amp; Quantities
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-semibold">
+                    {items.length} {items.length === 1 ? "SKU" : "SKUs"}
+                  </span>
+                </div>
+                <span className="text-[11px] text-slate-500">
+                  Depot Stock Fulfillment Queue
+                </span>
+              </div>
+
+              <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-semibold">
+                    <tr>
+                      <th className="py-2.5 px-3.5 w-12 text-center text-[11px]">#</th>
+                      <th className="py-2.5 px-3.5 text-[11px]">SKU</th>
+                      <th className="py-2.5 px-3.5 text-[11px]">Item Description</th>
+                      <th className="py-2.5 px-3.5 text-right text-[11px]">Quantity</th>
+                      <th className="py-2.5 px-3.5 text-right text-[11px]">Stock Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {isLoadingItems ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
+                          Loading order line items...
+                        </td>
+                      </tr>
+                    ) : items.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
+                          No individual line items registered for this order.
+                        </td>
+                      </tr>
+                    ) : (
+                      items.map((item, index) => {
+                        return (
+                          <tr
+                            key={item.id || `${item.sku}-${index}`}
+                            className="hover:bg-slate-50/60 transition-colors"
+                          >
+                            <td className="py-2.5 px-3.5 text-center text-slate-400 font-mono text-[11px]">
+                              {index + 1}
+                            </td>
+                            <td className="py-2.5 px-3.5 font-mono font-medium text-[#18385F] text-[11px] whitespace-nowrap">
+                              {item.sku}
+                            </td>
+                            <td className="py-2.5 px-3.5 text-slate-800 font-medium">
+                              {item.item_name}
+                            </td>
+                            <td className="py-2.5 px-3.5 text-right font-bold text-slate-900 whitespace-nowrap">
+                              {item.quantity.toLocaleString()} pcs
+                            </td>
+                            <td className="py-2.5 px-3.5 text-right whitespace-nowrap">
+                              {order.status === "DEFERRED" ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                  Deferred
+                                </span>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleOpenDeferItem(item)}
+                                  className="h-6 px-2 text-[10px] font-semibold text-amber-800 border-amber-200 hover:bg-amber-50 hover:border-amber-300"
+                                  title="Defer order due to shortage on this item"
+                                >
+                                  <Ban className="size-2.5 mr-1 text-amber-600" />
+                                  Defer Item
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                  {items.length > 0 && (
+                    <tfoot className="bg-slate-50 border-t border-slate-200">
+                      <tr>
+                        <td colSpan={3} className="py-2.5 px-3.5 font-semibold text-slate-700">
+                          Total Order Quantity
+                        </td>
+                        <td className="py-2.5 px-3.5 text-right font-bold text-slate-900">
+                          {items
+                            .reduce((sum, it) => sum + (it.quantity || 0), 0)
+                            .toLocaleString()} pcs
+                        </td>
+                        <td className="py-2.5 px-3.5 text-right text-slate-400 text-[11px]">
+                          —
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+
+            {/* Allocation or Deferral Context Note if applicable */}
+            {order.allocation_id && (
+              <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-start gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Allocated to Delivery Run:</span> This order is assigned to Run ID #{order.allocation_id} and scheduled for dispatch loading.
+                </div>
+              </div>
+            )}
+
+            {order.deferral_reason && (
+              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Deferral Audit Note:</span> {order.deferral_reason}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 py-4 border-t border-[#E5E5E2] bg-slate-50/70 flex items-center justify-between">
+            <div className="text-xs text-slate-500">
+              Order ID: <span className="font-mono font-medium text-slate-700">#{order.id}</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onClose}
+                className="text-xs border-slate-300 hover:bg-slate-100"
+              >
+                Close
+              </Button>
+              {order.status !== "DEFERRED" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setDeferringItem(null);
+                    setDeferReason("Depot stock shortage · insufficient inventory across requested items");
+                    setIsDeferModalOpen(true);
+                  }}
+                  className="text-xs border-amber-300 text-amber-800 hover:bg-amber-50"
+                >
+                  <Ban className="size-3 mr-1 text-amber-600" />
+                  Defer (Depot Shortage)
+                </Button>
+              )}
+              {onAllocate && (order.status === "CONFIRMED" || order.status === "SUBMITTED") && !order.allocation_id && (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    onClose();
+                    onAllocate(order);
+                  }}
+                  className="text-xs bg-[#18385F] hover:bg-[#142f50] text-white"
+                >
+                  Allocate to Vehicle
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Item Deferral Modal */}
+      <Dialog open={isDeferModalOpen} onOpenChange={setIsDeferModalOpen}>
+        <DialogContent
+          showCloseButton={false}
+          className="sm:max-w-[440px] p-6 rounded-2xl bg-white border border-[#E5E5E2] shadow-2xl text-[#171A1F]"
+        >
+          <div className="flex items-start justify-between">
+            <div>
+              <DialogTitle className="text-base font-bold text-slate-900">
+                {deferringItem ? "Defer Due to Item Shortage" : "Defer Order (Depot Shortage)"}
+              </DialogTitle>
+              <DialogDescription className="text-xs text-slate-500 mt-0.5">
+                This will mark the order as Deferred and notify the Store Manager on their portal.
+              </DialogDescription>
+            </div>
             <button
-              onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-              aria-label="Close dialog"
+              onClick={() => setIsDeferModalOpen(false)}
+              className="p-1 text-slate-400 hover:text-slate-600 rounded-md"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Quick Metrics Banner */}
-          <div className="grid grid-cols-4 gap-2.5 mt-4 pt-3.5 border-t border-slate-200/70">
-            <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs">
-              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">
-                Total Units
-              </span>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <Package className="w-3.5 h-3.5 text-indigo-500" />
-                <span className="text-sm font-bold text-slate-800">
-                  {orderUnits.toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs">
-              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">
-                Weight
-              </span>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <Layers className="w-3.5 h-3.5 text-amber-500" />
-                <span className="text-sm font-bold text-slate-800">
-                  {orderWeight.toLocaleString()} kg
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs">
-              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">
-                Volume
-              </span>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-600" />
-                <span className="text-sm font-bold text-slate-800">
-                  {orderVolume.toFixed(2)} m³
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-xs">
-              <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider block">
-                Thermal Zone
-              </span>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                {isChilled ? (
-                  <>
-                    <Snowflake className="w-3.5 h-3.5 text-sky-500" />
-                    <span className="text-sm font-bold text-sky-700">Chilled</span>
-                  </>
-                ) : (
-                  <>
-                    <Sun className="w-3.5 h-3.5 text-amber-500" />
-                    <span className="text-sm font-bold text-slate-700">Ambient</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Content Body: Scrollable */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
-          {/* Outlet & Delivery Logistics Info */}
-          <div className="grid grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 text-xs">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 text-slate-500 font-medium">
-                <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                <span>Delivery Destination</span>
-              </div>
-              <p className="font-semibold text-slate-800 pl-5">
-                {order.client_name}
-              </p>
-              <p className="text-slate-600 pl-5 text-[11px] leading-relaxed">
-                {order.destination_address}
-                {order.district ? ` (${order.district})` : ""}
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 text-slate-500 font-medium">
-                <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                <span>Fulfillment Window</span>
-              </div>
-              <p className="font-semibold text-slate-800 pl-5">
-                {order.delivery_window || "Standard Logistics Window (08:00 - 16:00)"}
-              </p>
-              <p className="text-slate-600 pl-5 text-[11px] flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-slate-400" />
-                <span>Date: {order.operating_date || "Current Operations"}</span>
-              </p>
-            </div>
-          </div>
-
-          {/* Line Items Table */}
-          <div>
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-2">
-                <Receipt className="w-4 h-4 text-[#18385F]" />
-                <h3 className="text-sm font-bold text-slate-800">
-                  Order Line Items
-                </h3>
-                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-semibold">
-                  {items.length} {items.length === 1 ? "item" : "items"}
-                </span>
-              </div>
-
-              {displayTotal > 0 && (
-                <div className="text-xs text-slate-500 font-medium">
-                  Total Value:{" "}
-                  <span className="font-bold text-slate-800">
-                    LKR {displayTotal.toLocaleString()}
-                  </span>
+          <div className="my-3 space-y-3">
+            {deferringItem && (
+              <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-xs">
+                <span className="font-semibold text-amber-900 block">Affected SKU:</span>
+                <span className="font-mono text-amber-800">{deferringItem.sku}</span> · {deferringItem.item_name}
+                <div className="text-[11px] text-amber-700 mt-1">
+                  Requested: <span className="font-bold">{deferringItem.quantity} pcs</span>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
-            <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-semibold">
-                  <tr>
-                    <th className="py-2.5 px-3.5 w-12 text-center text-[11px]">#</th>
-                    <th className="py-2.5 px-3.5 text-[11px]">SKU</th>
-                    <th className="py-2.5 px-3.5 text-[11px]">Item Description</th>
-                    <th className="py-2.5 px-3.5 text-right text-[11px]">Quantity</th>
-                    <th className="py-2.5 px-3.5 text-right text-[11px]">Unit Price (LKR)</th>
-                    <th className="py-2.5 px-3.5 text-right text-[11px]">Subtotal (LKR)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {isLoadingItems ? (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
-                        Loading order line items...
-                      </td>
-                    </tr>
-                  ) : items.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400 text-xs">
-                        No individual line items registered for this order.
-                      </td>
-                    </tr>
-                  ) : (
-                    items.map((item, index) => {
-                      const lineTotal = item.quantity * item.unit_price;
-                      return (
-                        <tr
-                          key={item.id || `${item.sku}-${index}`}
-                          className="hover:bg-slate-50/60 transition-colors"
-                        >
-                          <td className="py-2.5 px-3.5 text-center text-slate-400 font-mono text-[11px]">
-                            {index + 1}
-                          </td>
-                          <td className="py-2.5 px-3.5 font-mono font-medium text-[#18385F] text-[11px] whitespace-nowrap">
-                            {item.sku}
-                          </td>
-                          <td className="py-2.5 px-3.5 text-slate-800 font-medium">
-                            {item.item_name}
-                          </td>
-                          <td className="py-2.5 px-3.5 text-right font-bold text-slate-800 whitespace-nowrap">
-                            {item.quantity.toLocaleString()}
-                          </td>
-                          <td className="py-2.5 px-3.5 text-right text-slate-600 whitespace-nowrap">
-                            {item.unit_price > 0
-                              ? item.unit_price.toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })
-                              : "—"}
-                          </td>
-                          <td className="py-2.5 px-3.5 text-right font-semibold text-slate-900 whitespace-nowrap">
-                            {lineTotal > 0
-                              ? lineTotal.toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })
-                              : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-                {items.length > 0 && (
-                  <tfoot className="bg-slate-50 border-t border-slate-200">
-                    <tr>
-                      <td colSpan={3} className="py-2.5 px-3.5 font-semibold text-slate-700">
-                        Total Sum
-                      </td>
-                      <td className="py-2.5 px-3.5 text-right font-bold text-slate-900">
-                        {items
-                          .reduce((sum, it) => sum + (it.quantity || 0), 0)
-                          .toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-3.5 text-right text-slate-400 text-[11px]">
-                        —
-                      </td>
-                      <td className="py-2.5 px-3.5 text-right font-bold text-[#18385F]">
-                        LKR{" "}
-                        {displayTotal.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
+            <div>
+              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                Reason for Store Manager Notification:
+              </label>
+              <textarea
+                value={deferReason}
+                onChange={(e) => setDeferReason(e.target.value)}
+                rows={3}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#18385F]"
+                placeholder="Describe the stock limitation..."
+              />
             </div>
           </div>
 
-          {/* Allocation or Deferral Context Note if applicable */}
-          {order.allocation_id && (
-            <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-800 flex items-start gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold">Allocated to Delivery Run:</span> This order is assigned to Run ID #{order.allocation_id} and scheduled for dispatch loading.
-              </div>
-            </div>
-          )}
-
-          {order.deferral_reason && (
-            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold">Deferral Note:</span> {order.deferral_reason}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-[#E5E5E2] bg-slate-50/70 flex items-center justify-between">
-          <div className="text-xs text-slate-500">
-            Order ID: <span className="font-mono font-medium text-slate-700">#{order.id}</span>
-          </div>
-
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
             <Button
               variant="outline"
               size="sm"
-              onClick={onClose}
-              className="text-xs border-slate-300 hover:bg-slate-100"
+              onClick={() => setIsDeferModalOpen(false)}
+              className="text-xs"
             >
-              Close
+              Cancel
             </Button>
-            {onAllocate && (order.status === "CONFIRMED" || order.status === "SUBMITTED") && !order.allocation_id && (
-              <Button
-                size="sm"
-                onClick={() => {
-                  onClose();
-                  onAllocate(order);
-                }}
-                className="text-xs bg-[#18385F] hover:bg-[#142f50] text-white"
-              >
-                Allocate to Vehicle
-              </Button>
-            )}
+            <Button
+              size="sm"
+              onClick={handleConfirmDefer}
+              disabled={isSubmittingDefer}
+              className="text-xs bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {isSubmittingDefer ? "Notifying Store..." : "Confirm & Notify Store"}
+            </Button>
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

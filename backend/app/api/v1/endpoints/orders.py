@@ -18,6 +18,8 @@ class BulkAllocateRequest(BaseModel):
 
 class DeferOrderRequest(BaseModel):
     reason: Optional[str] = "Capacity limit reached"
+    item_id: Optional[int] = None
+    item_sku: Optional[str] = None
 
 
 @router.get("/metrics", response_model=Dict[str, int])
@@ -165,7 +167,13 @@ def defer_order(order_id: int, req: DeferOrderRequest, db: Session = Depends(dep
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
-    return order_service.defer_order(db, order_id, req.reason)
+    return order_service.defer_order(
+        db,
+        order_id,
+        req.reason,
+        item_id=req.item_id,
+        item_sku=req.item_sku,
+    )
 
 
 @router.get("/{order_id}", response_model=OrderRead)

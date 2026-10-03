@@ -324,7 +324,14 @@ class OrderService:
         return order
 
     @staticmethod
-    def defer_order(db: Session, order_id: int, reason: str, new_delivery_date: Optional[date] = None) -> Order:
+    def defer_order(
+        db: Session,
+        order_id: int,
+        reason: str,
+        new_delivery_date: Optional[date] = None,
+        item_id: Optional[int] = None,
+        item_sku: Optional[str] = None,
+    ) -> Order:
         """Dispatcher defers an order. Counts consecutive deferrals and tells the store why (§6)."""
         order = OrderService._get(db, order_id)
         if OrderStatus.DEFERRED not in TRANSITIONS.get(order.status, set()):
@@ -334,12 +341,36 @@ class OrderService:
                 target_state=OrderStatus.DEFERRED.value,
             )
         order.status = OrderStatus.DEFERRED
+
+        # If a specific item is low-stock / deferred, update the item note and format reason
+        if item_id or item_sku:
+            item = None
+            if item_id:
+                item = db.query(OrderItem).filter(OrderItem.id == item_id, OrderItem.order_id == order.id).first()
+            elif item_sku:
+                item = db.query(OrderItem).filter(OrderItem.sku == item_sku, OrderItem.order_id == order.id).first()
+            if item:
+                item.dispatcher_note = f"Deferred: {reason}"
+                reason = f"Depot low stock on {item.item_name} ({item.sku}): {reason}"
+
         order.deferral_reason = reason
         order.allocation_id = None
         order.deferral_count = (order.deferral_count or 0) + 1
         if new_delivery_date:
             order.operating_date = new_delivery_date.isoformat()
             order.cutoff_at = order_rules.cutoff_for(new_delivery_date)
+
+        # Fallback outlet matching if outlet_id was not explicitly set on older/seed orders
+        if not order.outlet_id and order.client_name:
+            matched_outlet = db.query(Outlet).filter(
+                or_(
+                    Outlet.name == order.client_name,
+                    Outlet.name.ilike(f"%{order.client_name}%")
+                )
+            ).first()
+            if matched_outlet:
+                order.outlet_id = matched_outlet.id
+
         db.commit()
         db.refresh(order)
         if order.outlet_id:
