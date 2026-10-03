@@ -2,7 +2,11 @@
  * Admin Service: Centralized data client for Waypoint Logistics Admin Dashboard
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+import { fetchWithFallback } from "@/lib/api";
+
+function adminFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetchWithFallback(path, init);
+}
 
 export interface AdminUser {
   id: number;
@@ -48,6 +52,9 @@ export interface FleetVehicle {
   trips_today: number;
   trips_planned: number;
   maintenance_state?: string | null;
+  assigned_driver_id?: number | null;
+  assigned_driver_name?: string | null;
+  assigned_driver_phone?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -65,6 +72,9 @@ export interface OutletRecord {
   window_start?: string;
   window_end?: string;
   depot: string;
+  store_manager?: string | null;
+  store_manager_user_id?: number | null;
+  store_manager_phone?: string | null;
 }
 
 export interface DepotDetail {
@@ -198,7 +208,7 @@ export interface AdminOverview {
 export const adminService = {
   // Overview
   async getOverview(): Promise<AdminOverview> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/overview`, { cache: "no-store" });
+    const res = await adminFetch("/api/v1/admin/overview", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load admin overview metrics");
     return res.json();
   },
@@ -210,13 +220,13 @@ export const adminService = {
     if (params?.role && params.role !== "ALL") query.set("role", params.role);
     if (params?.is_active !== undefined) query.set("is_active", String(params.is_active));
 
-    const res = await fetch(`${API_BASE}/api/v1/admin/users?${query.toString()}`, { cache: "no-store" });
+    const res = await adminFetch(`/api/v1/admin/users?${query.toString()}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load users");
     return res.json();
   },
 
   async createUser(payload: { email: string; full_name: string; password: string; role: string; is_active?: boolean }): Promise<AdminUser> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/users`, {
+    const res = await adminFetch("/api/v1/admin/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -229,7 +239,7 @@ export const adminService = {
   },
 
   async updateUser(id: number, payload: Partial<AdminUser> & { password?: string }): Promise<AdminUser> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/users/${id}`, {
+    const res = await adminFetch(`/api/v1/admin/users/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -242,7 +252,7 @@ export const adminService = {
   },
 
   async toggleUserStatus(id: number, isActive: boolean): Promise<AdminUser> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/users/${id}/status`, {
+    const res = await adminFetch(`/api/v1/admin/users/${id}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_active: isActive }),
@@ -253,13 +263,13 @@ export const adminService = {
 
   // Roles & Access
   async getRoles(): Promise<RoleDetail[]> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/roles`, { cache: "no-store" });
+    const res = await adminFetch("/api/v1/admin/roles", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch roles & permissions");
     return res.json();
   },
 
   async assignRole(userId: number, role: string): Promise<unknown> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/roles/assign`, {
+    const res = await adminFetch("/api/v1/admin/roles/assign", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: userId, role }),
@@ -271,15 +281,15 @@ export const adminService = {
   // Vehicles Fleet
   async getVehicles(status?: string): Promise<FleetVehicle[]> {
     const url = status && status !== "ALL"
-      ? `${API_BASE}/api/v1/fleet/vehicles?status=${status}`
-      : `${API_BASE}/api/v1/fleet/vehicles`;
-    const res = await fetch(url, { cache: "no-store" });
+      ? `/api/v1/fleet/vehicles?status=${status}`
+      : "/api/v1/fleet/vehicles";
+    const res = await adminFetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch fleet vehicles");
     return res.json();
   },
 
   async createVehicle(payload: Partial<FleetVehicle>): Promise<FleetVehicle> {
-    const res = await fetch(`${API_BASE}/api/v1/fleet/vehicles`, {
+    const res = await adminFetch("/api/v1/fleet/vehicles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -292,7 +302,7 @@ export const adminService = {
   },
 
   async updateVehicle(id: number, payload: Partial<FleetVehicle>): Promise<FleetVehicle> {
-    const res = await fetch(`${API_BASE}/api/v1/fleet/vehicles/${id}`, {
+    const res = await adminFetch(`/api/v1/fleet/vehicles/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -302,15 +312,28 @@ export const adminService = {
   },
 
   async updateVehicleStatus(id: number, status: string): Promise<FleetVehicle> {
-    const res = await fetch(`${API_BASE}/api/v1/fleet/vehicles/${id}/status?status=${status}`, {
+    const res = await adminFetch(`/api/v1/fleet/vehicles/${id}/status?status=${status}`, {
       method: "PATCH",
     });
     if (!res.ok) throw new Error("Failed to update vehicle status");
     return res.json();
   },
 
+  async assignVehicleDriver(vehicleId: number, driverUserId: number | null): Promise<FleetVehicle> {
+    const res = await adminFetch(`/api/v1/fleet/vehicles/${vehicleId}/assign-driver`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ driver_user_id: driverUserId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to assign driver to vehicle");
+    }
+    return res.json();
+  },
+
   async deleteVehicle(id: number): Promise<void> {
-    const res = await fetch(`${API_BASE}/api/v1/fleet/vehicles/${id}`, {
+    const res = await adminFetch(`/api/v1/fleet/vehicles/${id}`, {
       method: "DELETE",
     });
     if (!res.ok) throw new Error("Failed to delete vehicle");
@@ -323,7 +346,7 @@ export const adminService = {
     updated: number;
     errors: string[];
   }> {
-    const res = await fetch(`${API_BASE}/api/v1/fleet/vehicles/import-csv`, {
+    const res = await adminFetch("/api/v1/fleet/vehicles/import-csv", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ csv_content: csvContent }),
@@ -336,7 +359,7 @@ export const adminService = {
   },
 
   async exportVehiclesCSV(): Promise<string> {
-    const res = await fetch(`${API_BASE}/api/v1/fleet/vehicles/export-csv`, {
+    const res = await adminFetch("/api/v1/fleet/vehicles/export-csv", {
       cache: "no-store",
     });
     if (!res.ok) throw new Error("Failed to export vehicles CSV");
@@ -352,13 +375,13 @@ export const adminService = {
     if (params?.district && params.district !== "ALL") query.set("district", params.district);
     if (params?.van_only !== undefined) query.set("van_only", String(params.van_only));
 
-    const res = await fetch(`${API_BASE}/api/v1/outlets?${query.toString()}`, { cache: "no-store" });
+    const res = await adminFetch(`/api/v1/outlets?${query.toString()}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch outlets");
     return res.json();
   },
 
   async createOutlet(payload: Partial<OutletRecord>): Promise<OutletRecord> {
-    const res = await fetch(`${API_BASE}/api/v1/outlets`, {
+    const res = await adminFetch("/api/v1/outlets", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -371,12 +394,28 @@ export const adminService = {
   },
 
   async updateOutlet(id: number, payload: Partial<OutletRecord>): Promise<OutletRecord> {
-    const res = await fetch(`${API_BASE}/api/v1/outlets/${id}`, {
+    const res = await adminFetch(`/api/v1/outlets/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to update outlet");
+    return res.json();
+  },
+
+  async assignOutletManager(
+    outletId: number,
+    payload: { user_id?: number | null; store_manager?: string | null; contact_phone?: string | null }
+  ): Promise<OutletRecord> {
+    const res = await adminFetch(`/api/v1/outlets/${outletId}/assign-manager`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to assign store manager to outlet");
+    }
     return res.json();
   },
 
@@ -387,7 +426,7 @@ export const adminService = {
     updated: number;
     errors: string[];
   }> {
-    const res = await fetch(`${API_BASE}/api/v1/outlets/import-csv`, {
+    const res = await adminFetch("/api/v1/outlets/import-csv", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ csv_content: csvContent }),
@@ -400,7 +439,7 @@ export const adminService = {
   },
 
   async exportOutletsCSV(): Promise<string> {
-    const res = await fetch(`${API_BASE}/api/v1/outlets/export-csv`, {
+    const res = await adminFetch("/api/v1/outlets/export-csv", {
       cache: "no-store",
     });
     if (!res.ok) throw new Error("Failed to export outlets CSV");
@@ -409,20 +448,20 @@ export const adminService = {
 
   // Depots
   async getDepots(): Promise<{ peliyagoda: DepotDetail; kandy: DepotDetail }> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/depots`, { cache: "no-store" });
+    const res = await adminFetch("/api/v1/admin/depots", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch depot details");
     return res.json();
   },
 
   // Operational Configuration
   async getOperationalConfig(): Promise<OperationalConfigData> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/config/operations`, { cache: "no-store" });
+    const res = await adminFetch("/api/v1/admin/config/operations", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch operational configurations");
     return res.json();
   },
 
   async updateOperationalConfig(payload: OperationalConfigData): Promise<OperationalConfigData> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/config/operations`, {
+    const res = await adminFetch("/api/v1/admin/config/operations", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -432,13 +471,13 @@ export const adminService = {
   },
 
   async getCalendarDays(limit = 45): Promise<CalendarDayItem[]> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/config/calendar-days?limit=${limit}`, { cache: "no-store" });
+    const res = await adminFetch(`/api/v1/admin/config/calendar-days?limit=${limit}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch calendar days");
     return res.json();
   },
 
   async updateCalendarDay(dateStr: string, payload: Partial<CalendarDayItem>): Promise<CalendarDayItem> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/config/calendar-days/${dateStr}`, {
+    const res = await adminFetch(`/api/v1/admin/config/calendar-days/${dateStr}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -454,20 +493,20 @@ export const adminService = {
     if (params?.q) query.set("q", params.q);
     if (params?.limit) query.set("limit", String(params.limit));
 
-    const res = await fetch(`${API_BASE}/api/v1/admin/audit-logs?${query.toString()}`, { cache: "no-store" });
+    const res = await adminFetch(`/api/v1/admin/audit-logs?${query.toString()}`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch audit logs");
     return res.json();
   },
 
   // System Settings
   async getSystemSettings(): Promise<SystemSettingsPayload> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/settings`, { cache: "no-store" });
+    const res = await adminFetch("/api/v1/admin/settings", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch system settings");
     return res.json();
   },
 
   async updateSystemSettings(payload: SystemSettingsPayload): Promise<SystemSettingsPayload> {
-    const res = await fetch(`${API_BASE}/api/v1/admin/settings`, {
+    const res = await adminFetch("/api/v1/admin/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

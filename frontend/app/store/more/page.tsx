@@ -1,8 +1,11 @@
+"use client";
+
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { currentOutlet } from "@/components/store/mock-data";
 import { UnreadCountText } from "@/components/store/notifications/notification-bell";
+import { useAuth } from "@/lib/auth-context";
 
 // Mobile "More" tab (Figma: Mobile / 12 More): pages that don't fit in the bottom nav.
 const moreLinks = [
@@ -29,6 +32,8 @@ const moreLinks = [
 ];
 
 export default function StoreMorePage() {
+  const { logout } = useAuth();
+
   return (
     <div className="flex flex-col gap-6">
       <h1 className="sr-only">More</h1>
@@ -51,13 +56,14 @@ export default function StoreMorePage() {
         </ul>
       </Card>
 
-      {/* TODO(keycloak): the login team replaces this with the real Keycloak sign-out. */}
-      <Link
-        href="/"
-        className="flex min-h-11 w-fit items-center text-sm font-semibold text-destructive underline-offset-4 hover:underline"
+      {/* Real Keycloak sign-out */}
+      <button
+        type="button"
+        onClick={() => logout(true)}
+        className="flex min-h-11 w-fit items-center text-sm font-semibold text-destructive underline-offset-4 hover:underline cursor-pointer"
       >
         Sign out
-      </Link>
+      </button>
     </div>
   );
 }

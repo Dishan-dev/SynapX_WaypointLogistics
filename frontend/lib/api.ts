@@ -97,11 +97,17 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
   const fullEndpoint = cleanPath.startsWith("/api/v1") ? cleanPath : `/api/v1${cleanPath}`;
 
+  const token = typeof window !== "undefined" ? localStorage.getItem("waypoint_access_token") || localStorage.getItem("driver_token") : null;
+  const headers = new Headers(init.headers || {});
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
   let response: Response;
   try {
     response = await fetchWithFallback(fullEndpoint, {
       ...init,
-      headers: { ...init.headers },
+      headers,
       cache: "no-store",
     });
   } catch (err: any) {

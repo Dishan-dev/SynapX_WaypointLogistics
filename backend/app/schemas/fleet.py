@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from datetime import datetime
 from typing import Optional
 from app.models.fleet import VehicleStatus
@@ -19,6 +19,7 @@ class VehicleBase(BaseModel):
     fuel_type: str = "diesel"
     km_per_l: float = 6.0
     weekly_fuel_quota_l: float = 500.0
+    assigned_driver_id: Optional[int] = None
 
 class VehicleCreate(VehicleBase):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -32,6 +33,7 @@ class VehicleCreate(VehicleBase):
     maintenance_state: Optional[str] = Field(default=None, max_length=100)
     trips_today: int = Field(default=0, ge=0)
     trips_planned: int = Field(default=0, ge=0)
+    assigned_driver_id: Optional[int] = Field(default=None)
 
     @field_validator("status")
     @classmethod
@@ -53,40 +55,46 @@ class VehicleUpdate(BaseModel):
     weekly_fuel_status: Optional[str] = Field(default=None, min_length=1, max_length=50)
     maintenance_state: Optional[str] = Field(default=None, max_length=100)
     status: Optional[VehicleStatus] = None
+    assigned_driver_id: Optional[int] = None
+    fuel_type: Optional[str] = None
+    km_per_l: Optional[float] = None
+    weekly_fuel_quota_l: Optional[float] = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, v):
+        if isinstance(v, str):
+            return v.upper()
+        return v
 
     @model_validator(mode="after")
     def valid_patch(self):
         fields = self.model_fields_set - {"expected_updated_at"}
         if not fields:
             raise ValueError("Provide at least one field to update")
-        if any(getattr(self, name) is None for name in fields - {"maintenance_state"}):
+        if any(getattr(self, name) is None for name in fields - {"maintenance_state", "assigned_driver_id"}):
             raise ValueError("Only maintenance_state may be cleared")
         if "status" in fields and self.status not in (VehicleStatus.AVAILABLE, VehicleStatus.UNAVAILABLE):
             raise ValueError("Allocation and loading statuses are managed by their workflows")
         return self
 
-class VehicleUpdate(BaseModel):
-    code: Optional[str] = None
-    vehicle_type: Optional[str] = None
-    capacity_kg: Optional[float] = None
-    capacity_vol_m3: Optional[float] = None
-    status: Optional[VehicleStatus] = None
-    temperature_mode: Optional[str] = None
-    depot_name: Optional[str] = None
-    weekly_fuel_status: Optional[str] = None
-    trips_today: Optional[int] = None
-    trips_planned: Optional[int] = None
-    maintenance_state: Optional[str] = None
-    fuel_type: Optional[str] = None
-    km_per_l: Optional[float] = None
-    weekly_fuel_quota_l: Optional[float] = None
-
 class VehicleResponse(VehicleBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    assigned_driver_name: Optional[str] = None
+    assigned_driver_phone: Optional[str] = None
     
+    @field_serializer("status")
+    def serialize_status(self, v):
+        if hasattr(v, "value"):
+            return v.value.lower()
+        return str(v).lower()
+
     model_config = ConfigDict(from_attributes=True)
+
+class VehicleDriverAssignRequest(BaseModel):
+    driver_user_id: Optional[int] = None
 
 class DriverProfileBase(BaseModel):
     license_type: str
