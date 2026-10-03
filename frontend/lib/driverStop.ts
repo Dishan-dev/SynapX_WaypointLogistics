@@ -3,6 +3,7 @@
  * Backed by GET /driver/stops/{id}, which includes the order being delivered.
  */
 import { apiFetch, ApiError } from "./api";
+import { readCache, writeCache } from "./driverCache";
 import type { DeliveryStop, TripStatus } from "@/types/driver-map";
 
 export interface StopOrderItem {
@@ -45,25 +46,49 @@ export function isStopOpen(stop: { status: string; completed_at: string | null }
   return (stop.status === "delivered" || stop.status === "partial") && !stop.completed_at;
 }
 
-// The last copy of each stop seen online, so the at-stop screens still open
-// with no signal. The map saves every stop of the trip while it has signal.
-const CACHE_PREFIX = "driver-stop:";
+// The last copy of each stop, so the at-stop screens still open with no
+// signal. The map saves every open stop of the trip while it has signal, and
+// an action saved offline moves the copy on (updateCachedStop).
+const stopPath = (stopId: string | number) => `/driver/stops/${stopId}`;
 
+type Progress = { status: string; completed_at?: string | null };
+type StopLike = Progress & { id: number; arrived_at?: string | null };
+
+/** How far a stop has got: 0 not reached · 1 arrived · 2 outcome recorded · 3 closed. */
+function progress(stop: Progress) {
+  if (stop.completed_at || stop.status === "rescheduled") return 3;
+  if (stop.status === "delivered" || stop.status === "partial" || stop.status === "failed") return 2;
+  return stop.status === "arrived" ? 1 : 0;
+}
+
+/** Save a stop, never moving it back behind what the driver already did offline. */
 function cacheStop(detail: StopDetail) {
-  try {
-    localStorage.setItem(CACHE_PREFIX + detail.id, JSON.stringify(detail));
-  } catch {
-    // storage full or blocked: the screens just need signal
-  }
+  const local = getCachedStop(detail.id);
+  const ahead = local && progress(local) > progress(detail);
+  writeCache(stopPath(detail.id), ahead
+    ? { ...detail, status: local.status, arrived_at: local.arrived_at, completed_at: local.completed_at, pod: local.pod }
+    : detail);
 }
 
 export function getCachedStop(stopId: string | number): StopDetail | null {
-  try {
-    const raw = localStorage.getItem(CACHE_PREFIX + stopId);
-    return raw ? (JSON.parse(raw) as StopDetail) : null;
-  } catch {
-    return null;
-  }
+  return readCache<StopDetail>(stopPath(stopId));
+}
+
+/**
+ * A trip's stops with what the driver did offline laid over them: each stop
+ * as far along as either the trip's copy or the stop's own copy says.
+ */
+export function mergeLocalProgress<S extends StopLike>(stops: S[]): S[] {
+  return stops.map((stop) => {
+    const local = getCachedStop(stop.id);
+    if (!local || progress(local) <= progress(stop)) return stop;
+    return {
+      ...stop,
+      status: local.status,
+      arrived_at: local.arrived_at ?? stop.arrived_at,
+      completed_at: local.completed_at ?? stop.completed_at,
+    } as S;
+  });
 }
 
 // The trip under way, so an SOS sent with no signal still names it
@@ -90,14 +115,14 @@ export function getRememberedTrip(): number | null {
 /** After an action is saved offline, so the next screen shows the stop as it will be. */
 export function updateCachedStop(stopId: string | number, changes: Partial<StopDetail>) {
   const stop = getCachedStop(stopId);
-  if (stop) cacheStop({ ...stop, ...changes });
+  if (stop) writeCache(stopPath(stopId), { ...stop, ...changes });
 }
 
 export async function fetchStopDetail(stopId: string | number) {
   try {
-    const detail = await apiFetch<StopDetail>(`/driver/stops/${stopId}`);
+    const detail = await apiFetch<StopDetail>(stopPath(stopId));
     cacheStop(detail);
-    return detail;
+    return getCachedStop(stopId) ?? detail;
   } catch (err) {
     const cached = err instanceof ApiError && err.isNetworkError ? getCachedStop(stopId) : null;
     if (cached) return cached;

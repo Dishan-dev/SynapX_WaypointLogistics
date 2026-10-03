@@ -7,8 +7,8 @@ import {
   Signal, BatteryFull, Check, CloudOff,
   Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
-import { isStopOpen } from "@/lib/driverStop";
+import { cachedGet } from "@/lib/driverCache";
+import { isStopOpen, mergeLocalProgress } from "@/lib/driverStop";
 import DeviceClock from "@/components/driver/DeviceClock";
 
 interface DeliveryStop {
@@ -30,12 +30,12 @@ function StopCompleteContent() {
   useEffect(() => {
     async function loadData() {
       try {
-        const trips = await apiFetch<any[]>("/driver/trips/today");
+        const trips = await cachedGet<{ id: number; status: string }[]>("/driver/trips/today");
         const startedTrip = trips.find(t => t.status === "started");
         
         if (startedTrip) {
-          const detail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
-          setTripDetail(detail);
+          const detail = await cachedGet<any>(`/driver/trips/${startedTrip.id}`);
+          setTripDetail({ ...detail, stops: mergeLocalProgress(detail.stops) });
 
           if (stopId) {
             const foundStop = detail.stops.find((s: any) => s.id.toString() === stopId);

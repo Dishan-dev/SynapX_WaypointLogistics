@@ -7,7 +7,7 @@ import {
   Signal, BatteryFull, User, Truck, Phone, Mail,
   LogOut, Map, Home, TriangleAlert, ChevronRight
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { cachedGet } from "@/lib/driverCache";
 import { clearToken } from "@/lib/auth";
 import DeviceClock from "@/components/driver/DeviceClock";
 
@@ -26,7 +26,7 @@ export default function ProfilePage() {
   useEffect(() => {
     async function loadProfile() {
       try {
-        const data = await apiFetch<UserProfile>("/driver/me");
+        const data = await cachedGet<UserProfile>("/driver/me");
         setProfile(data);
       } catch (error) {
         console.error("Failed to load profile:", error);

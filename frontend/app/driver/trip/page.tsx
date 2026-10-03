@@ -31,8 +31,9 @@ import {
 import { type Map as MapLibreMap } from "maplibre-gl";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { cachedGet } from "@/lib/driverCache";
 import { gpsLabel } from "@/lib/gps";
-import { fetchStopDetail, isStopOpen, rememberActiveTrip } from "@/lib/driverStop";
+import { fetchStopDetail, isStopOpen, mergeLocalProgress, rememberActiveTrip } from "@/lib/driverStop";
 import type { DriverTripDetail, DeliveryStop, GPSPosition } from "@/types/driver-map";
 
 // Heavy map canvas loaded client-side only
@@ -103,7 +104,7 @@ export default function DriverRouteMapPage() {
   // ─── Load trip data ───────────────────────────────────────────
   const loadTrip = useCallback(async () => {
     try {
-      const trips = await apiFetch<any[]>("/driver/trips/today");
+      const trips = await cachedGet<{ id: number; status: string }[]>("/driver/trips/today");
       // Prioritise STARTED, then ASSIGNED
       const target =
         trips.find((t) => t.status === "started") ??
@@ -111,7 +112,9 @@ export default function DriverRouteMapPage() {
         null;
 
       if (target) {
-        const detail = await apiFetch<DriverTripDetail>(`/driver/trips/${target.id}`);
+        const fetched = await cachedGet<DriverTripDetail>(`/driver/trips/${target.id}`);
+        // What the driver did offline (still in the sync queue) shows on the map too
+        const detail = { ...fetched, stops: mergeLocalProgress(fetched.stops) };
         setTrip(detail);
         setLastUpdated(new Date());
         setOffline(false);

@@ -6,10 +6,12 @@ import {
   Signal, BatteryFull, Check, CloudCheck, MapPin, CheckCircle2,
   Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { cachedGet } from "@/lib/driverCache";
+import { mergeLocalProgress } from "@/lib/driverStop";
 import DeviceClock from "@/components/driver/DeviceClock";
+import SyncStatus from "@/components/driver/SyncStatus";
 
-type SummaryStop = { status: string; pod: unknown };
+type SummaryStop = { id: number; status: string; pod: unknown; completed_at: string | null };
 
 export default function TripSummaryPage() {
   const [tripDetail, setTripDetail] = useState<any>(null);
@@ -19,16 +21,16 @@ export default function TripSummaryPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const trips = await apiFetch<any[]>("/driver/trips/today");
+        const trips = await cachedGet<{ id: number; status: string }[]>("/driver/trips/today");
         // Prioritize started trip, otherwise take the most recently completed one
         const targetTrip = trips.find(t => t.status === "started") || trips.find(t => t.status === "completed");
         
         if (targetTrip) {
           const [detail, issues] = await Promise.all([
-            apiFetch<{ stops: SummaryStop[] }>(`/driver/trips/${targetTrip.id}`),
-            apiFetch<unknown[]>(`/driver/trips/${targetTrip.id}/issues`),
+            cachedGet<{ stops: SummaryStop[] }>(`/driver/trips/${targetTrip.id}`),
+            cachedGet<unknown[]>(`/driver/trips/${targetTrip.id}/issues`),
           ]);
-          setTripDetail(detail);
+          setTripDetail({ ...detail, stops: mergeLocalProgress(detail.stops) });
           setIssueCount(issues.length);
         }
       } catch (error) {
@@ -45,7 +47,8 @@ export default function TripSummaryPage() {
   const processedStops = stops.filter((s) => ["delivered", "partial", "failed", "rescheduled"].includes(s.status)).length;
   const fullDeliveries = stops.filter((s) => s.status === "delivered").length;
   const partialDeliveries = stops.filter((s) => s.status === "partial").length;
-  const podComplete = stops.filter((s) => s.pod).length;
+  // A proof saved offline shows as the stop closed before the server has it
+  const podComplete = stops.filter((s) => s.pod || (s.completed_at && (s.status === "delivered" || s.status === "partial"))).length;
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
@@ -61,7 +64,7 @@ export default function TripSummaryPage() {
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
           <DeviceClock className="text-[12px] font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
-            <span className="text-[14px] font-normal" style={{ color: "#BDBDBD" }}>Synced</span>
+            <SyncStatus className="text-[14px] font-normal" style={{ color: "#BDBDBD" }} />
             <Signal size={16} color="#BDBDBD" />
             <BatteryFull size={18} color="#BDBDBD" />
           </div>

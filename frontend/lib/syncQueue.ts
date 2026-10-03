@@ -96,6 +96,13 @@ let _initialized = false;
 export async function initSyncQueue() {
   if (_initialized) return;
   _initialized = true;
+  // A record left "syncing" was cut off (page closed or reloaded mid-send):
+  // send it again. The server ignores a repeat of an action it already has.
+  const db = await getDB();
+  const all = (await db.getAll(STORE_QUEUE)) as PendingAction[];
+  await Promise.all(
+    all.filter((a) => a.status === "syncing").map((a) => db.put(STORE_QUEUE, { ...a, status: "pending" }))
+  );
   await _loadQueue();
   window.addEventListener("online", () => {
     if (_queue.length > 0) flush();

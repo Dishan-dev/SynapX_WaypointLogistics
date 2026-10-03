@@ -8,7 +8,10 @@ import {
   ClipboardCheck, Map, Home, TriangleAlert, Layers
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { cachedGet } from "@/lib/driverCache";
+import { mergeLocalProgress } from "@/lib/driverStop";
 import DeviceClock from "@/components/driver/DeviceClock";
+import SyncStatus from "@/components/driver/SyncStatus";
 
 interface DeliveryStop {
   id: number;
@@ -43,8 +46,8 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
   useEffect(() => {
     async function loadTrip() {
       try {
-        const data = await apiFetch<TripDetail>(`/driver/trips/${tripId}`);
-        setTrip(data);
+        const data = await cachedGet<TripDetail>(`/driver/trips/${tripId}`);
+        setTrip({ ...data, stops: mergeLocalProgress(data.stops) });
       } catch (error) {
         console.error("Failed to load trip details:", error);
       } finally {
@@ -81,7 +84,7 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
           <DeviceClock className="text-xs font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
-            <span className="text-sm font-normal text-[#BDBDBD]">Synced</span>
+            <SyncStatus className="text-sm font-normal text-[#BDBDBD]" />
             <Signal size={16} color="#BDBDBD" />
             <BatteryFull size={18} color="#BDBDBD" />
           </div>

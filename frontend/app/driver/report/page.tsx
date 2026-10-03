@@ -8,6 +8,7 @@ import {
   Ellipsis, Check, Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
 import { apiFetch, apiFetchUpload } from "@/lib/api";
+import { cachedGet } from "@/lib/driverCache";
 import { useSyncContext } from "@/components/SyncProvider";
 import PhotoAttach, { type PhotoDraft } from "@/components/driver/PhotoAttach";
 import { getCachedStop } from "@/lib/driverStop";
@@ -36,11 +37,11 @@ export default function ReportProblemPage() {
   useEffect(() => {
     async function loadActiveTrip() {
       try {
-        const trips = await apiFetch<any[]>("/driver/trips/today");
+        const trips = await cachedGet<{ id: number; status: string }[]>("/driver/trips/today");
         const startedTrip = trips.find(t => t.status === "started");
 
         if (startedTrip) {
-          const detail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
+          const detail = await cachedGet<any>(`/driver/trips/${startedTrip.id}`);
           setActiveTrip(detail);
 
           // Coming from the outcome screen, the failed stop is passed explicitly

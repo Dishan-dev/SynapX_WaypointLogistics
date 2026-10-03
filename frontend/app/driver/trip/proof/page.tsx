@@ -10,7 +10,7 @@ import {
 import DeviceClock from "@/components/driver/DeviceClock";
 import { toast } from "sonner";
 import { apiFetch, apiFetchUpload, ApiError } from "@/lib/api";
-import { fetchStopDetail, type StopDetail } from "@/lib/driverStop";
+import { fetchStopDetail, updateCachedStop, type StopDetail } from "@/lib/driverStop";
 import { useSyncContext } from "@/components/SyncProvider";
 import SignaturePad from "@/components/driver/SignaturePad";
 
@@ -89,6 +89,11 @@ function ProofOfDeliveryContent() {
       { action_type: "pod", stop_id: Number(stopId), payload, label: `Proof of delivery · ${stop?.customer_name ?? "stop"}` },
       photos[0].file
     );
+    // The stop is done on this phone: the map moves on to the next one
+    updateCachedStop(stopId!, {
+      completed_at: new Date().toISOString(),
+      pod: { id: 0, recipient_name: String(payload.recipient_name ?? "") },
+    });
     toast.success("Saved on this device", { description: "Proof will sync automatically when signal returns." });
     router.push("/driver/trip");
   }

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Warehouse, MapPin, Clock } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { cachedGet } from "@/lib/driverCache";
 
 export default function ArrivedAtDepotPage() {
   const router = useRouter();
@@ -16,7 +17,7 @@ export default function ArrivedAtDepotPage() {
   useEffect(() => {
     async function loadActiveTrip() {
       try {
-        const trips = await apiFetch<any[]>("/driver/trips/today");
+        const trips = await cachedGet<{ id: number; status: string }[]>("/driver/trips/today");
         // Could be completed but not yet checked-in at depot
         const trip = trips.find(t => t.status === "completed" || t.status === "started");
         setActiveTrip(trip);

@@ -6,8 +6,10 @@ import {
   MapPin, Signal, BatteryFull, Map, Home, TriangleAlert, Layers, User
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { cachedGet, keepPageOffline } from "@/lib/driverCache";
 import { colomboNow, greeting, READY_CUTOFF_HOUR } from "@/lib/colomboTime";
 import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
+import SyncStatus from "@/components/driver/SyncStatus";
 
 function readyKey() {
   return `driver-ready-for-tomorrow:${colomboNow().dateKey}`;
@@ -47,12 +49,14 @@ export default function DriverDashboard() {
     async function loadDashboardData() {
       try {
         const [profileData, tripsData] = await Promise.all([
-          apiFetch<UserProfile>("/driver/me"),
-          apiFetch<DriverTripSummary[]>("/driver/trips/today"),
+          cachedGet<UserProfile>("/driver/me"),
+          cachedGet<DriverTripSummary[]>("/driver/trips/today"),
         ]);
         setProfile(profileData);
         setTrips(tripsData);
         setReadyForTomorrow(readyConfirmedToday());
+        // Each trip's page opens offline too
+        tripsData.forEach((t) => keepPageOffline(`/driver/trip/${t.id}`));
       } catch (error) {
         console.error("Failed to load dashboard data:", error);
       } finally {
@@ -96,7 +100,7 @@ export default function DriverDashboard() {
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
           <DeviceClock className="text-xs font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
-            <span className="text-sm font-normal text-[#BDBDBD]">Synced</span>
+            <SyncStatus className="text-sm font-normal text-[#BDBDBD]" />
             <Signal size={16} color="#BDBDBD" />
             <BatteryFull size={18} color="#BDBDBD" />
           </div>
