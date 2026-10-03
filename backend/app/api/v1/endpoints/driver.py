@@ -7,7 +7,8 @@ from app.api import deps
 from app.models.user import User
 from app.schemas.auth import UserRead
 from app.schemas.driver import (
-    DriverTripSummary, DriverTripDetail, DeliveryStopRead, DeliveryStopDetail, ProofOfDeliveryCreate, ProofOfDeliveryRead
+    DriverTripSummary, DriverTripDetail, DeliveryStopRead, DeliveryStopDetail, ProofOfDeliveryCreate, ProofOfDeliveryRead,
+    DriverProfileRead, DriverProfileUpdate,
 )
 from app.services import driver_service
 from app.models.driver import DeliveryStopStatus
@@ -21,6 +22,24 @@ router = APIRouter()
 def read_current_driver(current_user: User = Depends(deps.require_driver)):
     """Returns current driver profile."""
     return current_user
+
+@router.get("/profile", response_model=DriverProfileRead)
+def read_driver_profile(
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_driver)
+):
+    """Phone, licence and vehicle. `complete` stays false until the driver saves
+    phone and licence: dispatch can't assign the driver before that."""
+    return driver_service.get_profile(db, current_user.id)
+
+@router.put("/profile", response_model=DriverProfileRead)
+def update_driver_profile(
+    profile_in: DriverProfileUpdate,
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_driver)
+):
+    """Saves the driver's phone and licence type. The vehicle is set by the depot."""
+    return driver_service.update_profile(db, current_user.id, profile_in.phone, profile_in.license_type)
 
 @router.get("/trips/today", response_model=List[DriverTripSummary])
 def get_today_trips(

@@ -1,6 +1,6 @@
-from typing import List, Optional, Annotated
+from typing import List, Optional, Annotated, Literal
 from datetime import datetime, timezone
-from pydantic import BaseModel, ConfigDict, PlainSerializer
+from pydantic import BaseModel, ConfigDict, PlainSerializer, field_validator
 from app.models.driver import DriverTripStatus, DeliveryStopStatus, IssueType, IssueStatus, SOSStatus
 
 # Columns are stored as naive UTC (no DB timezone column, to avoid a migration
@@ -155,4 +155,47 @@ class SyncConflict(BaseModel):
 class SyncResult(BaseModel):
     processed_count: int
     conflicts: List[SyncConflict]
+
+# ---- Profile ---------------------------------------------------------------------
+# The driver keeps phone and licence up to date; the vehicle is the depot's to set.
+
+LicenseType = Literal["Light", "Heavy"]  # Light: vans. Heavy: trucks.
+
+
+def normalise_phone(value: str) -> Optional[str]:
+    """A Sri Lankan number as 0XXXXXXXXX (spaces, dashes or +94 allowed), else None."""
+    number = "".join(ch for ch in value if ch not in " -()")
+    if number.startswith("+94"):
+        number = "0" + number[3:]
+    return number if len(number) == 10 and number.isdigit() and number.startswith("0") else None
+
+
+class DriverVehicleInfo(BaseModel):
+    code: str
+    vehicle_type: str
+    temperature_mode: str
+    depot_name: str
+
+
+class DriverProfileRead(BaseModel):
+    full_name: str
+    email: str
+    phone: Optional[str] = None
+    license_type: Optional[str] = None
+    complete: bool  # phone and licence saved, so dispatch can assign the driver
+    vehicle: Optional[DriverVehicleInfo] = None  # usual truck, set by the depot
+    todays_vehicle: Optional[str] = None  # truck on the driver's current trip
+
+
+class DriverProfileUpdate(BaseModel):
+    phone: str
+    license_type: LicenseType
+
+    @field_validator("phone")
+    @classmethod
+    def sri_lankan_number(cls, value: str) -> str:
+        number = normalise_phone(value)
+        if number is None:
+            raise ValueError("Enter a Sri Lankan phone number, like 0771234567.")
+        return number
 

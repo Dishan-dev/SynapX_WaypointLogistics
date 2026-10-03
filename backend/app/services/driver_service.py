@@ -16,7 +16,7 @@ from app.models.fleet import DriverProfile
 from app.models.order import Order, OrderStatus
 from app.models.shipment import DispatchTrip
 from app.models.user import User
-from app.schemas.driver import DeliveryStopRead
+from app.schemas.driver import DeliveryStopRead, normalise_phone
 from app.schemas.loader import GateOutRequest
 from app.services import geo
 from app.services.loader_service import LoaderService
@@ -619,6 +619,50 @@ def depot_checkin(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
     db.commit()
     db.refresh(trip)
     return trip
+
+
+# ---- Profile -------------------------------------------------------------------
+# An account made in Admin has a login but no driver_profiles row. Without one the
+# driver gets no trips and dispatch can't pick them, so the driver adds phone and
+# licence from the profile screen. The vehicle stays the depot's to set.
+
+def get_profile(db: Session, driver_id: int) -> dict:
+    user = db.get(User, driver_id)
+    profile = db.query(DriverProfile).filter(DriverProfile.user_id == driver_id).first()
+    vehicle = profile.vehicle if profile is not None else None
+    current = db.query(DriverTrip).filter(
+        DriverTrip.driver_id == driver_id,
+        DriverTrip.status.in_([DriverTripStatus.ASSIGNED, DriverTripStatus.STARTED]),
+    ).order_by(DriverTrip.id.desc()).first()
+    return {
+        "full_name": user.full_name,
+        "email": user.email,
+        "phone": profile.phone if profile is not None else None,
+        "license_type": profile.license_type if profile is not None else None,
+        "complete": bool(profile is not None and profile.phone and profile.license_type),
+        "vehicle": {
+            "code": vehicle.code,
+            "vehicle_type": vehicle.vehicle_type,
+            "temperature_mode": vehicle.temperature_mode,
+            "depot_name": vehicle.depot_name,
+        } if vehicle is not None else None,
+        "todays_vehicle": current.dispatch_trip.vehicle_number
+        if current is not None and current.dispatch_trip is not None else None,
+    }
+
+
+def update_profile(db: Session, driver_id: int, phone: str, license_type: str) -> dict:
+    profile = db.query(DriverProfile).filter(DriverProfile.user_id == driver_id).first()
+    if profile is None:
+        db.add(DriverProfile(user_id=driver_id, phone=phone, license_type=license_type))
+    else:
+        # Saved once, the phone number stays: only the licence can change.
+        if profile.phone and (normalise_phone(profile.phone) or profile.phone) != phone:
+            raise HTTPException(status_code=400, detail="Your phone number can't be changed.")
+        profile.phone = profile.phone or phone
+        profile.license_type = license_type
+    db.commit()
+    return get_profile(db, driver_id)
 
 
 def process_sync_batch(db: Session, actions: list, driver_id: int) -> dict:

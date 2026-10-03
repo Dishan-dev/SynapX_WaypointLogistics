@@ -406,3 +406,88 @@ def test_trip_without_a_run_starts_without_a_gate_out(loader_client, trip_setup)
 
     assert body["status"] == "started"
     assert db.get(DispatchTrip, dispatch_trip.id).status == "en_route"
+
+
+# ---- Profile: phone and licence from the driver, vehicle from the depot ----------
+
+def make_account(db, email="nimal@waypoint.com"):
+    """A driver account the way Admin creates it: a login, no driver_profiles row."""
+    user = User(
+        email=email, full_name="Nimal Silva", hashed_password=get_password_hash("driver123"),
+        role=UserRole.DRIVER, is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def test_new_account_profile_is_incomplete_and_has_no_trips(loader_client, db_session):
+    user = make_account(db_session)
+
+    body = loader_client.get(f"{API}/profile", headers=auth(user)).json()
+
+    assert body["complete"] is False
+    assert body["phone"] is None and body["license_type"] is None and body["vehicle"] is None
+    assert today(loader_client, user) == []
+
+
+def test_saving_phone_and_licence_lets_dispatch_pick_the_driver(loader_client, db_session):
+    user = make_account(db_session)
+
+    res = loader_client.put(
+        f"{API}/profile", headers=auth(user), json={"phone": "+94 77 123 4567", "license_type": "Heavy"},
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["complete"] is True
+    assert (body["phone"], body["license_type"]) == ("0771234567", "Heavy")
+    drivers = loader_client.get("/api/v1/fleet/drivers").json()
+    assert any(driver["user_id"] == user.id for driver in drivers)
+
+
+def test_editing_the_profile_keeps_the_depots_vehicle(loader_client, trip_setup):
+    db, vehicle = trip_setup["db"], trip_setup["vehicle"]
+    driver, profile = make_driver(db, vehicle=vehicle)
+
+    res = loader_client.put(
+        f"{API}/profile", headers=auth(driver), json={"phone": "077-123-4567", "license_type": "Light"},
+    )
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (body["phone"], body["license_type"]) == ("0771234567", "Light")
+    assert body["vehicle"]["code"] == vehicle.code
+    db.refresh(profile)
+    assert profile.assigned_vehicle_id == vehicle.id
+
+
+def test_profile_refuses_a_bad_phone_or_licence(loader_client, db_session):
+    user = make_account(db_session)
+
+    for payload in ({"phone": "12345", "license_type": "Heavy"}, {"phone": "0771234567", "license_type": "Bus"}):
+        res = loader_client.put(f"{API}/profile", headers=auth(user), json=payload)
+        assert res.status_code == 422, res.text
+
+    assert db_session.query(DriverProfile).filter(DriverProfile.user_id == user.id).first() is None
+
+
+def test_phone_number_cant_be_changed_once_saved(loader_client, db_session):
+    user = make_account(db_session)
+    first = loader_client.put(f"{API}/profile", headers=auth(user), json={"phone": "0771234567", "license_type": "Heavy"})
+    assert first.status_code == 200, first.text
+
+    res = loader_client.put(f"{API}/profile", headers=auth(user), json={"phone": "0712345678", "license_type": "Light"})
+
+    assert (res.status_code, res.json()["detail"]) == (400, "Your phone number can't be changed.")
+    body = loader_client.get(f"{API}/profile", headers=auth(user)).json()
+    assert (body["phone"], body["license_type"]) == ("0771234567", "Heavy")
+
+
+def test_profile_shows_the_truck_on_todays_trip(loader_client, released):
+    today(loader_client, released["driver"])
+
+    body = loader_client.get(f"{API}/profile", headers=auth(released["driver"])).json()
+
+    truck = released["dispatch_trip"].vehicle_number
+    assert truck and body["todays_vehicle"] == truck

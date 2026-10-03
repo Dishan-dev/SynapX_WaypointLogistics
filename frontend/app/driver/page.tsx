@@ -44,6 +44,7 @@ export default function DriverDashboard() {
   const [loading, setLoading] = useState(true);
   const [readyForTomorrow, setReadyForTomorrow] = useState(false);
   const [submittingReady, setSubmittingReady] = useState(false);
+  const [needsProfile, setNeedsProfile] = useState(false);
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -64,6 +65,10 @@ export default function DriverDashboard() {
       }
     }
     loadDashboardData();
+    // Separate, so an old server without /driver/profile can't hide the trips.
+    cachedGet<{ complete: boolean }>("/driver/profile")
+      .then((driver) => setNeedsProfile(!driver.complete))
+      .catch(() => undefined);
   }, []);
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -127,6 +132,17 @@ export default function DriverDashboard() {
       {/* Trips content */}
       <div className="flex flex-col flex-1 px-5 pt-5 pb-24 gap-4">
         
+        {/* No phone or licence yet: dispatch can't give this driver a trip */}
+        {needsProfile && (
+          <Link href="/driver/profile" className="flex items-center justify-between gap-3 p-4 rounded-xl" style={{ backgroundColor: "#FFF4E5", border: "1px solid #B26A00" }}>
+            <div className="flex flex-col gap-0.5">
+              <span className="font-bold text-[14px]" style={{ color: "#8A5300" }}>Complete your profile</span>
+              <span className="font-normal text-[12px]" style={{ color: "#8A5300" }}>Add your phone and licence so dispatch can give you trips.</span>
+            </div>
+            <span className="font-bold text-[13px] shrink-0" style={{ color: "#8A5300" }}>Add →</span>
+          </Link>
+        )}
+
         {/* Availability for Tomorrow Prompt */}
         {showTomorrowButton && (
           <div className="flex justify-between items-center p-4 rounded-xl" style={{ backgroundColor: "#E8F6EF", border: "1px solid #18794E", boxShadow: "0px 5px 16px 0px rgba(24, 121, 78, 0.08)" }}>
