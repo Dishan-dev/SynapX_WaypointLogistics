@@ -4,9 +4,10 @@ import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Signal, BatteryFull, CloudOff, Cloud, Camera, X, Plus,
+  Signal, BatteryFull, CloudOff, Cloud, Camera, X, Plus, ChevronLeft,
   Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
+import DeviceClock from "@/components/driver/DeviceClock";
 import { toast } from "sonner";
 import { apiFetch, apiFetchUpload, ApiError } from "@/lib/api";
 import { fetchStopDetail, type StopDetail } from "@/lib/driverStop";
@@ -92,6 +93,14 @@ function ProofOfDeliveryContent() {
     router.push("/driver/trip");
   }
 
+  // Back to the outcome screen, where the driver can still change the outcome.
+  // Not to the map: this stop is already marked delivered and the map would skip it.
+  function handleBack() {
+    const hasWork = recipientName.trim() || signature || photos.length > 0;
+    if (hasWork && !window.confirm("Leave without saving? The name, signature and photos will be lost.")) return;
+    router.push(`/driver/trip/outcome?stop_id=${stopId}`);
+  }
+
   async function handleSubmit() {
     if (!stopId || !stop) return;
     if (missing.length) {
@@ -161,9 +170,7 @@ function ProofOfDeliveryContent() {
       >
         {/* Device status */}
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
-          <span className="text-[12px] font-semibold" style={{ color: "#12202E" }}>
-            {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </span>
+          <DeviceClock className="text-[12px] font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
             <span className="text-[14px] font-normal" style={{ color: "#BDBDBD" }}>{online ? "Online" : "Saving offline"}</span>
             <Signal size={16} color="#BDBDBD" />
@@ -172,8 +179,17 @@ function ProofOfDeliveryContent() {
         </div>
 
         {/* Title bar */}
-        <div className="flex px-5 py-2.5 items-center w-full">
-          <div className="flex flex-col gap-0.5">
+        <div className="flex px-2 py-1 items-center gap-1 w-full">
+          <button
+            type="button"
+            onClick={handleBack}
+            disabled={submitting}
+            aria-label="Back to delivery outcome"
+            className="flex items-center justify-center w-11 h-11 shrink-0 disabled:opacity-50"
+          >
+            <ChevronLeft size={22} color="#12202E" />
+          </button>
+          <div className="flex flex-col gap-0.5 min-w-0">
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
               Proof of Delivery
             </h1>
