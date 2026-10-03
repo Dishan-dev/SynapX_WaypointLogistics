@@ -6,15 +6,15 @@ from app.core.database import Base
 
 
 class AllocationStatus(str, enum.Enum):
-    DRAFT = "draft"
-    ALLOCATED = "allocated"
-    READY = "ready"
-    LOADING = "loading"
-    DISPATCHED = "dispatched"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    UNAVAILABLE = "unavailable"
-    AVAILABLE = "available"
+    DRAFT = "DRAFT"
+    ALLOCATED = "ALLOCATED"
+    READY = "READY"
+    LOADING = "LOADING"
+    DISPATCHED = "DISPATCHED"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+    UNAVAILABLE = "UNAVAILABLE"
+    AVAILABLE = "AVAILABLE"
 
 
 class Allocation(Base):
@@ -38,3 +38,5 @@ class Allocation(Base):
     driver = relationship("DriverProfile", back_populates="allocations")
     # Orders can be linked to allocations
     orders = relationship("Order", back_populates="allocation")
+    # DispatchTrips are linked to allocations
+    dispatch_trips = relationship("DispatchTrip", backref="allocation")

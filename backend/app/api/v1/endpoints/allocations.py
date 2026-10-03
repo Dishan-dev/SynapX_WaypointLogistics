@@ -48,6 +48,11 @@ def create_allocation(
     if vehicle.status != VehicleStatus.AVAILABLE:
         raise HTTPException(status_code=400, detail="Vehicle is not available for allocation")
 
+    if allocation_in.driver_id is not None:
+        driver = db.query(DriverProfile).filter(DriverProfile.id == allocation_in.driver_id).first()
+        if not driver:
+            raise HTTPException(status_code=404, detail="Driver not found")
+
     allocation = Allocation(**allocation_in.model_dump())
     db.add(allocation)
     
@@ -115,14 +120,27 @@ def update_allocation(
         raise HTTPException(status_code=404, detail="Allocation not found")
 
     update_data = allocation_in.model_dump(exclude_unset=True)
+
+    if "driver_id" in update_data and update_data["driver_id"] is not None:
+        driver = db.query(DriverProfile).filter(DriverProfile.id == update_data["driver_id"]).first()
+        if not driver:
+            raise HTTPException(status_code=404, detail="Driver not found")
     
     for field, val in update_data.items():
         setattr(allocation, field, val)
         
-    # Free up vehicle if allocation is completed or cancelled
-    if "status" in update_data and update_data["status"] in [AllocationStatus.COMPLETED, AllocationStatus.CANCELLED]:
-        if allocation.vehicle:
-            allocation.vehicle.status = VehicleStatus.AVAILABLE
+    # Sync vehicle status with allocation lifecycle
+    if "status" in update_data:
+        new_status = update_data["status"]
+        if new_status in [AllocationStatus.COMPLETED, AllocationStatus.CANCELLED]:
+            if allocation.vehicle:
+                allocation.vehicle.status = VehicleStatus.AVAILABLE
+        elif new_status == AllocationStatus.LOADING:
+            if allocation.vehicle:
+                allocation.vehicle.status = VehicleStatus.LOADING
+        elif new_status in [AllocationStatus.ALLOCATED, AllocationStatus.READY]:
+            if allocation.vehicle:
+                allocation.vehicle.status = VehicleStatus.ALLOCATED
 
     db.commit()
     db.refresh(allocation)

@@ -1,4 +1,6 @@
+from datetime import datetime
 from typing import Generator, Optional
+from zoneinfo import ZoneInfo
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -23,19 +25,46 @@ def get_db() -> Generator:
         db.close()
 
 
+def get_now() -> datetime:
+    """Current Colombo time (naive), used for cutoffs. Tests override this to pin the clock."""
+    return datetime.now(ZoneInfo("Asia/Colombo")).replace(tzinfo=None)
+
+
 def get_current_user(
     db: Session = Depends(get_db),
-    token: str = Depends(reusable_oauth2)
+    token: Optional[str] = Depends(reusable_oauth2),
 ) -> User:
+    if not token:
+        if settings.KEYCLOAK_DEV_MODE:
+            user = db.query(User).filter(User.is_active == True).first()  # noqa: E712
+            if user:
+                return user
+            stub = User()
+            stub.id = 0
+            stub.email = "dev@waypoint.com"
+            stub.full_name = "Dev User"
+            stub.role = UserRole.DISPATCHER
+            stub.is_active = True
+            return stub
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         token_data = TokenPayload(**payload)
+        if not token_data.sub:
+            raise JWTError("Token payload missing subject")
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Could not validate credentials",
         )
-    user = db.query(User).filter(User.id == token_data.sub).first()
+    try:
+        user_id = int(token_data.sub)
+    except (ValueError, TypeError):
+        user_id = token_data.sub
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not user.is_active:
@@ -69,7 +98,11 @@ def require_dispatcher_or_admin(
         token_data = TokenPayload(**payload)
     except JWTError:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate credentials")
-    user = db.query(User).filter(User.id == token_data.sub).first()
+    try:
+        user_id = int(token_data.sub)
+    except (ValueError, TypeError):
+        user_id = token_data.sub
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not user.is_active:
@@ -80,3 +113,13 @@ def require_dispatcher_or_admin(
             detail="Only dispatchers and admins can perform this action.",
         )
     return user
+
+
+def require_driver(current_user: User = Depends(get_current_user)) -> User:
+    from app.models.user import UserRole
+    if current_user.role != UserRole.DRIVER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Driver access only"
+        )
+    return current_user

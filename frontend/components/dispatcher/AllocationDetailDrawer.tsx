@@ -13,14 +13,12 @@ import { Button } from "@/components/ui/button";
 import { StatusBadge, StatusVariant } from "./StatusBadge";
 import { toast } from "sonner";
 import { type Allocation } from "./AllocationTable";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001";
+import { fetchWithFallback } from "@/lib/api";
 
 interface AllocationDetailDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   allocation: Allocation | null;
-  onReassignDriver: () => void;
   onSuccess: () => void;
 }
 
@@ -57,7 +55,7 @@ export function AllocationDetailDrawer({
 
   const updateStatus = async (newStatus: string, successMessage: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/allocations/${allocation.id}`, {
+      const res = await fetchWithFallback(`/api/v1/allocations/${allocation.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus })
@@ -68,7 +66,30 @@ export function AllocationDetailDrawer({
         onOpenChange(false);
       } else {
         const err = await res.json();
-        toast.error(err.detail || "Failed to update allocation");
+        const errorMessage = Array.isArray(err.detail) ? err.detail[0]?.msg : err.detail;
+        toast.error(errorMessage || "Failed to update allocation");
+      }
+    } catch {
+      toast.error("Network error occurred");
+    }
+  };
+
+  const dispatchAllocation = async () => {
+    try {
+      const res = await fetchWithFallback(
+        `/api/v1/delivery-runs/from-allocation/${allocation.id}`,
+        { method: "POST" }
+      );
+      if (res.ok) {
+        const run = await res.json();
+        toast.success(`Delivery run ${run.trip_code} created — vehicle dispatched!`);
+        onSuccess();
+        onOpenChange(false);
+        router.push(`/dispatcher/delivery-runs`);
+      } else {
+        const err = await res.json();
+        const errorMessage = Array.isArray(err.detail) ? err.detail[0]?.msg : err.detail;
+        toast.error(errorMessage || "Failed to dispatch vehicle");
       }
     } catch {
       toast.error("Network error occurred");
@@ -96,7 +117,7 @@ export function AllocationDetailDrawer({
   
   const depotName = allocation.vehicle?.depot_name || "Unknown Depot";
 
-  // Status flags
+  // Status flags — normalise to lowercase to handle both "READY" and "ready" from DB
   const s = allocation.status.toLowerCase();
   const isReviewMode    = s === "draft" || s === "review";
   const isAllocatedMode = s === "allocated";
@@ -136,7 +157,7 @@ export function AllocationDetailDrawer({
                 isUnavailableMode ? "Unavailable" :
                 isReviewMode ? "Needs review" :
                 isLoadingMode ? "Loading in progress" :
-                (allocation.status.charAt(0).toUpperCase() + allocation.status.slice(1))
+                (allocation.status.charAt(0).toUpperCase() + allocation.status.slice(1).toLowerCase())
               }
               variant={getStatusVariant(allocation.status)}
             />
@@ -301,7 +322,7 @@ export function AllocationDetailDrawer({
                 <Button
                   style={{ backgroundColor: "#1c355e", color: "#ffffff" }}
                   className="px-4 hover:opacity-90 shadow-none font-semibold flex-1"
-                  onClick={() => updateStatus("allocated", "Allocation confirmed and kept")}
+                  onClick={() => updateStatus("ALLOCATED", "Allocation confirmed and kept")}
                 >
                   Keep Allocation
                 </Button>
@@ -321,14 +342,14 @@ export function AllocationDetailDrawer({
                 <Button
                   style={{ backgroundColor: "#1c355e", color: "#ffffff" }}
                   className="px-4 hover:opacity-90 shadow-none font-medium flex-1"
-                  onClick={() => updateStatus("ready", "Allocation marked as ready for dispatch")}
+                  onClick={() => updateStatus("READY", "Allocation marked as ready for dispatch")}
                 >
                   Mark as Ready
                 </Button>
               </>
             )}
 
-            {/* READY or LOADING — Dispatch Vehicle */}
+            {/* READY or LOADING — Dispatch Vehicle (creates Delivery Run atomically) */}
             {(isReadyMode || isLoadingMode) && (
               <>
                 <Button
@@ -339,9 +360,9 @@ export function AllocationDetailDrawer({
                   Close
                 </Button>
                 <Button
-                  style={{ backgroundColor: "#0284c7", color: "#ffffff" }}
+                  style={{ backgroundColor: "#18385F", color: "#ffffff" }}
                   className="px-4 hover:opacity-90 shadow-none font-medium flex-1"
-                  onClick={() => updateStatus("dispatched", "Vehicle dispatched successfully")}
+                  onClick={dispatchAllocation}
                 >
                   Dispatch Vehicle
                 </Button>

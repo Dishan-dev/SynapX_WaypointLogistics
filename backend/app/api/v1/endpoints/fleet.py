@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
@@ -15,7 +15,7 @@ router = APIRouter()
 @router.get("/vehicles", response_model=List[VehicleResponse])
 def get_vehicles(
     db: Session = Depends(get_db),
-    status: str = None,
+    status: Optional[str] = None,
     skip: int = 0,
     limit: int = 100
 ) -> Any:
@@ -24,7 +24,7 @@ def get_vehicles(
     """
     query = db.query(Vehicle)
     if status:
-        query = query.filter(Vehicle.status == status)
+        query = query.filter(Vehicle.status == status.upper())
     vehicles = query.offset(skip).limit(limit).all()
     return vehicles
 
