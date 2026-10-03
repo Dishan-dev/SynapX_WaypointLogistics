@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import or_, and_, func
 from app.api import deps
 from app.models.order import Order, OrderStatus
@@ -73,7 +73,7 @@ def list_orders(
     limit: int = 100,
     db: Session = Depends(deps.get_db),
 ):
-    query = db.query(Order)
+    query = db.query(Order).options(selectinload(Order.items))
 
     if is_late is not None:
         query = query.filter(Order.is_late == is_late)
@@ -170,7 +170,7 @@ def defer_order(order_id: int, req: DeferOrderRequest, db: Session = Depends(dep
 
 @router.get("/{order_id}", response_model=OrderRead)
 def get_order(order_id: int, db: Session = Depends(deps.get_db)):
-    order = db.query(Order).filter(Order.id == order_id).first()
+    order = db.query(Order).options(selectinload(Order.items)).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
