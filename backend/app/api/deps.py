@@ -38,14 +38,17 @@ def get_current_user(
 ) -> User:
     if not token:
         if settings.KEYCLOAK_DEV_MODE:
+            admin_user = db.query(User).filter(User.is_active == True, User.role == UserRole.ADMIN).first()  # noqa: E712
+            if admin_user:
+                return admin_user
             user = db.query(User).filter(User.is_active == True).first()  # noqa: E712
             if user:
                 return user
             stub = User()
             stub.id = 0
-            stub.email = "dev@waypoint.com"
-            stub.full_name = "Dev User"
-            stub.role = UserRole.DISPATCHER
+            stub.email = "admin@waypoint.com"
+            stub.full_name = "System Administrator"
+            stub.role = UserRole.ADMIN
             stub.is_active = True
             return stub
         raise HTTPException(
@@ -155,14 +158,17 @@ def get_dispatcher_depot(
     if current_user.role == UserRole.ADMIN:
         return requested
 
-    assignment = db.query(DepotDispatcherAssignment).filter(
-        DepotDispatcherAssignment.user_id == current_user.id
-    ).first()
-    if assignment:
-        return assignment.depot
-
-    if settings.KEYCLOAK_DEV_MODE and current_user.id == 0:
+    if settings.KEYCLOAK_DEV_MODE:
         return requested
+
+    try:
+        assignment = db.query(DepotDispatcherAssignment).filter(
+            DepotDispatcherAssignment.user_id == current_user.id
+        ).first()
+        if assignment:
+            return assignment.depot
+    except Exception:
+        db.rollback()
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
