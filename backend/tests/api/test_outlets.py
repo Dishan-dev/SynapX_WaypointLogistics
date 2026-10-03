@@ -16,7 +16,12 @@ def test_create_list_update_and_conflict(client):
     assert response.status_code == 201, response.text
     created = response.json()
     assert len(created["contacts"]) == 1 and len(created["receiving_windows"]) == 2
-    assert client.get("/api/v1/outlets/").json()[0]["code"] == "OUT-1"
+    listed = client.get("/api/v1/outlets/").json()[0]
+    assert listed["code"] == "OUT-1"
+    assert listed["address"] == "5 Main Street"
+    assert listed["active"] is True
+    assert len(listed["contacts"]) == 1
+    assert len(listed["receiving_windows"]) == 2
     assert client.get(f"/api/v1/outlets/{created['id']}").status_code == 200
     updated = payload()
     updated.update(expected_updated_at=created["updated_at"], active=False, contacts=[{"name": "Amal", "email": "amal@example.com"}], receiving_windows=[])
