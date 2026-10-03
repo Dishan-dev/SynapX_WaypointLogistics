@@ -30,10 +30,10 @@ def get_order_metrics(
         query = query.filter(Order.operating_date == operating_date)
 
     total_orders = query.count()
-    confirmed = query.filter(Order.status == OrderStatus.CONFIRMED).count()
+    confirmed = query.filter(Order.status.in_([OrderStatus.CONFIRMED, OrderStatus.SUBMITTED])).count()
     unallocated = query.filter(
         and_(
-            Order.status == OrderStatus.CONFIRMED,
+            Order.status.in_([OrderStatus.CONFIRMED, OrderStatus.SUBMITTED]),
             Order.allocation_id == None,
             Order.is_late == False,
         )
@@ -97,7 +97,7 @@ def list_orders(
         s_upper = status.upper()
         if s_upper == "UNALLOCATED":
             query = query.filter(
-                Order.status == OrderStatus.CONFIRMED,
+                Order.status.in_([OrderStatus.CONFIRMED, OrderStatus.SUBMITTED]),
                 Order.allocation_id == None,
                 Order.is_late == False,
             )
@@ -139,10 +139,22 @@ def bulk_allocate_orders(req: BulkAllocateRequest, db: Session = Depends(deps.ge
     if not orders:
         raise HTTPException(status_code=404, detail="No matching orders found")
 
+    # Up-front validation
     for order in orders:
-        order.status = OrderStatus.ALLOCATED
+        if order.status != OrderStatus.ALLOCATED and OrderStatus.ALLOCATED not in order_service.TRANSITIONS.get(order.status, set()):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{order.order_number} can't move from {order.status.value.lower()} to allocated."
+            )
+
+    # Apply changes
+    for order in orders:
         if req.allocation_id:
             order.allocation_id = req.allocation_id
+        
+        if order.status != OrderStatus.ALLOCATED:
+            order_service.update_order_status(db, order.id, OrderStatus.ALLOCATED, commit=False)
+            
     db.commit()
     return {"message": f"Successfully allocated {len(orders)} orders", "count": len(orders)}
 
@@ -152,12 +164,8 @@ def defer_order(order_id: int, req: DeferOrderRequest, db: Session = Depends(dep
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    order.status = OrderStatus.DEFERRED
-    order.deferral_reason = req.reason
-    order.allocation_id = None
-    db.commit()
-    db.refresh(order)
-    return order
+    
+    return order_service.defer_order(db, order_id, req.reason)
 
 
 @router.get("/{order_id}", response_model=OrderRead)
