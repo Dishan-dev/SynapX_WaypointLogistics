@@ -168,6 +168,9 @@ export default function DeliveryHistoryPage() {
     loadHistory();
   }, []);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
   const totalCount = historyRecords.length;
   const cleanCount = historyRecords.filter((r) => r.outcomeType === "clean").length;
   const issuesCount = historyRecords.filter((r) => r.outcomeType !== "clean").length;
@@ -190,6 +193,9 @@ export default function DeliveryHistoryPage() {
 
     return true;
   });
+
+  const totalPages = Math.ceil(filtered.length / pageSize) || 1;
+  const paginatedHistory = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -315,14 +321,14 @@ export default function DeliveryHistoryPage() {
                     Loading delivery history...
                   </td>
                 </tr>
-              ) : filtered.length === 0 ? (
+              ) : paginatedHistory.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-muted-foreground">
                     No completed deliveries match your filter criteria.
                   </td>
                 </tr>
               ) : (
-                filtered.map((row) => (
+                paginatedHistory.map((row) => (
                   <tr key={row.orderId} className="hover:bg-muted/30 transition-colors">
                     <td className="py-3.5 px-4 font-mono font-bold text-foreground">
                       {row.orderId}
@@ -376,6 +382,41 @@ export default function DeliveryHistoryPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Footer */}
+        {filtered.length > 0 && (
+          <div className="p-3.5 border-t border-border/60 bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <span className="text-muted-foreground">
+              Showing {(currentPage - 1) * pageSize + 1} &ndash;{" "}
+              {Math.min(currentPage * pageSize, filtered.length)} of {filtered.length} deliveries
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="h-8 text-xs font-semibold"
+              >
+                Previous
+              </Button>
+              <span className="px-2 text-xs font-medium text-muted-foreground">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="h-8 text-xs font-semibold"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

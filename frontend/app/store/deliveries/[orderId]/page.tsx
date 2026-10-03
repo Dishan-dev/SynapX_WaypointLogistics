@@ -20,8 +20,19 @@ import {
   Trash2,
   MapPin,
   Clock,
+  Printer,
 } from "lucide-react";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { StoreSectionCard } from "@/components/store/store-cards";
 import { StorePill } from "@/components/store/status-pill";
 import { submitDeliveryReceipt, ReceiptCreatePayload } from "@/services/api";
 import { saveIssue } from "@/services/issues-store";
@@ -144,6 +155,7 @@ export default function DeliveryDetailsAndReceivingPage({
     }
     loadLiveOrder();
   }, [rawOrderId]);
+
   const [sealVerified, setSealVerified] = useState(true);
   const [tempVerified, setTempVerified] = useState(true);
   const [generalRemarks, setGeneralRemarks] = useState("");
@@ -380,199 +392,203 @@ export default function DeliveryDetailsAndReceivingPage({
   }
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto pb-12">
-      {/* Breadcrumb Navigation */}
-      <div className="flex items-center justify-between gap-4">
-        <Button asChild variant="ghost" size="sm" className="gap-2 text-foreground/80 hover:text-primary">
-          <Link href="/store/deliveries">
-            <ArrowLeft className="size-4" />
-            <span>Incoming Deliveries</span>
-          </Link>
-        </Button>
-        <span className="text-xs font-mono font-medium text-muted-foreground">
-          {orderNumber} &bull; Fresh Colombo (OUT005)
-        </span>
-      </div>
-
-      {/* Page Header (Figma 14:527 Header) */}
-      <div className="bg-card border border-border rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-foreground">
-                Delivery {orderNumber}
-              </h1>
+    <div className="flex flex-col gap-4 md:gap-6 max-w-6xl mx-auto pb-16">
+      {/* Breadcrumb & Header */}
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="flex min-w-0 flex-col gap-2">
+          <Breadcrumb>
+            <BreadcrumbList className="text-base">
+              <BreadcrumbItem>
+                <BreadcrumbLink asChild>
+                  <Link href="/store/deliveries">Incoming Deliveries</Link>
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage className="text-primary">{orderNumber}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+          <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-4">
+            <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
+              Delivery {orderNumber}
+            </h1>
+            <div className="flex flex-wrap gap-2">
               <StorePill tone="warning">At Dock</StorePill>
               <StorePill tone="brand">Fresh</StorePill>
+              {matchedOrder?.temperatureClass === "chilled" ? (
+                <StorePill tone="info" className="gap-1">
+                  <ThermometerSnowflake className="size-3" />
+                  Chilled
+                </StorePill>
+              ) : (
+                <StorePill tone="neutral">Ambient</StorePill>
+              )}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Goods request placed 24 Sep 2026 &bull; Destination: <strong>Fresh Colombo (OUT005)</strong>
-            </p>
           </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setShowRejectModal(true)}
-              className="text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-semibold text-xs"
-            >
-              <XCircle className="size-4 mr-1.5" />
-              <span>Reject Delivery</span>
-            </Button>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Goods request linked to <strong className="text-foreground">{orderNumber}</strong> &bull; Destination: <strong>Fresh Colombo (OUT005)</strong>
+          </p>
         </div>
 
-        {/* 6-Step Delivery Progress Stepper (Figma 14:619) */}
-        <div className="pt-3 border-t border-border/60">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">
-            Delivery Progress
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-xs">
-            <div className="p-2.5 rounded-md bg-muted/50 border border-border/50 space-y-0.5">
-              <div className="font-bold text-foreground">1. Planned</div>
-              <div className="text-[11px] text-muted-foreground">24 Sep • Scheduled</div>
-            </div>
-            <div className="p-2.5 rounded-md bg-muted/50 border border-border/50 space-y-0.5">
-              <div className="font-bold text-foreground">2. Assigned</div>
-              <div className="text-[11px] text-muted-foreground">25 Sep • {vehicleId}</div>
-            </div>
-            <div className="p-2.5 rounded-md bg-muted/50 border border-border/50 space-y-0.5">
-              <div className="font-bold text-foreground">3. In Transit</div>
-              <div className="text-[11px] text-muted-foreground">Today, 05:15</div>
-            </div>
-            <div className="p-2.5 rounded-md bg-muted/50 border border-border/50 space-y-0.5">
-              <div className="font-bold text-foreground">4. Arrived</div>
-              <div className="text-[11px] text-muted-foreground">Today, 06:08 • Dock</div>
-            </div>
-            <div className="p-2.5 rounded-md bg-warning-muted border border-warning/30 space-y-0.5">
-              <div className="font-bold text-warning-muted-foreground flex items-center justify-between">
-                <span>5. Receiving</span>
-                <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
-              </div>
-              <div className="text-[11px] text-warning-muted-foreground font-medium">Intake in progress</div>
-            </div>
-            <div className="p-2.5 rounded-md bg-muted/30 border border-border/30 opacity-70 space-y-0.5">
-              <div className="font-bold text-muted-foreground">6. Completed</div>
-              <div className="text-[11px] text-muted-foreground">Awaiting sign-off</div>
-            </div>
-          </div>
-        </div>
-
-        {/* 3 Info Cards: Vehicle & Driver, Window & Location, Manifest & Cold Chain (Figma 14:652) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-          {/* Card 1: Vehicle & Driver */}
-          <div className="p-3.5 bg-muted/40 border border-border/60 rounded-lg space-y-2 text-xs">
-            <div className="font-bold text-foreground flex items-center gap-1.5 border-b border-border/50 pb-1.5">
-              <Truck className="size-3.5 text-primary" />
-              <span>Vehicle &amp; Driver</span>
-            </div>
-            <div className="space-y-1">
-              <div>
-                <span className="text-muted-foreground">Vehicle: </span>
-                <strong className="text-foreground">{vehicleId}</strong>
-                <p className="text-[11px] text-muted-foreground">{vehicleSpecs}</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Driver: </span>
-                <strong className="text-foreground">{driverName}</strong>
-                <p className="text-[11px] text-muted-foreground">{driverPhone}</p>
-              </div>
-              <div className="text-[11px] text-muted-foreground pt-0.5">
-                Home depot: <strong className="text-foreground">{homeDepot}</strong>
-              </div>
-            </div>
-          </div>
-
-          {/* Card 2: Window & Location */}
-          <div className="p-3.5 bg-muted/40 border border-border/60 rounded-lg space-y-2 text-xs">
-            <div className="font-bold text-foreground flex items-center gap-1.5 border-b border-border/50 pb-1.5">
-              <MapPin className="size-3.5 text-primary" />
-              <span>Window &amp; Location</span>
-            </div>
-            <div className="space-y-1">
-              <div>
-                <span className="text-muted-foreground">Location: </span>
-                <strong className="text-foreground">OUT005 • Rear dock</strong>
-                <p className="text-[11px] text-muted-foreground">Fresh Colombo</p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Delivery window: </span>
-                <strong className="text-foreground">{deliveryWindow}</strong>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Actual arrival: </span>
-                <span className="text-success font-semibold">{actualArrival}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Card 3: Manifest & Cold Chain */}
-          <div className="p-3.5 bg-muted/40 border border-border/60 rounded-lg space-y-2 text-xs">
-            <div className="font-bold text-foreground flex items-center gap-1.5 border-b border-border/50 pb-1.5">
-              <ShieldCheck className="size-3.5 text-primary" />
-              <span>Manifest &amp; Security</span>
-            </div>
-            <div className="space-y-1.5">
-              <div>
-                <span className="text-muted-foreground">Dispatched: </span>
-                <strong className="text-foreground">{totalSent} units</strong> ({items.length} lines)
-                <p className="text-[11px] text-muted-foreground">{homeDepot} • {bolNumber}</p>
-              </div>
-              <div className="flex items-center justify-between pt-1 border-t border-border/40">
-                <span className="text-muted-foreground">Seal {sealNumber}:</span>
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={sealVerified}
-                    onChange={(e) => setSealVerified(e.target.checked)}
-                    className="rounded border-border text-primary"
-                  />
-                  <span className={sealVerified ? "text-success font-semibold" : "text-destructive font-semibold"}>
-                    {sealVerified ? "Matched" : "Broken"}
-                  </span>
-                </label>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Cold Chain:</span>
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={tempVerified}
-                    onChange={(e) => setTempVerified(e.target.checked)}
-                    className="rounded border-border text-primary"
-                  />
-                  <span className={tempVerified ? "text-success font-semibold" : "text-destructive font-semibold"}>
-                    {tempVerified ? `${tempReading} (OK)` : "Temp Exceeded"}
-                  </span>
-                </label>
-              </div>
-            </div>
-          </div>
+        <div className="flex shrink-0 flex-col gap-3 md:flex-row md:gap-4 print:hidden">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setShowRejectModal(true)}
+            className="h-11 px-4 text-base font-bold text-destructive hover:bg-destructive-muted hover:text-destructive md:h-10"
+          >
+            <XCircle className="size-4 mr-1.5" />
+            <span>Reject Delivery</span>
+          </Button>
+          <Button
+            asChild
+            variant="outline"
+            className="hidden h-10 border-2 border-primary px-4 text-base font-bold md:inline-flex"
+          >
+            <Link href={`/store/requests/${orderNumber}`}>
+              <span>View Goods Request</span>
+            </Link>
+          </Button>
         </div>
       </div>
 
-      {/* Item Intake Verification Section (Figma 14:706) */}
-      <section className="bg-card border border-border rounded-xl p-5 sm:p-6 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-bold text-foreground">Item Intake Verification</h2>
-              <StorePill tone="brand">
-                {items.filter((it) => it.receivedUnits > 0).length} of {items.length} Checked
-              </StorePill>
+      {/* 6-Step Delivery Stepper Card */}
+      <StoreSectionCard
+        title="Delivery Progress"
+        description="Active shipment milestones from Peliyagoda Hub to store receiving dock"
+        action={
+          <span className="text-sm font-medium text-muted-foreground">
+            Step 5 of 6 &bull; Intake in progress
+          </span>
+        }
+      >
+        <ol className="flex flex-col gap-4 md:flex-row">
+          {[
+            { label: "Planned", time: "24 Sep • Scheduled", done: true, current: false },
+            { label: "Assigned", time: `25 Sep • ${vehicleId}`, done: true, current: false },
+            { label: "In Transit", time: "Today, 05:15", done: true, current: false },
+            { label: "Arrived", time: "Today, 06:08 • Dock", done: true, current: false },
+            { label: "Receiving", time: "Intake in progress", done: false, current: true },
+            { label: "Completed", time: "Awaiting sign-off", done: false, current: false },
+          ].map((step, index) => (
+            <li
+              key={step.label}
+              aria-current={step.current ? "step" : undefined}
+              className="flex flex-1 items-start gap-3 md:flex-col md:gap-2"
+            >
+              <span
+                aria-hidden="true"
+                className={`mt-1 size-3 shrink-0 rounded-full md:mt-0 md:h-1 md:w-full md:rounded-full ${
+                  step.done ? "bg-primary" : step.current ? "bg-info animate-pulse" : "bg-border"
+                }`}
+              />
+              <span className="flex flex-col gap-1 md:gap-2">
+                <span className={`flex flex-wrap items-center gap-2 text-sm font-bold ${
+                  step.done || step.current ? "text-foreground" : "text-muted-foreground"
+                }`}>
+                  <span>
+                    <span className="hidden md:inline">{index + 1}. </span>
+                    {step.label}
+                  </span>
+                  {step.current && <StorePill tone="info">Current</StorePill>}
+                </span>
+                <span className="text-sm text-muted-foreground">{step.time}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </StoreSectionCard>
+
+      {/* 3 Info Cards: Vehicle & Driver, Window & Location, Manifest & Cold Chain */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+        {/* Card 1: Vehicle & Driver */}
+        <StoreSectionCard title="Vehicle & Driver" description="Dispatched vehicle from central depot">
+          <div className="space-y-3 text-sm">
+            <div>
+              <span className="text-xs uppercase font-bold text-muted-foreground">Vehicle</span>
+              <div className="font-bold text-foreground text-base">{vehicleId}</div>
+              <p className="text-xs text-muted-foreground">{vehicleSpecs}</p>
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Count each item against {orderNumber}, mark condition, and attach photo evidence for damages/shortages.
-            </p>
+            <div>
+              <span className="text-xs uppercase font-bold text-muted-foreground">Driver</span>
+              <div className="font-bold text-foreground">{driverName}</div>
+              <p className="text-xs text-muted-foreground">{driverPhone}</p>
+            </div>
+            <div className="pt-2 border-t border-border text-xs text-muted-foreground">
+              Origin: <strong className="text-foreground">{homeDepot}</strong>
+            </div>
           </div>
-          <div className="text-xs font-bold self-start sm:self-auto">
+        </StoreSectionCard>
+
+        {/* Card 2: Window & Location */}
+        <StoreSectionCard title="Dock & Window" description="Receiving bay at store">
+          <div className="space-y-3 text-sm">
+            <div>
+              <span className="text-xs uppercase font-bold text-muted-foreground">Location</span>
+              <div className="font-bold text-foreground text-base">OUT005 &bull; Rear Dock</div>
+              <p className="text-xs text-muted-foreground">Fresh Colombo Pettah</p>
+            </div>
+            <div>
+              <span className="text-xs uppercase font-bold text-muted-foreground">Delivery Window</span>
+              <div className="font-bold text-foreground">{deliveryWindow}</div>
+            </div>
+            <div className="pt-2 border-t border-border text-xs text-muted-foreground">
+              Actual Arrival: <strong className="text-success">{actualArrival}</strong>
+            </div>
+          </div>
+        </StoreSectionCard>
+
+        {/* Card 3: Manifest & Security */}
+        <StoreSectionCard title="Manifest & Cold Chain" description="Security seal and temperature audit">
+          <div className="space-y-3 text-sm">
+            <div>
+              <span className="text-xs uppercase font-bold text-muted-foreground">Manifest</span>
+              <div className="font-bold text-foreground">{bolNumber}</div>
+              <p className="text-xs text-muted-foreground">{totalSent} units &bull; {items.length} lines</p>
+            </div>
+            <div className="flex items-center justify-between pt-1 border-t border-border/60">
+              <span className="text-xs text-muted-foreground font-mono">Seal {sealNumber}</span>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+                <input
+                  type="checkbox"
+                  checked={sealVerified}
+                  onChange={(e) => setSealVerified(e.target.checked)}
+                  className="rounded border-border text-primary"
+                />
+                <span className={sealVerified ? "text-success font-semibold" : "text-destructive font-semibold"}>
+                  {sealVerified ? "Matched" : "Broken"}
+                </span>
+              </label>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Cold Chain Telemetry</span>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+                <input
+                  type="checkbox"
+                  checked={tempVerified}
+                  onChange={(e) => setTempVerified(e.target.checked)}
+                  className="rounded border-border text-primary"
+                />
+                <span className={tempVerified ? "text-success font-semibold" : "text-destructive font-semibold"}>
+                  {tempVerified ? `${tempReading} (In Spec)` : "Breach Flagged"}
+                </span>
+              </label>
+            </div>
+          </div>
+        </StoreSectionCard>
+      </div>
+
+      {/* Item Intake Verification Section */}
+      <StoreSectionCard
+        title="Item Intake Verification"
+        description={`Count each consignment item against ${orderNumber}, mark condition, and attach photo evidence for discrepancies.`}
+        action={
+          <div className="text-sm font-bold">
             Received: <span className={totalReceived < totalSent ? "text-warning" : "text-foreground"}>{totalReceived}</span> / {totalSent} units
           </div>
-        </div>
-
-        {/* Item Rows */}
+        }
+      >
         <div className="space-y-4">
           {items.map((item) => {
             const hasDiscrepancy = item.condition !== "good" || item.receivedUnits !== item.sentUnits;
@@ -580,18 +596,18 @@ export default function DeliveryDetailsAndReceivingPage({
             return (
               <div
                 key={item.id}
-                className={`rounded-lg border transition-all p-4 space-y-3 ${
+                className={`rounded-xl border transition-all p-4 sm:p-5 space-y-4 ${
                   hasDiscrepancy
                     ? "border-warning/60 bg-warning-muted/20"
-                    : "border-border bg-background/50"
+                    : "border-border bg-card"
                 }`}
               >
                 {/* Main Item Row */}
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-sm text-foreground">{item.name}</span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 bg-muted rounded text-muted-foreground font-semibold">
+                      <span className="font-bold text-base text-foreground">{item.name}</span>
+                      <span className="text-xs font-mono px-2 py-0.5 bg-muted rounded text-muted-foreground font-semibold">
                         {item.sku}
                       </span>
                       <span className="text-xs text-muted-foreground">
@@ -605,12 +621,12 @@ export default function DeliveryDetailsAndReceivingPage({
 
                   <div className="flex items-center gap-3 self-end lg:self-auto flex-wrap">
                     {/* Received Quantity Stepper */}
-                    <div className="flex items-center gap-1.5 bg-card border border-border rounded-lg p-1">
-                      <span className="text-[11px] font-semibold text-muted-foreground px-2">Received:</span>
+                    <div className="flex items-center gap-1.5 bg-background border border-border rounded-lg p-1">
+                      <span className="text-xs font-semibold text-muted-foreground px-2">Received:</span>
                       <button
                         type="button"
                         onClick={() => handleUpdateUnits(item.id, -1)}
-                        className="w-7 h-7 rounded bg-muted hover:bg-muted/80 flex items-center justify-center font-bold text-sm cursor-pointer"
+                        className="w-8 h-8 rounded bg-muted hover:bg-muted/80 flex items-center justify-center font-bold text-sm cursor-pointer"
                       >
                         <Minus className="size-3.5" />
                       </button>
@@ -624,19 +640,19 @@ export default function DeliveryDetailsAndReceivingPage({
                             prev.map((it) => (it.id === item.id ? { ...it, receivedUnits: val } : it))
                           );
                         }}
-                        className="w-10 text-center font-bold text-sm text-foreground bg-transparent border-0 focus:outline-none"
+                        className="w-12 text-center font-bold text-base text-foreground bg-transparent border-0 focus:outline-none"
                       />
                       <button
                         type="button"
                         onClick={() => handleUpdateUnits(item.id, 1)}
-                        className="w-7 h-7 rounded bg-muted hover:bg-muted/80 flex items-center justify-center font-bold text-sm cursor-pointer"
+                        className="w-8 h-8 rounded bg-muted hover:bg-muted/80 flex items-center justify-center font-bold text-sm cursor-pointer"
                       >
                         <Plus className="size-3.5" />
                       </button>
                     </div>
 
                     {/* Segmented Condition Selector */}
-                    <div className="flex items-center bg-card border border-border rounded-lg p-1 gap-1 text-xs">
+                    <div className="flex items-center bg-background border border-border rounded-lg p-1 gap-1 text-xs">
                       {[
                         { key: "good", label: "Good" },
                         { key: "damaged", label: "Damaged" },
@@ -655,7 +671,7 @@ export default function DeliveryDetailsAndReceivingPage({
                             key={c.key}
                             type="button"
                             onClick={() => handleSetCondition(item.id, c.key as any)}
-                            className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
+                            className={`px-3 py-1.5 rounded-md font-medium transition-colors cursor-pointer ${
                               isSelected
                                 ? activeClass
                                 : "text-muted-foreground hover:bg-muted"
@@ -671,7 +687,7 @@ export default function DeliveryDetailsAndReceivingPage({
 
                 {/* Inline Discrepancy & Photo Evidence Logger */}
                 {hasDiscrepancy && (
-                  <div className="pt-3 border-t border-warning/40 space-y-3 bg-card/60 p-3.5 rounded-lg">
+                  <div className="pt-3 border-t border-warning/40 space-y-3 bg-muted/30 p-4 rounded-lg">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 text-warning">
                         <AlertTriangle className="size-4" />
@@ -679,7 +695,7 @@ export default function DeliveryDetailsAndReceivingPage({
                           Log Issue: {item.condition.toUpperCase()} ({item.name})
                         </span>
                       </div>
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-xs text-muted-foreground">
                         {item.receivedUnits < item.sentUnits
                           ? `${item.sentUnits - item.receivedUnits} units short`
                           : item.condition === "damaged"
@@ -688,10 +704,10 @@ export default function DeliveryDetailsAndReceivingPage({
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {/* Discrepancy Note */}
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-bold text-muted-foreground">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-muted-foreground">
                           Issue Description / Defect Details
                         </label>
                         <textarea
@@ -699,19 +715,19 @@ export default function DeliveryDetailsAndReceivingPage({
                           value={item.issueNote}
                           onChange={(e) => handleUpdateIssueNote(item.id, e.target.value)}
                           placeholder="e.g. 2 boxes crushed in transit, outer seal ripped, contents spilled..."
-                          className="w-full text-xs p-2.5 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                          className="w-full text-xs p-3 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                         />
                       </div>
 
                       {/* Photo Evidence Attachment Box */}
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-bold text-muted-foreground flex items-center justify-between">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
                           <span>Photo Evidence</span>
                           <span className="text-[10px] text-muted-foreground">Required for claims</span>
                         </label>
 
                         {item.photoUrl ? (
-                          <div className="flex items-center justify-between p-2 rounded-lg border border-border bg-muted/40 text-xs">
+                          <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-background text-xs">
                             <div className="flex items-center gap-2.5">
                               <img
                                 src={item.photoUrl}
@@ -735,7 +751,7 @@ export default function DeliveryDetailsAndReceivingPage({
                             </button>
                           </div>
                         ) : (
-                          <label className="flex items-center justify-center gap-2 p-3 rounded-lg border border-dashed border-border hover:border-primary/60 bg-muted/20 hover:bg-muted/40 cursor-pointer transition-colors text-xs text-muted-foreground">
+                          <label className="flex items-center justify-center gap-2 p-3.5 rounded-lg border border-dashed border-border hover:border-primary/60 bg-background hover:bg-muted/40 cursor-pointer transition-colors text-xs text-muted-foreground">
                             <Camera className="size-4 text-primary" />
                             <span className="font-semibold text-foreground">Attach Photo Evidence</span>
                             <span className="text-[10px] text-muted-foreground">(camera / browse)</span>
@@ -758,7 +774,7 @@ export default function DeliveryDetailsAndReceivingPage({
         </div>
 
         {/* General Receiving Remarks */}
-        <div className="space-y-1.5 pt-2">
+        <div className="space-y-1.5 pt-4 border-t border-border">
           <label className="text-xs font-bold uppercase text-muted-foreground">
             General Receiving Remarks / Driver Signature Notes
           </label>
@@ -770,15 +786,15 @@ export default function DeliveryDetailsAndReceivingPage({
             className="w-full text-xs p-3 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
           />
         </div>
-      </section>
+      </StoreSectionCard>
 
       {/* Action Toolbar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
         <Button
           type="button"
           variant="outline"
           onClick={() => setShowRejectModal(true)}
-          className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-semibold text-xs"
+          className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-bold text-sm h-11"
         >
           <XCircle className="size-4 mr-1.5" />
           <span>Reject Consignment</span>
@@ -788,7 +804,7 @@ export default function DeliveryDetailsAndReceivingPage({
           type="button"
           onClick={handleConfirmReceipt}
           disabled={isSubmitting}
-          className="w-full sm:w-auto min-w-[240px] bg-primary text-primary-foreground font-bold hover:bg-primary/90 cursor-pointer"
+          className="w-full sm:w-auto min-w-[260px] bg-primary text-primary-foreground font-bold hover:bg-primary/90 cursor-pointer h-11 text-base shadow-xs"
         >
           {isSubmitting ? (
             <>
@@ -861,37 +877,29 @@ export default function DeliveryDetailsAndReceivingPage({
                 />
               </div>
 
-              {/* Consignment Photo Evidence */}
+              {/* Photo Evidence */}
               <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase text-muted-foreground flex items-center justify-between">
-                  <span>Photo Evidence</span>
-                  <span className="text-[10px] text-muted-foreground">Attach photo of broken seal or temperature readout</span>
+                <label className="text-xs font-bold uppercase text-muted-foreground">
+                  Attach Evidence Photo (Optional)
                 </label>
                 {rejectPhoto ? (
                   <div className="flex items-center justify-between p-2 rounded-lg border border-border bg-muted/40 text-xs">
-                    <div className="flex items-center gap-2">
-                      <img src={rejectPhoto.url} alt="Rejection preview" className="w-10 h-10 object-cover rounded border" />
-                      <div>
-                        <div className="font-semibold text-foreground">{rejectPhoto.name}</div>
-                        <div className="text-[10px] text-muted-foreground">{rejectPhoto.size}</div>
-                      </div>
-                    </div>
+                    <span>{rejectPhoto.name}</span>
                     <button
                       type="button"
                       onClick={() => setRejectPhoto(null)}
-                      className="p-1 text-destructive hover:bg-destructive-muted rounded"
+                      className="text-destructive font-bold"
                     >
-                      <Trash2 className="size-4" />
+                      Remove
                     </button>
                   </div>
                 ) : (
-                  <label className="flex items-center justify-center gap-2 p-3 rounded-lg border border-dashed border-border hover:border-primary/60 bg-muted/20 cursor-pointer text-xs">
+                  <label className="flex items-center justify-center gap-2 p-3 rounded-lg border border-dashed border-border hover:border-primary/60 bg-muted/20 cursor-pointer text-xs text-muted-foreground">
                     <Camera className="size-4 text-primary" />
-                    <span className="font-semibold text-foreground">Upload Rejection Photo</span>
+                    <span>Upload Rejection Photo</span>
                     <input
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       onChange={handleRejectPhotoUpload}
                       className="hidden"
                     />
@@ -899,16 +907,21 @@ export default function DeliveryDetailsAndReceivingPage({
                 )}
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/60">
-                <Button type="button" variant="outline" onClick={() => setShowRejectModal(false)}>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowRejectModal(false)}
+                >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
-                  disabled={isSubmitting || rejectNotes.trim().length < 5}
-                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+                  disabled={!rejectNotes.trim()}
+                  className="bg-destructive text-white hover:bg-destructive/90 font-bold text-xs"
                 >
-                  Confirm Consignment Rejection
+                  Confirm Turnaway Rejection
                 </Button>
               </div>
             </form>

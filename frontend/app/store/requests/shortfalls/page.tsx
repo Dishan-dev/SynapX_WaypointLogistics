@@ -142,6 +142,9 @@ export default function ShortfallsAndBackordersPage() {
     loadShortfallData();
   }, []);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
   const totalShortfalls = shortfalls.length;
   const backOrderedCount = shortfalls.filter((s) => s.status === "back_ordered").length;
   const shortDeliveredCount = shortfalls.filter((s) => s.status === "short_delivered").length;
@@ -160,6 +163,9 @@ export default function ShortfallsAndBackordersPage() {
     }
     return true;
   });
+
+  const totalPages = Math.ceil(filtered.length / pageSize) || 1;
+  const paginatedShortfalls = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const getStatusTone = (status: ShortfallRecord["status"]): StorePillTone => {
     switch (status) {
@@ -321,14 +327,14 @@ export default function ShortfallsAndBackordersPage() {
                     Loading shortfall records...
                   </td>
                 </tr>
-              ) : filtered.length === 0 ? (
+              ) : paginatedShortfalls.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-muted-foreground">
                     No shortfall or back-order records found.
                   </td>
                 </tr>
               ) : (
-                filtered.map((item) => (
+                paginatedShortfalls.map((item) => (
                   <tr key={item.id} className="hover:bg-muted/30 transition-colors">
                     <td className="py-3.5 px-4">
                       <div className="font-bold text-foreground">{item.itemName}</div>
@@ -393,6 +399,41 @@ export default function ShortfallsAndBackordersPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Footer */}
+        {filtered.length > 0 && (
+          <div className="p-3.5 border-t border-border/60 bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <span className="text-muted-foreground">
+              Showing {(currentPage - 1) * pageSize + 1} &ndash;{" "}
+              {Math.min(currentPage * pageSize, filtered.length)} of {filtered.length} records
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="h-8 text-xs font-semibold"
+              >
+                Previous
+              </Button>
+              <span className="px-2 text-xs font-medium text-muted-foreground">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="h-8 text-xs font-semibold"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

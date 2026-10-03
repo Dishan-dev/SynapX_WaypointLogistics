@@ -114,6 +114,9 @@ export default function IncomingDeliveriesPage() {
     loadIncomingDeliveries();
   }, []);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
   const activeEnRouteCount = deliveries.filter(
     (d) => d.status === "in_transit" || d.status === "arriving_soon"
   ).length;
@@ -132,6 +135,9 @@ export default function IncomingDeliveriesPage() {
     }
     return true;
   });
+
+  const totalPages = Math.ceil(filtered.length / pageSize) || 1;
+  const paginatedDeliveries = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -219,7 +225,7 @@ export default function IncomingDeliveriesPage() {
             No incoming deliveries match the selected filter.
           </div>
         ) : (
-          filtered.map((del) => {
+          paginatedDeliveries.map((del) => {
             const isAtDock = del.status === "at_dock";
 
             return (
@@ -328,6 +334,41 @@ export default function IncomingDeliveriesPage() {
           })
         )}
       </div>
+
+      {/* Pagination Bar */}
+      {filtered.length > 0 && (
+        <div className="p-4 bg-card border border-border rounded-xl shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          <span className="text-muted-foreground">
+            Showing {(currentPage - 1) * pageSize + 1} &ndash;{" "}
+            {Math.min(currentPage * pageSize, filtered.length)} of {filtered.length} deliveries
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="h-8 text-xs font-semibold"
+            >
+              Previous
+            </Button>
+            <span className="px-2 text-xs font-medium text-muted-foreground">
+              Page {currentPage} of {totalPages}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              disabled={currentPage >= totalPages}
+              className="h-8 text-xs font-semibold"
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
