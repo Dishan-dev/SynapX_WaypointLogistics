@@ -29,7 +29,9 @@ import {
   List, AlertCircle, RefreshCw, Loader2
 } from "lucide-react";
 import { type Map as MapLibreMap } from "maplibre-gl";
+import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
+import { gpsLabel } from "@/lib/gps";
 import type { DriverTripDetail, DeliveryStop, GPSPosition } from "@/types/driver-map";
 
 // Heavy map canvas loaded client-side only
@@ -180,6 +182,9 @@ export default function DriverRouteMapPage() {
     const map = mapRef.current;
     if (!map || !gpsPosition) {
       startGps();
+      toast.error("No location yet", {
+        description: "Turn on location and allow it for this site.",
+      });
       return;
     }
     map.flyTo({
@@ -241,7 +246,7 @@ export default function DriverRouteMapPage() {
               </h1>
               <p className="text-[11px] text-[#5D6A78]">
                 {gpsPosition
-                  ? "📍 GPS Active"
+                  ? gpsLabel(gpsPosition.accuracy)
                   : gpsError
                   ? `⚠ ${gpsError}`
                   : "Locating…"}

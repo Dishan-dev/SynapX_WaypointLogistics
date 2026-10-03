@@ -11,6 +11,13 @@ import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { fetchStopDetail, type StopDetail } from "@/lib/driverStop";
 import StopDeliveryDetails from "@/components/driver/StopDeliveryDetails";
+import DeviceClock from "@/components/driver/DeviceClock";
+
+const OUTCOME_OPTIONS = [
+  { value: "full", title: "Full delivery", hint: "All expected goods were accepted.", Icon: PackageCheck },
+  { value: "partial", title: "Partial delivery", hint: "Some goods were not delivered.", Icon: PackageMinus },
+  { value: "issue", title: "Delivery issue", hint: "Delivery could not be completed.", Icon: TriangleAlert },
+];
 
 function DeliveryOutcomeContent() {
   const router = useRouter();
@@ -74,7 +81,7 @@ function DeliveryOutcomeContent() {
       >
         {/* Device status */}
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
-          <span className="text-[12px] font-semibold" style={{ color: "#12202E" }}>06:58</span>
+          <DeviceClock className="text-[12px] font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
             <span className="text-[14px] font-normal" style={{ color: "#BDBDBD" }}>Online</span>
             <Signal size={16} color="#BDBDBD" />
@@ -112,6 +119,47 @@ function DeliveryOutcomeContent() {
           </div>
         )}
 
+        {/* Outcome options */}
+        <div className="flex flex-col gap-1 shrink-0">
+          <h2 className="font-bold text-[16px]" style={{ color: "#12202E" }}>What happened at this stop?</h2>
+          <p className="text-[12px]" style={{ color: "#5D6A78" }}>Choose the outcome before adding proof of delivery.</p>
+        </div>
+        <div className="flex flex-col gap-2 w-full shrink-0" role="radiogroup" aria-label="Delivery outcome">
+          {OUTCOME_OPTIONS.map(({ value, title, hint, Icon }) => {
+            const selected = selectedOutcome === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => setSelectedOutcome(value)}
+                className="flex items-center w-full min-h-[58px] p-3 gap-[11px] rounded-xl text-left"
+                style={{
+                  backgroundColor: selected ? "#E8F6EF" : "#FFFFFF",
+                  border: `2px solid ${selected ? "#18794E" : "transparent"}`,
+                  boxShadow: selected ? "none" : "0px 5px 16px 0px rgba(22, 58, 95, 0.08)",
+                  outline: selected ? "none" : "1px solid #D9E1E8",
+                }}
+              >
+                <div className="flex justify-center items-center w-[34px] h-[34px] rounded-full shrink-0" style={{ backgroundColor: selected ? "#18794E" : "#F2F5F8" }}>
+                  <Icon size={18} color={selected ? "#FFFFFF" : "#12202E"} />
+                </div>
+                <div className="flex flex-col gap-0.5 flex-1">
+                  <span className="font-bold text-[14px]" style={{ color: "#12202E" }}>{title}</span>
+                  <span className="text-[12px]" style={{ color: "#5D6A78" }}>{hint}</span>
+                </div>
+                <div
+                  className="flex justify-center items-center w-[22px] h-[22px] rounded-full shrink-0"
+                  style={{ backgroundColor: selected ? "#18794E" : "#FFFFFF", border: `2px solid ${selected ? "#18794E" : "#D9E1E8"}` }}
+                >
+                  {selected && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Primary Action Button */}
         <div className="mt-auto pt-2 shrink-0">
           <button
@@ -120,7 +168,7 @@ function DeliveryOutcomeContent() {
             className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
             style={{ backgroundColor: "#092C4C" }}
           >
-            {submitting ? "Saving..." : "Continue to proof of delivery"}
+            {submitting ? "Saving..." : selectedOutcome === "issue" ? "Continue to report the issue" : "Continue to proof of delivery"}
           </button>
         </div>
       </div>

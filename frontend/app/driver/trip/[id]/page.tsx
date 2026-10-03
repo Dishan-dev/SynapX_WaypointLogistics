@@ -8,6 +8,7 @@ import {
   ClipboardCheck, Map, Home, TriangleAlert, Layers
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import DeviceClock from "@/components/driver/DeviceClock";
 
 interface DeliveryStop {
   id: number;
@@ -22,6 +23,14 @@ interface TripDetail {
   dispatch_trip_id: number;
   status: string;
   stops: DeliveryStop[];
+  planned_departure: string | null;
+  last_window_closes: string | null;
+}
+
+/** "2026-10-03T22:00:00Z" → "03:30" in Sri Lanka time */
+function colomboHHMM(iso: string | null) {
+  if (!iso) return "--:--";
+  return new Date(iso).toLocaleTimeString("en-GB", { timeZone: "Asia/Colombo", hour: "2-digit", minute: "2-digit" });
 }
 
 export default function TripDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -46,7 +55,7 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
   }, [tripId]);
 
   async function handleStartTrip() {
-    if (trip?.status === "STARTED") {
+    if (trip?.status === "started") {
       router.push(`/driver/trip`);
       return;
     }
@@ -70,7 +79,7 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
       >
         {/* Device status */}
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
-          <span className="text-xs font-semibold" style={{ color: "#12202E" }}>06:58</span>
+          <DeviceClock className="text-xs font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
             <span className="text-sm font-normal text-[#BDBDBD]">Synced</span>
             <Signal size={16} color="#BDBDBD" />
@@ -106,14 +115,14 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
                 className="flex-1 flex flex-col p-3.5 rounded-xl gap-2.5 bg-white"
                 style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
               >
-                <span className="font-bold text-[22px]" style={{ color: "#163A5F" }}>--:--</span>
+                <span className="font-bold text-[22px]" style={{ color: "#163A5F" }}>{colomboHHMM(trip?.planned_departure ?? null)}</span>
                 <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Planned depart</span>
               </div>
               <div 
                 className="flex-1 flex flex-col p-3.5 rounded-xl gap-2.5 bg-white"
                 style={{ border: "1px solid #D9E1E8", boxShadow: "0px 5px 16px 0px rgba(22, 58, 95, 0.08)" }}
               >
-                <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>--:--</span>
+                <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>{trip?.last_window_closes ?? "--:--"}</span>
                 <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Last window closes</span>
               </div>
             </div>
@@ -123,7 +132,7 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
               <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>Stop sequence</span>
               <div className="flex items-center px-2 py-1 rounded-full bg-[#EAF2FF]">
                 <span className="font-bold text-[10px]" style={{ color: "#2167D5" }}>
-                  {trip?.stops?.filter(s => s.status === 'PENDING').length || 0} to deliver
+                  {trip?.stops?.filter(s => s.status === 'pending' || s.status === 'arrived').length || 0} to deliver
                 </span>
               </div>
             </div>
@@ -173,11 +182,11 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
             <div className="w-full">
               <button 
                 onClick={handleStartTrip}
-                disabled={starting || trip?.status === "COMPLETED"}
+                disabled={starting || trip?.status === "completed"}
                 className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
                 style={{ backgroundColor: "#092C4C" }}
               >
-                {starting ? "Starting..." : trip?.status === "STARTED" ? "Resume Trip →" : "Start trip"}
+                {starting ? "Starting..." : trip?.status === "started" ? "Resume Trip →" : "Start trip"}
               </button>
             </div>
           </>

@@ -6,6 +6,20 @@ import {
   MapPin, Signal, BatteryFull, Map, Home, TriangleAlert, Layers, User
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { colomboNow, greeting, READY_CUTOFF_HOUR } from "@/lib/colomboTime";
+import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
+
+function readyKey() {
+  return `driver-ready-for-tomorrow:${colomboNow().dateKey}`;
+}
+
+function readyConfirmedToday() {
+  try {
+    return localStorage.getItem(readyKey()) === "1";
+  } catch {
+    return false;
+  }
+}
 
 interface UserProfile {
   id: number;
@@ -22,6 +36,7 @@ interface DriverTripSummary {
 }
 
 export default function DriverDashboard() {
+  const clock = useColomboClock();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [trips, setTrips] = useState<DriverTripSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -37,6 +52,7 @@ export default function DriverDashboard() {
         ]);
         setProfile(profileData);
         setTrips(tripsData);
+        setReadyForTomorrow(readyConfirmedToday());
       } catch (error) {
         console.error("Failed to load dashboard data:", error);
       } finally {
@@ -47,10 +63,9 @@ export default function DriverDashboard() {
   }, []);
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  const currentHour = new Date().getHours();
-  
-  // Show if: has ongoing trip, before 6 PM (18:00), and hasn't confirmed yet
-  const showTomorrowButton = trips.some(t => t.status === "STARTED") && currentHour < 18 && !readyForTomorrow;
+  // Dispatch plans tomorrow's trips at the 4 PM cutoff (Sri Lanka time), so
+  // the driver confirms before then, once a day.
+  const showTomorrowButton = !loading && colomboNow().hour < READY_CUTOFF_HOUR && !readyForTomorrow;
 
   async function handleReadyForTomorrow() {
     setSubmittingReady(true);
@@ -60,6 +75,11 @@ export default function DriverDashboard() {
     } catch (e) {
       console.warn("Backend endpoint might not exist yet, but proceeding to update UI", e);
     } finally {
+      try {
+        localStorage.setItem(readyKey(), "1");
+      } catch {
+        // storage blocked: the banner just shows again after a reload
+      }
       setReadyForTomorrow(true);
       setSubmittingReady(false);
     }
@@ -74,7 +94,7 @@ export default function DriverDashboard() {
       >
         {/* Device status */}
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
-          <span className="text-xs font-semibold" style={{ color: "#12202E" }}>06:58</span>
+          <DeviceClock className="text-xs font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
             <span className="text-sm font-normal text-[#BDBDBD]">Synced</span>
             <Signal size={16} color="#BDBDBD" />
@@ -89,7 +109,7 @@ export default function DriverDashboard() {
               Today — {today}
             </h1>
             <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              {loading ? "Loading..." : `Good morning, ${profile?.full_name?.split(' ')[0] || 'Driver'} · DRV-${profile?.id?.toString().padStart(4, '0') || '0000'}`}
+              {loading ? "Loading..." : `${greeting(clock)}, ${profile?.full_name?.split(' ')[0] || 'Driver'} · DRV-${profile?.id?.toString().padStart(4, '0') || '0000'}`}
             </p>
           </div>
           <Link href="/driver/profile">
@@ -108,7 +128,7 @@ export default function DriverDashboard() {
           <div className="flex justify-between items-center p-4 rounded-xl" style={{ backgroundColor: "#E8F6EF", border: "1px solid #18794E", boxShadow: "0px 5px 16px 0px rgba(24, 121, 78, 0.08)" }}>
             <div className="flex flex-col gap-0.5">
               <span className="font-bold text-[14px]" style={{ color: "#18794E" }}>Available Tomorrow?</span>
-              <span className="font-normal text-[11px]" style={{ color: "#18794E", maxWidth: "160px" }}>Let dispatch know you can take a ride tomorrow (ends at 6 PM).</span>
+              <span className="font-normal text-[11px]" style={{ color: "#18794E", maxWidth: "160px" }}>Let dispatch know you can take a run tomorrow. Closes at 4 PM, when dispatch plans trips.</span>
             </div>
             <button
               onClick={handleReadyForTomorrow}
@@ -132,7 +152,7 @@ export default function DriverDashboard() {
           <div className="text-center py-10 text-[#5D6A78] text-sm font-medium">No trips assigned for today.</div>
         ) : (
           trips.map((trip, index) => {
-            const isActive = trip.status === "STARTED" || (index === 0 && trip.status === "ASSIGNED");
+            const isActive = trip.status === "started" || (index === 0 && trip.status === "assigned");
             
             if (isActive) {
               return (
@@ -222,7 +242,7 @@ export default function DriverDashboard() {
           </div>
           <div className="flex-1 flex flex-col p-3.5 rounded-xl gap-1 bg-white" style={{ border: "1px solid #D9E1E8" }}>
             <span className="font-bold text-[22px]" style={{ color: "#12202E" }}>
-              {loading ? "-" : trips.filter(t => t.status === "COMPLETED").length}
+              {loading ? "-" : trips.filter(t => t.status === "completed").length}
             </span>
             <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Completed</span>
           </div>

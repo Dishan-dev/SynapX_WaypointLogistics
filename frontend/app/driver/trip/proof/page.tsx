@@ -78,8 +78,8 @@ function ProofOfDeliveryContent() {
   }
 
   const missing = [
-    !recipientName.trim() && "recipient name",
-    !signature && "signature",
+    !recipientName.trim() && "the recipient name",
+    !signature && "a signature",
     photos.length === 0 && "at least one photo",
   ].filter(Boolean) as string[];
 
@@ -95,7 +95,7 @@ function ProofOfDeliveryContent() {
   async function handleSubmit() {
     if (!stopId || !stop) return;
     if (missing.length) {
-      setError(`Add the ${missing.join(", ")} before submitting.`);
+      setError(`Add ${missing.join(", ")} before submitting.`);
       return;
     }
     setSubmitting(true);

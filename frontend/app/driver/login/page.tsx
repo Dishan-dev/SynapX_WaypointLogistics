@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Lock, User, Navigation, CloudOff, BatteryFull, Signal } from "lucide-react";
 import { setToken, isAuthenticated } from "@/lib/auth";
 import { apiFetch, ApiError } from "@/lib/api";
+import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
+import { greeting } from "@/lib/colomboTime";
 
 interface LoginResponse {
   access_token: string;
@@ -12,6 +14,7 @@ interface LoginResponse {
 }
 
 export default function DriverLoginPage() {
+  const clock = useColomboClock();
   const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
   const [username, setUsername] = useState("");
@@ -68,7 +71,7 @@ export default function DriverLoginPage() {
       >
         {/* Device Status Bar */}
         <div className="flex justify-between items-center px-5 py-3 h-11 w-full text-white">
-          <span className="text-xs font-semibold">06:58</span>
+          <DeviceClock className="text-xs font-semibold" />
           <div className="flex items-center gap-2">
             <div className="flex items-center bg-white/20 px-2 py-0.5 rounded text-[10px] font-medium">
               Offline
@@ -96,7 +99,7 @@ export default function DriverLoginPage() {
           </span>
           <div className="flex flex-col">
             <span className="font-bold text-[32px] leading-[1.1em]" style={{ color: "rgba(255, 255, 255, 0.82)" }}>
-              Good morning,
+              {greeting(clock)},
             </span>
             <span className="font-extrabold text-[40px] leading-[1.05em] text-white">
               Driver.

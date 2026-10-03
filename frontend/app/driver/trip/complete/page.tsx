@@ -8,6 +8,7 @@ import {
   Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import DeviceClock from "@/components/driver/DeviceClock";
 
 interface DeliveryStop {
   id: number;
@@ -29,7 +30,7 @@ function StopCompleteContent() {
     async function loadData() {
       try {
         const trips = await apiFetch<any[]>("/driver/trips/today");
-        const startedTrip = trips.find(t => t.status === "STARTED");
+        const startedTrip = trips.find(t => t.status === "started");
         
         if (startedTrip) {
           const detail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
@@ -49,9 +50,8 @@ function StopCompleteContent() {
     loadData();
   }, [stopId]);
 
-  const completedCount = tripDetail?.stops?.filter((s: any) => s.status === 'COMPLETED').length || 0;
   const totalCount = tripDetail?.stops?.length || 0;
-  const pendingStops = tripDetail?.stops?.filter((s: any) => s.status === 'PENDING') || [];
+  const pendingStops = tripDetail?.stops?.filter((s: { status: string }) => s.status === 'pending' || s.status === 'arrived') || [];
   const nextStop = pendingStops[0];
 
   return (
@@ -64,7 +64,7 @@ function StopCompleteContent() {
       >
         {/* Device status */}
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
-          <span className="text-[12px] font-semibold" style={{ color: "#12202E" }}>06:58</span>
+          <DeviceClock className="text-[12px] font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
             <span className="text-[14px] font-normal" style={{ color: "#BDBDBD" }}>Online</span>
             <Signal size={16} color="#BDBDBD" />

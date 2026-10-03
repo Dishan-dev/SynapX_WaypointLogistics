@@ -7,9 +7,13 @@ import {
   Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import DeviceClock from "@/components/driver/DeviceClock";
+
+type SummaryStop = { status: string; pod: unknown };
 
 export default function TripSummaryPage() {
   const [tripDetail, setTripDetail] = useState<any>(null);
+  const [issueCount, setIssueCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -17,11 +21,15 @@ export default function TripSummaryPage() {
       try {
         const trips = await apiFetch<any[]>("/driver/trips/today");
         // Prioritize started trip, otherwise take the most recently completed one
-        const targetTrip = trips.find(t => t.status === "STARTED") || trips.find(t => t.status === "COMPLETED");
+        const targetTrip = trips.find(t => t.status === "started") || trips.find(t => t.status === "completed");
         
         if (targetTrip) {
-          const detail = await apiFetch<any>(`/driver/trips/${targetTrip.id}`);
+          const [detail, issues] = await Promise.all([
+            apiFetch<{ stops: SummaryStop[] }>(`/driver/trips/${targetTrip.id}`),
+            apiFetch<unknown[]>(`/driver/trips/${targetTrip.id}/issues`),
+          ]);
           setTripDetail(detail);
+          setIssueCount(issues.length);
         }
       } catch (error) {
         console.error("Failed to load trip summary:", error);
@@ -32,12 +40,12 @@ export default function TripSummaryPage() {
     loadData();
   }, []);
 
-  const totalStops = tripDetail?.stops?.length || 0;
-  const processedStops = tripDetail?.stops?.filter((s: any) => s.status === 'COMPLETED').length || 0;
-  // Based on DeliveryStop model and outcome updates:
-  const fullDeliveries = tripDetail?.stops?.filter((s: any) => s.status === 'COMPLETED').length || 0; 
-  const partialDeliveries = 0; // if we tracked partial, we'd count it here
-  const podComplete = processedStops; 
+  const stops: SummaryStop[] = tripDetail?.stops ?? [];
+  const totalStops = stops.length;
+  const processedStops = stops.filter((s) => ["delivered", "partial", "failed", "rescheduled"].includes(s.status)).length;
+  const fullDeliveries = stops.filter((s) => s.status === "delivered").length;
+  const partialDeliveries = stops.filter((s) => s.status === "partial").length;
+  const podComplete = stops.filter((s) => s.pod).length;
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
@@ -51,7 +59,7 @@ export default function TripSummaryPage() {
       >
         {/* Device status */}
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
-          <span className="text-[12px] font-semibold" style={{ color: "#12202E" }}>06:58</span>
+          <DeviceClock className="text-[12px] font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
             <span className="text-[14px] font-normal" style={{ color: "#BDBDBD" }}>Synced</span>
             <Signal size={16} color="#BDBDBD" />
@@ -116,7 +124,7 @@ export default function TripSummaryPage() {
           </div>
           <div className="flex justify-between items-center py-1.5">
             <span className="font-normal text-[14px]" style={{ color: "#5D6A78" }}>Issues reported</span>
-            <span className="font-bold text-[18px]" style={{ color: "#5D6A78" }}>0</span>
+            <span className="font-bold text-[18px]" style={{ color: "#5D6A78" }}>{loading ? "-" : issueCount}</span>
           </div>
         </div>
 

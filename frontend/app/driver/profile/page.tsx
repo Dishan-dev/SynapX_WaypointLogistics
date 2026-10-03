@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
+import DeviceClock from "@/components/driver/DeviceClock";
 
 interface UserProfile {
   id: number;
@@ -51,7 +52,7 @@ export default function ProfilePage() {
       >
         {/* Device status */}
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
-          <span className="text-[12px] font-semibold" style={{ color: "#12202E" }}>06:58</span>
+          <DeviceClock className="text-[12px] font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
             <span className="text-[14px] font-normal" style={{ color: "#BDBDBD" }}>Online</span>
             <Signal size={16} color="#BDBDBD" />
