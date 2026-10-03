@@ -20,13 +20,18 @@ export interface StopOrderInfo {
   weight_kg: number | null;
   volume_m3: number | null;
   notes: string | null;
+  /** False when the order is on the plan but the loader didn't load it. */
+  on_truck?: boolean;
   items: StopOrderItem[];
 }
 
 export interface StopDetail extends DeliveryStop {
   total_stops: number;
   trip_status: TripStatus;
+  /** The first of `orders`. */
   order: StopOrderInfo | null;
+  /** Every order dropped at this stop (a Fresh outlet can get a dry and a chilled one). */
+  orders?: StopOrderInfo[];
   pod: { id: number; recipient_name: string } | null;
 }
 
