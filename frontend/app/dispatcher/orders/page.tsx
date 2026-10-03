@@ -11,7 +11,8 @@ import { AllocationSuccessBanner } from "@/components/dispatcher/orders/Allocati
 import { MetricCard } from "@/components/dispatcher/MetricCard";
 import { Button } from "@/components/ui/button";
 import { fetchWithFallback } from "@/lib/api";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Package, Layers } from "lucide-react";
+import { StocksView } from "@/components/dispatcher/orders/StocksView";
 
 export default function DispatcherOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -26,6 +27,7 @@ export default function DispatcherOrdersPage() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [refreshCount, setRefreshCount] = useState(0);
+  const [activeViewTab, setActiveViewTab] = useState<"orders" | "stocks">("orders");
 
   // Drawers and Modals
   const [isAllocationOpen, setIsAllocationOpen] = useState(false);
@@ -236,54 +238,98 @@ export default function DispatcherOrdersPage() {
         </div>
       </div>
 
-      {/* 02 Filters & Actions */}
-      <OrdersFilterBar
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        statusFilter={statusFilter}
-        onStatusChange={setStatusFilter}
-        brandFilter={brandFilter}
-        onBrandChange={setBrandFilter}
-        districtFilter={districtFilter}
-        onDistrictChange={setDistrictFilter}
-        dateFilter={dateFilter}
-        onDateChange={setDateFilter}
-      />
+      {/* Sub-Navigation Switcher: Orders Queue vs Chain Stock Inventory */}
+      <div className="flex items-center gap-2 border-b border-[#E5E5E2] pb-3">
+        <button
+          onClick={() => setActiveViewTab("orders")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            activeViewTab === "orders"
+              ? "bg-[#18385F] text-white shadow-xs"
+              : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+          }`}
+        >
+          <Package className="size-3.5" />
+          <span>Orders Queue</span>
+          <span
+            className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+              activeViewTab === "orders" ? "bg-white/20 text-white" : "bg-slate-100 text-slate-700"
+            }`}
+          >
+            {metrics.total_orders}
+          </span>
+        </button>
 
-      {/* 03 Summary Metrics Cards matching Figma 03 Summary Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <MetricCard
-          title="Total Orders"
-          value={metrics.total_orders}
-          className="border-border bg-card"
-        />
-        <MetricCard
-          title="Unallocated"
-          value={metrics.unallocated}
-          className="border-border bg-card text-[#18385F]"
-        />
-        <MetricCard
-          title="Allocated"
-          value={metrics.allocated}
-          className="border-border bg-card text-[#166534]"
-        />
-        <MetricCard
-          title="Deferred"
-          value={metrics.deferred}
-          className="border-border bg-card text-amber-700"
-        />
+        <button
+          onClick={() => setActiveViewTab("stocks")}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+            activeViewTab === "stocks"
+              ? "bg-[#18385F] text-white shadow-xs"
+              : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+          }`}
+        >
+          <Layers className="size-3.5" />
+          <span>Chain Stocks & Inventory</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+            3 Chains (Fresh · Style · Tech)
+          </span>
+        </button>
       </div>
 
-      {/* 04 Main Orders Queue Table matching Figma 04 Main Workspace */}
-      <OrdersTable
-        orders={orders}
-        selectedOrderIds={selectedOrderIds}
-        onToggleSelectOrder={handleToggleSelectOrder}
-        onToggleSelectAll={handleToggleSelectAll}
-        onOpenAllocation={() => setIsAllocationOpen(true)}
-        onDeferOrder={handleDeferOrder}
-        isLoading={isLoading}
-      />
+      {activeViewTab === "stocks" ? (
+        /* ── Stock Inventory Interface with 3-chain views, CSV import/export ── */
+        <StocksView />
+      ) : (
+        <>
+          {/* 02 Filters & Actions */}
+          <OrdersFilterBar
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            statusFilter={statusFilter}
+            onStatusChange={setStatusFilter}
+            brandFilter={brandFilter}
+            onBrandChange={setBrandFilter}
+            districtFilter={districtFilter}
+            onDistrictChange={setDistrictFilter}
+            dateFilter={dateFilter}
+            onDateChange={setDateFilter}
+          />
+
+          {/* 03 Summary Metrics Cards matching Figma 03 Summary Metrics */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <MetricCard
+              title="Total Orders"
+              value={metrics.total_orders}
+              className="border-border bg-card"
+            />
+            <MetricCard
+              title="Unallocated"
+              value={metrics.unallocated}
+              className="border-border bg-card text-[#18385F]"
+            />
+            <MetricCard
+              title="Allocated"
+              value={metrics.allocated}
+              className="border-border bg-card text-[#166534]"
+            />
+            <MetricCard
+              title="Deferred"
+              value={metrics.deferred}
+              className="border-border bg-card text-amber-700"
+            />
+          </div>
+
+          {/* 04 Main Orders Queue Table matching Figma 04 Main Workspace */}
+          <OrdersTable
+            orders={orders}
+            selectedOrderIds={selectedOrderIds}
+            onToggleSelectOrder={handleToggleSelectOrder}
+            onToggleSelectAll={handleToggleSelectAll}
+            onOpenAllocation={() => setIsAllocationOpen(true)}
+            onDeferOrder={handleDeferOrder}
+            isLoading={isLoading}
+          />
+        </>
+      )}
 
       {/* Quick Allocation Sheet Drawer with Constraint Review (Figma Frames 9:370 & 163:2021) */}
       <QuickAllocationDrawer

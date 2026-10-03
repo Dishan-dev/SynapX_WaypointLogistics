@@ -4,7 +4,6 @@ import React, { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
-  ShieldCheck,
   Truck,
   CheckCircle2,
   AlertTriangle,
@@ -15,13 +14,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  extractRoles,
   getDefaultPortalForRoles,
   KeycloakAppRole,
   ROLE_CONFIGS,
 } from "@/lib/keycloak";
 import {
-  clearAuthSession,
   PKCE_STATE_KEY,
   PKCE_VERIFIER_KEY,
   saveAuthSession,
@@ -57,7 +54,7 @@ function CallbackHandler() {
         return;
       }
 
-      // Validate PKCE state
+      // Validate PKCE state if present in session
       const savedState = sessionStorage.getItem(PKCE_STATE_KEY);
       if (savedState && state && savedState !== state) {
         setStatus("error");
@@ -98,7 +95,7 @@ function CallbackHandler() {
         setUserName(user.name || user.username);
         setDetectedRoles(user.roles);
 
-        // Determine destination portal
+        // Determine destination portal based on Keycloak role
         let targetPortal = getDefaultPortalForRoles(user.roles);
         if (targetRole && user.roles.includes(targetRole)) {
           targetPortal = ROLE_CONFIGS[targetRole].route;
@@ -112,10 +109,8 @@ function CallbackHandler() {
         sessionStorage.removeItem(PKCE_VERIFIER_KEY);
         sessionStorage.removeItem(TARGET_ROLE_KEY);
 
-        // Auto-redirect after a smooth visual confirmation
-        setTimeout(() => {
-          router.replace(targetPortal);
-        }, 1200);
+        // Immediate direct redirect to role portal
+        router.replace(targetPortal);
       } catch (err: unknown) {
         setStatus("error");
         setErrorMessage(
@@ -128,46 +123,45 @@ function CallbackHandler() {
   }, [router, searchParams]);
 
   return (
-    <div className="min-h-screen bg-[#0A1A2F] text-white flex flex-col items-center justify-center p-4">
-      {/* Background glow effects */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 left-1/3 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl" />
-      </div>
-
-      <div className="relative z-10 w-full max-w-md">
-        {/* Header Branding */}
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-teal-400 to-[#092C4C] flex items-center justify-center text-white shadow-lg border border-teal-300/30">
+    <div className="min-h-screen bg-[#F6F7F9] text-slate-900 flex flex-col items-center justify-center p-4 font-sans antialiased">
+      <div className="w-full max-w-md">
+        {/* Brand Header */}
+        <div className="flex flex-col items-center text-center gap-3 mb-6">
+          <div className="h-12 w-12 rounded-xl bg-[#092C4C] flex items-center justify-center text-white shadow-sm">
             <Truck className="h-6 w-6 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              Waypoint Logistics
-              <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-teal-900/80 text-teal-300 border border-teal-700">
-                Keycloak OIDC
+            <div className="flex items-center justify-center gap-2">
+              <span className="font-bold text-lg tracking-tight text-slate-900">
+                Waypoint Logistics
               </span>
-            </h1>
-            <p className="text-xs text-slate-400">Intelligent Supply Chain Operations</p>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300">
+                SynapX
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Operations Platform &bull; Single Sign-On
+            </p>
           </div>
         </div>
 
-        <Card className="bg-slate-900/90 border-slate-800 shadow-2xl backdrop-blur-xl text-white">
-          <CardContent className="pt-8 pb-8 px-6 text-center space-y-6">
+        {/* Status Card matching Waypoint styling */}
+        <Card className="border border-slate-200 bg-white shadow-xl rounded-2xl overflow-hidden">
+          <CardContent className="pt-8 pb-8 px-6 text-center space-y-5">
             {status === "processing" && (
               <div className="space-y-4">
-                <div className="relative mx-auto w-16 h-16 flex items-center justify-center">
-                  <div className="absolute inset-0 rounded-full border-4 border-teal-500/20 border-t-teal-400 animate-spin" />
-                  <Lock className="w-6 h-6 text-teal-400 animate-pulse" />
+                <div className="relative mx-auto w-14 h-14 flex items-center justify-center">
+                  <div className="absolute inset-0 rounded-full border-3 border-slate-200 border-t-[#092C4C] animate-spin" />
+                  <Lock className="w-5 h-5 text-[#092C4C]" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-white">Verifying Identity</h2>
-                  <p className="text-sm text-slate-400 mt-1">
-                    Exchanging cryptographic authorization token with Keycloak realm...
+                  <h2 className="text-base font-bold text-slate-900">Authenticating with Keycloak</h2>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Verifying authorization credentials and permissions...
                   </p>
                 </div>
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
-                  <span className="w-2 h-2 rounded-full bg-teal-400 animate-ping" />
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 border border-slate-200 text-[11px] text-slate-600 font-mono">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   Realm: waypointlogistics
                 </div>
               </div>
@@ -175,24 +169,24 @@ function CallbackHandler() {
 
             {status === "success" && (
               <div className="space-y-4">
-                <div className="mx-auto w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/10">
-                  <CheckCircle2 className="w-8 h-8" />
+                <div className="mx-auto w-14 h-14 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
+                  <CheckCircle2 className="w-7 h-7" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-white">Authentication Successful</h2>
-                  <p className="text-sm text-slate-300 mt-1">
-                    Welcome back, <span className="font-semibold text-teal-300">{userName}</span>
+                  <h2 className="text-base font-bold text-slate-900">Signed In Successfully</h2>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Welcome back, <span className="font-semibold text-slate-900">{userName}</span>
                   </p>
                 </div>
 
                 {detectedRoles.length > 0 && (
-                  <div className="pt-2">
-                    <p className="text-xs text-slate-400 mb-2">Granted Keycloak Roles:</p>
+                  <div className="pt-1">
+                    <p className="text-[11px] text-slate-500 mb-1.5 font-medium">Assigned Keycloak Roles:</p>
                     <div className="flex flex-wrap items-center justify-center gap-1.5">
                       {detectedRoles.map((role) => (
                         <span
                           key={role}
-                          className="px-2.5 py-1 rounded-md text-xs font-semibold bg-teal-950 border border-teal-800 text-teal-300 uppercase tracking-wide"
+                          className="px-2.5 py-0.5 rounded text-xs font-semibold bg-slate-100 border border-slate-300 text-slate-800 uppercase tracking-wide font-mono"
                         >
                           {role}
                         </span>
@@ -201,13 +195,13 @@ function CallbackHandler() {
                   </div>
                 )}
 
-                <div className="pt-4">
+                <div className="pt-2">
                   <Button
                     asChild
-                    className="w-full bg-teal-500 hover:bg-teal-600 text-slate-950 font-semibold shadow-md"
+                    className="w-full bg-[#092C4C] hover:bg-[#061e34] text-white font-medium text-xs h-10 shadow-xs"
                   >
                     <Link href={destination} className="flex items-center justify-center gap-2">
-                      <span>Entering Portal Now</span>
+                      <span>Entering Workspace</span>
                       <ArrowRight className="w-4 h-4" />
                     </Link>
                   </Button>
@@ -217,28 +211,21 @@ function CallbackHandler() {
 
             {status === "error" && (
               <div className="space-y-4">
-                <div className="mx-auto w-16 h-16 rounded-full bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shadow-lg shadow-rose-500/10">
-                  <AlertTriangle className="w-8 h-8" />
+                <div className="mx-auto w-14 h-14 rounded-full bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600">
+                  <AlertTriangle className="w-7 h-7" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-white">Sign-in Encountered an Issue</h2>
-                  <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-900 rounded p-2.5 mt-2 font-mono break-all text-left">
+                  <h2 className="text-base font-bold text-slate-900">Authentication Failed</h2>
+                  <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded p-2.5 mt-2 font-mono break-all text-left">
                     {errorMessage}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 pt-2">
+                <div className="pt-2">
                   <Button
                     asChild
-                    variant="outline"
-                    className="flex-1 border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                    className="w-full bg-[#092C4C] hover:bg-[#061e34] text-white text-xs h-10"
                   >
                     <Link href="/login">Return to Sign In</Link>
-                  </Button>
-                  <Button
-                    asChild
-                    className="flex-1 bg-teal-600 hover:bg-teal-700 text-white"
-                  >
-                    <Link href="/">Launchpad</Link>
                   </Button>
                 </div>
               </div>
@@ -254,10 +241,10 @@ export default function AuthCallbackPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#0A1A2F] text-white flex items-center justify-center">
-          <div className="flex items-center gap-3">
-            <RefreshCw className="w-5 h-5 animate-spin text-teal-400" />
-            <span className="text-sm font-medium">Loading session...</span>
+        <div className="min-h-screen bg-[#F6F7F9] flex items-center justify-center">
+          <div className="flex items-center gap-3 text-slate-600">
+            <RefreshCw className="w-5 h-5 animate-spin text-[#092C4C]" />
+            <span className="text-sm font-medium">Validating session...</span>
           </div>
         </div>
       }

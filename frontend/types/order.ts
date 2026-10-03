@@ -32,6 +32,12 @@ export interface Order {
   temperature_zone: "Chilled" | "Ambient" | string;
   delivery_window?: string | null;
   weight_kg: number;
+  units?: number | null;
+  volume_m3?: number | null;
+  order_units?: number;
+  order_weight_kg?: number;
+  order_volume_m3?: number;
+  temp_requirement?: string;
   is_priority: boolean;
   is_late: boolean;
   operating_date?: string | null;
@@ -51,3 +57,28 @@ export interface OrderMetrics {
   priority: number;
   late: number;
 }
+
+export interface InventoryItem {
+  id: number;
+  sku: string;
+  name: string;
+  chain?: string | null;
+  quantity: number;
+  unit_price: number;
+  unit_weight_kg: number;
+  unit_volume_m3: number;
+  temp_requirement: string;
+  depot_name?: string | null;
+  updated_at: string;
+}
+
+export interface ChainStockSummary {
+  chain: string;
+  total_skus: number;
+  total_quantity: number;
+  total_weight_kg: number;
+  total_volume_m3: number;
+  low_stock_count: number;
+  last_updated?: string | null;
+}
+
