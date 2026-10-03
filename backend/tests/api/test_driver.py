@@ -491,3 +491,53 @@ def test_profile_shows_the_truck_on_todays_trip(loader_client, released):
 
     truck = released["dispatch_trip"].vehicle_number
     assert truck and body["todays_vehicle"] == truck
+
+
+# ---- Login with the account Admin makes (email + password) -----------------------
+# The driver app shows its own messages for these exact server answers
+# (frontend/lib/driverSession.ts), so the tests pin them.
+
+def admin_creates(client, email="kamal@waypoint.com", role="DRIVER", is_active=True):
+    res = client.post("/api/v1/admin/users", json={
+        "email": email, "full_name": "Kamal Perera", "password": "kamal-pass-1",
+        "role": role, "is_active": is_active,
+    })
+    assert res.status_code == 201, res.text
+
+
+def login(client, email, password="kamal-pass-1"):
+    return client.post("/api/v1/auth/login", data={"username": email, "password": password})
+
+
+def test_driver_made_in_admin_logs_in_then_adds_phone_and_licence(loader_client):
+    admin_creates(loader_client)
+
+    res = login(loader_client, "kamal@waypoint.com")
+
+    assert res.status_code == 200, res.text
+    headers = {"Authorization": f"Bearer {res.json()['access_token']}"}
+    me = loader_client.get(f"{API}/me", headers=headers).json()
+    assert (me["email"], me["role"]) == ("kamal@waypoint.com", "DRIVER")
+    assert loader_client.get(f"{API}/profile", headers=headers).json()["complete"] is False
+    saved = loader_client.put(f"{API}/profile", headers=headers, json={"phone": "0771234567", "license_type": "Light"})
+    assert saved.json()["complete"] is True
+
+
+def test_login_refuses_a_wrong_password_and_a_turned_off_account(loader_client):
+    admin_creates(loader_client)
+    admin_creates(loader_client, email="off@waypoint.com", is_active=False)
+
+    wrong = login(loader_client, "kamal@waypoint.com", password="not-it")
+    off = login(loader_client, "off@waypoint.com")
+
+    assert (wrong.status_code, wrong.json()["detail"]) == (400, "Incorrect email or password")
+    assert (off.status_code, off.json()["detail"]) == (400, "Inactive user")
+
+
+def test_other_roles_cant_use_the_driver_app(loader_client):
+    admin_creates(loader_client, email="dispatch@waypoint.com", role="DISPATCHER")
+    token = login(loader_client, "dispatch@waypoint.com").json()["access_token"]
+
+    res = loader_client.get(f"{API}/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert (res.status_code, res.json()["detail"]) == (403, "Driver access only")

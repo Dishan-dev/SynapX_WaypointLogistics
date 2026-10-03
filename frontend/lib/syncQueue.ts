@@ -12,6 +12,7 @@
 
 import { openDB, IDBPDatabase } from "idb";
 import { apiFetch, apiFetchUpload } from "./api";
+import { getToken } from "./auth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -165,7 +166,8 @@ export async function dequeue(action_id: string) {
 let _flushInFlight = false;
 
 export async function flush(): Promise<SyncResult | null> {
-  if (_flushInFlight) return null;
+  // Records go out only with a driver logged in, so they reach the server as theirs.
+  if (_flushInFlight || !getToken()) return null;
   const pending = _queue.filter((a) => a.status === "pending");
   if (pending.length === 0) return null;
 
@@ -245,6 +247,15 @@ export async function flush(): Promise<SyncResult | null> {
 export async function dismissFailed(action_id: string) {
   const db = await getDB();
   await db.delete(STORE_QUEUE, action_id);
+  await _loadQueue();
+}
+
+// ─── Forget everything (a different driver logged in on this phone) ─────────
+
+export async function clearQueue() {
+  const db = await getDB();
+  await db.clear(STORE_QUEUE);
+  await db.clear(STORE_FILES);
   await _loadQueue();
 }
 

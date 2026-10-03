@@ -9,7 +9,8 @@ import {
 } from "lucide-react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { cachedGet, writeCache } from "@/lib/driverCache";
-import { clearToken } from "@/lib/auth";
+import { signOut } from "@/lib/driverSession";
+import { useSyncContext } from "@/components/SyncProvider";
 import DeviceClock from "@/components/driver/DeviceClock";
 
 interface UserProfile {
@@ -53,6 +54,8 @@ export default function ProfilePage() {
   const [licence, setLicence] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const { queue, online, flush } = useSyncContext();
 
   useEffect(() => {
     async function loadProfile() {
@@ -120,7 +123,12 @@ export default function ProfilePage() {
   }
 
   function handleLogout() {
-    clearToken();
+    // Records still on the phone: say what happens to them before logging out.
+    if (queue.length > 0 && !confirmLogout) {
+      setConfirmLogout(true);
+      return;
+    }
+    signOut();
     router.push("/driver/login");
   }
 
@@ -355,13 +363,36 @@ export default function ProfilePage() {
 
         {/* Logout Action */}
         <div className="w-full mt-6">
+          {confirmLogout && queue.length > 0 && (
+            <div role="alert" className="flex flex-col gap-3 p-4 mb-3 rounded-xl" style={{ backgroundColor: "#FFF4E5", border: "1px solid #B26A00" }}>
+              <div className="flex flex-col gap-0.5">
+                <span className="font-bold text-[14px]" style={{ color: "#8A5300" }}>
+                  {queue.length} {queue.length === 1 ? "record" : "records"} not sent yet
+                </span>
+                <span className="text-[12px]" style={{ color: "#8A5300" }}>
+                  They send when you log in again on this phone. If another driver logs in here first, they are deleted.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => flush()}
+                disabled={!online}
+                className="h-11 rounded-lg font-bold text-[14px] text-white disabled:opacity-60"
+                style={{ backgroundColor: "#163A5F" }}
+              >
+                {online ? "Send now" : "No signal to send"}
+              </button>
+            </div>
+          )}
           <button
             onClick={handleLogout}
             className="w-full flex justify-center items-center gap-2 h-[55px] rounded-lg bg-white"
             style={{ border: "2px solid #C9363E" }}
           >
             <LogOut size={18} color="#C9363E" />
-            <span className="font-bold text-[16px]" style={{ color: "#C9363E" }}>Log out</span>
+            <span className="font-bold text-[16px]" style={{ color: "#C9363E" }}>
+              {confirmLogout && queue.length > 0 ? "Log out anyway" : "Log out"}
+            </span>
           </button>
         </div>
       </div>

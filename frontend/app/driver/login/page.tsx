@@ -1,17 +1,15 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, Lock, User, Navigation, CloudOff, BatteryFull, Signal } from "lucide-react";
-import { setToken, isAuthenticated } from "@/lib/auth";
-import { apiFetch, ApiError } from "@/lib/api";
+import { Eye, EyeOff, Lock, Mail, Navigation, CloudOff, BatteryFull, Signal } from "lucide-react";
+import { isAuthenticated } from "@/lib/auth";
+import { signIn, signOutMessage } from "@/lib/driverSession";
+import { useSyncContext } from "@/components/SyncProvider";
 import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
 import { greeting } from "@/lib/colomboTime";
 
-interface LoginResponse {
-  access_token: string;
-  token_type: string;
-}
+const noSubscription = () => () => {};
 
 export default function DriverLoginPage() {
   const clock = useColomboClock();
@@ -21,6 +19,9 @@ export default function DriverLoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { online } = useSyncContext();
+  // Why the app logged the driver out (expired, turned off, not a driver), if it did.
+  const signedOut = useSyncExternalStore(noSubscription, signOutMessage, () => null);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -35,25 +36,10 @@ export default function DriverLoginPage() {
     setLoading(true);
 
     try {
-      // Backend expects form data for OAuth2 password flow
-      const formData = new URLSearchParams();
-      formData.append("username", username);
-      formData.append("password", password);
-
-      const data = await apiFetch<LoginResponse>("/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData.toString(),
-      });
-
-      setToken(data.access_token);
-      router.push("/driver");
+      // The email and password the depot admin gave this driver.
+      router.push(await signIn(username, password));
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.message);
-      } else {
-        setError("Could not connect to server. Check your internet connection.");
-      }
+      setError(err instanceof Error ? err.message : "Something went wrong. Try again.");
     } finally {
       setLoading(false);
     }
@@ -74,7 +60,7 @@ export default function DriverLoginPage() {
           <DeviceClock className="text-xs font-semibold" />
           <div className="flex items-center gap-2">
             <div className="flex items-center bg-white/20 px-2 py-0.5 rounded text-[10px] font-medium">
-              Offline
+              {online ? "Online" : "Offline"}
             </div>
             <Signal size={14} />
             <BatteryFull size={18} />
@@ -106,7 +92,7 @@ export default function DriverLoginPage() {
             </span>
           </div>
           <span className="font-semibold text-lg leading-[1.25em] mt-1" style={{ color: "#8CC2FF" }}>
-            Ready for today's run?
+            Ready for today&apos;s run?
           </span>
           <span className="font-regular text-[13px] leading-[1.5em]" style={{ color: "rgba(255, 255, 255, 0.69)" }}>
             Sign in to view your assigned<br/>trips and delivery records.
@@ -131,6 +117,7 @@ export default function DriverLoginPage() {
         {/* Error Message */}
         {error && (
           <div
+            role="alert"
             className="flex items-center px-3.5 py-2.5 rounded-xl text-[13px] font-medium"
             style={{ backgroundColor: "#FEF2F2", border: "1px solid #FECACA", color: "#C9363E" }}
           >
@@ -138,22 +125,38 @@ export default function DriverLoginPage() {
           </div>
         )}
 
+        {/* Why the app logged the driver out */}
+        {signedOut && !error && (
+          <div
+            role="status"
+            className="flex items-center px-3.5 py-2.5 rounded-xl text-[13px] font-medium"
+            style={{ backgroundColor: "#EAF2FF", border: "1px solid rgba(33, 103, 213, 0.21)", color: "#2167D5" }}
+          >
+            {signedOut}
+          </div>
+        )}
+
         {/* Fields */}
         <div className="flex flex-col w-full gap-[14px]">
-          {/* Driver ID */}
+          {/* Email: the login the depot admin created */}
           <div className="flex flex-col gap-1.5 w-full">
-            <label className="text-[11px] font-bold uppercase tracking-[0.07em]" style={{ color: "#5D6A78" }}>
-              Driver ID or phone
+            <label htmlFor="driver-username" className="text-[11px] font-bold uppercase tracking-[0.07em]" style={{ color: "#5D6A78" }}>
+              Email
             </label>
             <div 
               className="flex items-center gap-2.5 px-3.5 h-[52px] rounded-xl w-full"
               style={{ backgroundColor: "#FFFFFF", border: "1px solid #D9E1E8" }}
             >
-              <User size={18} color="#6B7280" />
+              <Mail size={18} color="#6B7280" />
               <input
                 id="driver-username"
-                type="text"
-                placeholder="e.g. DRV-214"
+                type="email"
+                inputMode="email"
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="name@waypoint.com"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
@@ -165,7 +168,7 @@ export default function DriverLoginPage() {
 
           {/* Password */}
           <div className="flex flex-col gap-1.5 w-full">
-            <label className="text-[11px] font-bold uppercase tracking-[0.07em]" style={{ color: "#5D6A78" }}>
+            <label htmlFor="driver-password" className="text-[11px] font-bold uppercase tracking-[0.07em]" style={{ color: "#5D6A78" }}>
               Password
             </label>
             <div 
@@ -176,6 +179,7 @@ export default function DriverLoginPage() {
               <input
                 id="driver-password"
                 type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -183,7 +187,7 @@ export default function DriverLoginPage() {
                 className="flex-1 bg-transparent outline-none text-[13px] placeholder-[#6B7280]"
                 style={{ color: "#111827" }}
               />
-              <button onClick={() => setShowPassword(!showPassword)} type="button">
+              <button onClick={() => setShowPassword(!showPassword)} type="button" aria-label={showPassword ? "Hide password" : "Show password"}>
                 {showPassword ? <Eye size={18} color="#6B7280" /> : <EyeOff size={18} color="#6B7280" />}
               </button>
             </div>
@@ -201,13 +205,6 @@ export default function DriverLoginPage() {
           >
             {loading ? "Signing in…" : "Log in →"}
           </button>
-          <button 
-            type="button"
-            className="w-full flex justify-start items-center h-9 rounded-md font-semibold text-[13px]"
-            style={{ color: "rgba(24, 56, 95, 0.75)" }}
-          >
-            Forgot password
-          </button>
         </div>
       </form>
 
@@ -223,7 +220,7 @@ export default function DriverLoginPage() {
               Works offline once signed in
             </span>
             <span className="font-normal text-[12px] leading-[1.55em]" style={{ color: "#2167D5" }}>
-              Your assigned trips and delivery records<br/>are saved on this device and will sync<br/>automatically when you're back online.
+              Your assigned trips and delivery records<br/>are saved on this device and will sync<br/>automatically when you&apos;re back online.
             </span>
           </div>
         </div>
