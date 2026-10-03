@@ -431,16 +431,25 @@ def _order_info(order: Order, on_truck: bool, window: Optional[str] = None) -> d
     }
 
 
-def record_arrival(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
+def _tap_time(at: Optional[datetime]) -> datetime:
+    """When the driver actually tapped: the phone's time for a record saved
+    offline, never in the future (a phone clock running fast)."""
+    now = _now()
+    if at is None:
+        return now
+    at = at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+    return min(at.astimezone(timezone.utc), now)
+
+
+def record_arrival(db: Session, stop_id: int, driver_id: int, at: Optional[datetime] = None) -> DeliveryStop:
     stop = get_stop(db, stop_id, driver_id)
-    # Idempotent: if already arrived, just return the stop as-is
-    if stop.status == DeliveryStopStatus.ARRIVED:
-        return stop
+    # Idempotent: already arrived (or further) → return the stop as-is, so an
+    # arrival replayed from the offline queue is never a conflict
     if stop.status != DeliveryStopStatus.PENDING:
-        raise HTTPException(status_code=400, detail="Stop is not pending")
-    
+        return stop
+
     stop.status = DeliveryStopStatus.ARRIVED
-    stop.arrived_at = datetime.now(timezone.utc)
+    stop.arrived_at = _tap_time(at)
     db.commit()
     db.refresh(stop)
     return stop
@@ -564,18 +573,19 @@ def get_trip_issues(db: Session, trip_id: int, driver_id: int) -> List[IssueRepo
     return trip.issues
 
 
-def trigger_sos(db: Session, driver_id: int, sos_data: dict) -> SOSAlert:
+def trigger_sos(db: Session, driver_id: int, sos_data: dict, at: Optional[datetime] = None) -> SOSAlert:
     trip_id = sos_data.get("driver_trip_id")
     if trip_id:
         # verify trip belongs to driver
         get_trip_detail(db, trip_id, driver_id)
-        
+
     alert = SOSAlert(
         driver_id=driver_id,
         driver_trip_id=trip_id,
         latitude=sos_data.get("latitude"),
         longitude=sos_data.get("longitude"),
-        message=sos_data.get("message")
+        message=sos_data.get("message"),
+        triggered_at=_tap_time(at),  # an SOS sent from the offline queue keeps when it was pressed
     )
     db.add(alert)
     db.commit()
@@ -618,7 +628,7 @@ def process_sync_batch(db: Session, actions: list, driver_id: int) -> dict:
     for action in actions:
         try:
             if action.action_type == "arrive":
-                record_arrival(db, action.stop_id, driver_id)
+                record_arrival(db, action.stop_id, driver_id, at=action.client_timestamp)
             elif action.action_type == "outcome":
                 record_outcome(db, action.stop_id, action.payload["outcome"], driver_id)
             elif action.action_type == "pod":
@@ -627,7 +637,9 @@ def process_sync_batch(db: Session, actions: list, driver_id: int) -> dict:
                 complete_stop(db, action.stop_id, driver_id)
             elif action.action_type == "issue":
                 report_issue(db, action.trip_id, action.payload, driver_id)
-            
+            elif action.action_type == "sos":
+                trigger_sos(db, driver_id, action.payload, at=action.client_timestamp)
+
             processed_count += 1
             
         except HTTPException as e:

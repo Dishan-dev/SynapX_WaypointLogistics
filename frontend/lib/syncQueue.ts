@@ -15,7 +15,7 @@ import { apiFetch, apiFetchUpload } from "./api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type SyncActionType = "arrive" | "outcome" | "pod" | "complete" | "issue";
+export type SyncActionType = "arrive" | "outcome" | "pod" | "complete" | "issue" | "sos";
 export type ActionStatus   = "pending" | "syncing" | "failed";
 
 export interface PendingAction {

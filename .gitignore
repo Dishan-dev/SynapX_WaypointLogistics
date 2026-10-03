@@ -80,3 +80,4 @@ backend/seed_trips.py
 
 # Reference data from the brief (outlets, calendar, vehicles). Shared privately, not committed.
 docs/*.csv
+

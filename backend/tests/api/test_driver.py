@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.delivery_run import RunOrderState, RunStatus, RunStop, RunStopOrder
-from app.models.driver import DeliveryStop, DriverTrip
+from app.models.driver import DeliveryStop, DriverTrip, SOSAlert
 from app.models.fleet import DriverProfile
 from app.models.notification import Notification, NotificationType
 from app.models.order import OrderStatus
@@ -356,6 +356,38 @@ def test_sync_replay_does_not_apply_twice(loader_client, released):
     assert first == {"processed_count": 1, "conflicts": []}
     assert second == {"processed_count": 1, "conflicts": []}
     assert trip_detail(loader_client, released["driver"], trip["id"])["stops"][0]["arrived_at"] == arrived_at
+
+
+def test_offline_arrival_keeps_the_tap_time_and_replays_cleanly(loader_client, released):
+    trip = started_trip(loader_client, released)
+    stop_id = trip["stops"][0]["id"]
+    arrive = [{"action_id": "a-arr", "action_type": "arrive", "stop_id": stop_id,
+               "payload": {}, "client_timestamp": "2026-10-03T00:10:00Z"}]
+
+    first = loader_client.post(f"{API}/sync", headers=auth(released["driver"]), json=arrive).json()
+    deliver(loader_client, released["driver"], stop_id)
+    replay = loader_client.post(f"{API}/sync", headers=auth(released["driver"]), json=arrive).json()
+
+    assert first == {"processed_count": 1, "conflicts": []}
+    assert replay == {"processed_count": 1, "conflicts": []}  # already delivered: not a conflict
+    stop = trip_detail(loader_client, released["driver"], trip["id"])["stops"][0]
+    assert stop["arrived_at"] == "2026-10-03T00:10:00Z"  # when the driver tapped, not when it synced
+
+
+def test_offline_sos_is_sent_by_sync_with_its_tap_time(loader_client, released):
+    trip = started_trip(loader_client, released)
+    sos = [{"action_id": "a-sos", "action_type": "sos", "trip_id": trip["id"],
+            "payload": {"driver_trip_id": trip["id"], "latitude": 6.13, "longitude": 80.63,
+                        "message": "Accident: lorry hit a wall"},
+            "client_timestamp": "2026-10-03T00:20:00Z"}]
+
+    result = loader_client.post(f"{API}/sync", headers=auth(released["driver"]), json=sos).json()
+
+    assert result == {"processed_count": 1, "conflicts": []}
+    alert = released["db"].execute(select(SOSAlert)).scalars().one()
+    assert (alert.driver_trip_id, alert.latitude, alert.longitude) == (trip["id"], 6.13, 80.63)
+    assert alert.message == "Accident: lorry hit a wall"
+    assert alert.triggered_at.strftime("%Y-%m-%d %H:%M") == "2026-10-03 00:20"
 
 
 # ---- Trips not made from a loader run (seed data) still work -------------------------

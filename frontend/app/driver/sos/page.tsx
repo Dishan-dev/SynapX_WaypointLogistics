@@ -7,7 +7,10 @@ import {
   ArrowLeft, AlertTriangle, HeartPulse, ShieldAlert,
   Car, Flame, MoreHorizontal, MapPin, Route
 } from "lucide-react";
-import { apiFetch, apiFetchUpload } from "@/lib/api";
+import { toast } from "sonner";
+import { apiFetch, apiFetchUpload, ApiError } from "@/lib/api";
+import { useSyncContext } from "@/components/SyncProvider";
+import { getRememberedTrip } from "@/lib/driverStop";
 import { gpsLabel } from "@/lib/gps";
 import PhotoAttach, { type PhotoDraft } from "@/components/driver/PhotoAttach";
 
@@ -28,6 +31,8 @@ export default function SOSPage() {
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [fix, setFix] = useState<Fix | null>(null);
   const [locating, setLocating] = useState(true);
+  const [queued, setQueued] = useState(false);
+  const { queue, enqueue, enqueueWithPhoto } = useSyncContext();
 
   // The real position to share with the dispatcher; the alert still goes without one
   useEffect(() => {
@@ -66,7 +71,10 @@ export default function SOSPage() {
           setActiveTrip(detail);
         }
       } catch (error) {
-        console.error("Failed to load active trip:", error);
+        // No signal: the trip the map last showed under way, so dispatch knows which run
+        const tripId = getRememberedTrip();
+        if (tripId) setActiveTrip({ id: tripId });
+        else console.warn("Failed to load active trip:", error);
       } finally {
         setLoading(false);
       }
@@ -76,6 +84,26 @@ export default function SOSPage() {
 
   async function handleSubmit() {
     setSubmitting(true);
+    const alert = {
+      driver_trip_id: activeTrip ? activeTrip.id : null,
+      latitude: fix?.latitude ?? null,
+      longitude: fix?.longitude ?? null,
+      message: notes.trim() ? `${selectedType}: ${notes.trim()}` : selectedType,
+    };
+
+    // No signal: keep the SOS (and its photo) on the phone; it sends the moment signal returns
+    async function saveForLater() {
+      const action = {
+        action_type: "sos" as const,
+        trip_id: alert.driver_trip_id ?? undefined,
+        payload: alert,
+        label: `SOS · ${selectedType}`,
+      };
+      if (photo) await enqueueWithPhoto(action, photo.file);
+      else await enqueue(action);
+      setQueued(true);
+      setSubmitting(false);
+    }
 
     // A photo that fails to upload must not hold up the alert
     let photo_url: string | undefined;
@@ -85,6 +113,7 @@ export default function SOSPage() {
         form.append("file", photo.file);
         ({ photo_url } = await apiFetchUpload<{ photo_url: string }>("/driver/upload/photo", form));
       } catch (error) {
+        if (error instanceof ApiError && error.isNetworkError) return saveForLater();
         console.error("SOS photo upload failed, sending without it:", error);
       }
     }
@@ -92,21 +121,21 @@ export default function SOSPage() {
     try {
       await apiFetch("/driver/sos", {
         method: "POST",
-        body: JSON.stringify({
-          driver_trip_id: activeTrip ? activeTrip.id : null,
-          latitude: fix?.latitude ?? null,
-          longitude: fix?.longitude ?? null,
-          message: notes.trim() ? `${selectedType}: ${notes.trim()}` : selectedType,
-          // Saved once sos_alerts has a photo_url column; ignored until then
-          photo_url,
-        })
+        // photo_url is saved once sos_alerts has a photo_url column; ignored until then
+        body: JSON.stringify({ ...alert, photo_url }),
       });
       router.push("/driver/sos/success");
     } catch (error) {
-      console.error("Failed to submit SOS:", error);
+      if (error instanceof ApiError && error.isNetworkError) return saveForLater();
+      toast.error(error instanceof Error ? error.message : "Couldn't send the SOS", {
+        description: "Call for help if you can.",
+      });
       setSubmitting(false);
     }
   }
+
+  // The saved SOS leaves the queue once the server has it
+  const sosWaiting = queue.some((a) => a.action_type === "sos");
 
   const currentStop = activeTrip?.stops?.find((s: { status: string }) => s.status === 'pending');
 
@@ -265,13 +294,35 @@ export default function SOSPage() {
         className="flex flex-col p-4 gap-3 bg-white shrink-0"
         style={{ borderTop: "1px solid #E5E5E2" }}
       >
-        <button 
+        {queued && (
+          <div role="alert" className="flex flex-col gap-2 p-3 rounded-md" style={{ backgroundColor: sosWaiting ? "#FFF4D6" : "#F0F7F2" }}>
+            <span className="font-bold text-[13px]" style={{ color: sosWaiting ? "#7A4F00" : "#3D7954" }}>
+              {sosWaiting ? "No signal: SOS saved on this phone" : "Signal back: SOS sent to dispatch"}
+            </span>
+            {sosWaiting && (
+              <>
+                <span className="text-[12px] leading-[16px]" style={{ color: "#7A4F00" }}>
+                  It sends to dispatch automatically the moment signal returns. If you can, call for help now:
+                </span>
+                <div className="flex gap-2">
+                  <a href="tel:1990" className="flex-1 flex items-center justify-center min-h-[44px] rounded-md font-bold text-[13px] text-white" style={{ backgroundColor: "#AD3D3D" }}>
+                    Call 1990 · Ambulance
+                  </a>
+                  <a href="tel:119" className="flex-1 flex items-center justify-center min-h-[44px] rounded-md font-bold text-[13px] text-white" style={{ backgroundColor: "#AD3D3D" }}>
+                    Call 119 · Police
+                  </a>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        <button
           onClick={handleSubmit}
-          disabled={submitting || loading}
+          disabled={submitting || loading || queued}
           className="w-full flex justify-center items-center py-3.5 rounded-md text-white font-bold text-[15px] disabled:opacity-50"
           style={{ backgroundColor: "#AD3D3D" }}
         >
-          {submitting ? "SENDING..." : "SEND EMERGENCY ALERT"}
+          {submitting ? "SENDING..." : queued ? (sosWaiting ? "SAVED · SENDS WHEN SIGNAL RETURNS" : "SOS SENT") : "SEND EMERGENCY ALERT"}
         </button>
         <Link href="/driver" className="w-full">
           <button className="w-full flex justify-center items-center py-1">

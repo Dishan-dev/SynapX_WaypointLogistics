@@ -7,8 +7,9 @@ import {
   Signal, BatteryFull, MapPinCheck, LocateFixed,
   Map as MapIcon, Home, TriangleAlert, Layers
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
-import { fetchStopDetail, parseWindow, type StopDetail } from "@/lib/driverStop";
+import { apiFetch, ApiError } from "@/lib/api";
+import { fetchStopDetail, parseWindow, updateCachedStop, type StopDetail } from "@/lib/driverStop";
+import { useSyncContext } from "@/components/SyncProvider";
 import DeviceClock from "@/components/driver/DeviceClock";
 
 function ArrivalContent() {
@@ -17,15 +18,20 @@ function ArrivalContent() {
 
   const [stop, setStop] = useState<StopDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const { enqueue } = useSyncContext();
   const deliveryWindow = parseWindow(stop?.order?.delivery_window);
 
   useEffect(() => {
     if (!stopId) return;
+    // A screen left (or set up twice in development) must not queue the arrival again
+    let cancelled = false;
 
     async function loadDataAndArrive() {
+      let loaded: StopDetail | null = null;
       try {
-        // Step 1: Load stop details for display (always do this first)
-        setStop(await fetchStopDetail(stopId!));
+        // Step 1: Load stop details for display (the phone's copy when there's no signal)
+        loaded = await fetchStopDetail(stopId!);
+        setStop(loaded);
       } catch (error) {
         console.error("Failed to load stop details:", error);
       }
@@ -34,15 +40,29 @@ function ArrivalContent() {
       try {
         await apiFetch(`/driver/stops/${stopId}/arrive`, { method: "PATCH" });
       } catch (error) {
-        // Swallow — backend returns the stop cleanly if already arrived
-        console.warn("Arrive call skipped (stop may already be arrived):", error);
+        // No signal: keep the arrival time on the phone; it syncs when signal returns
+        if (cancelled) return;
+        if (error instanceof ApiError && error.isNetworkError && loaded?.status === "pending") {
+          await enqueue({
+            action_type: "arrive",
+            stop_id: Number(stopId),
+            payload: {},
+            label: `Arrived · ${loaded.customer_name}`,
+          });
+          updateCachedStop(stopId!, { status: "arrived" });
+        } else {
+          console.warn("Arrive call skipped (stop may already be arrived):", error);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
-    
+
     loadDataAndArrive();
-  }, [stopId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [stopId, enqueue]);
 
 
   return (

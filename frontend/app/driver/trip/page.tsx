@@ -32,7 +32,7 @@ import { type Map as MapLibreMap } from "maplibre-gl";
 import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { gpsLabel } from "@/lib/gps";
-import { isStopOpen } from "@/lib/driverStop";
+import { fetchStopDetail, isStopOpen, rememberActiveTrip } from "@/lib/driverStop";
 import type { DriverTripDetail, DeliveryStop, GPSPosition } from "@/types/driver-map";
 
 // Heavy map canvas loaded client-side only
@@ -115,9 +115,13 @@ export default function DriverRouteMapPage() {
         setTrip(detail);
         setLastUpdated(new Date());
         setOffline(false);
+        // Keep a copy of every open stop on the phone, so its screens open with no signal
+        detail.stops.filter(isStopOpen).forEach((s) => fetchStopDetail(s.id).catch(() => undefined));
+        rememberActiveTrip(detail.status === "started" ? detail.id : null);
       } else {
         setTrip(null);
         setOffline(false);
+        rememberActiveTrip(null);
       }
     } catch {
       setOffline(true);

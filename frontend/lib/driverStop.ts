@@ -2,7 +2,7 @@
  * Stop detail for the driver's at-stop screens (arrived → outcome → proof).
  * Backed by GET /driver/stops/{id}, which includes the order being delivered.
  */
-import { apiFetch } from "./api";
+import { apiFetch, ApiError } from "./api";
 import type { DeliveryStop, TripStatus } from "@/types/driver-map";
 
 export interface StopOrderItem {
@@ -45,8 +45,64 @@ export function isStopOpen(stop: { status: string; completed_at: string | null }
   return (stop.status === "delivered" || stop.status === "partial") && !stop.completed_at;
 }
 
-export function fetchStopDetail(stopId: string | number) {
-  return apiFetch<StopDetail>(`/driver/stops/${stopId}`);
+// The last copy of each stop seen online, so the at-stop screens still open
+// with no signal. The map saves every stop of the trip while it has signal.
+const CACHE_PREFIX = "driver-stop:";
+
+function cacheStop(detail: StopDetail) {
+  try {
+    localStorage.setItem(CACHE_PREFIX + detail.id, JSON.stringify(detail));
+  } catch {
+    // storage full or blocked: the screens just need signal
+  }
+}
+
+export function getCachedStop(stopId: string | number): StopDetail | null {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + stopId);
+    return raw ? (JSON.parse(raw) as StopDetail) : null;
+  } catch {
+    return null;
+  }
+}
+
+// The trip under way, so an SOS sent with no signal still names it
+const ACTIVE_TRIP_KEY = "driver-active-trip";
+
+export function rememberActiveTrip(tripId: number | null) {
+  try {
+    if (tripId === null) localStorage.removeItem(ACTIVE_TRIP_KEY);
+    else localStorage.setItem(ACTIVE_TRIP_KEY, String(tripId));
+  } catch {
+    // storage blocked: the SOS goes without a trip
+  }
+}
+
+export function getRememberedTrip(): number | null {
+  try {
+    const value = localStorage.getItem(ACTIVE_TRIP_KEY);
+    return value ? Number(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** After an action is saved offline, so the next screen shows the stop as it will be. */
+export function updateCachedStop(stopId: string | number, changes: Partial<StopDetail>) {
+  const stop = getCachedStop(stopId);
+  if (stop) cacheStop({ ...stop, ...changes });
+}
+
+export async function fetchStopDetail(stopId: string | number) {
+  try {
+    const detail = await apiFetch<StopDetail>(`/driver/stops/${stopId}`);
+    cacheStop(detail);
+    return detail;
+  } catch (err) {
+    const cached = err instanceof ApiError && err.isNetworkError ? getCachedStop(stopId) : null;
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 /** "05:00-07:30" → { open: "05:00", close: "07:30" } */

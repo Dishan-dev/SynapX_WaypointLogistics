@@ -8,8 +8,9 @@ import {
   Map as MapIcon, Home, Layers
 } from "lucide-react";
 import { toast } from "sonner";
-import { apiFetch } from "@/lib/api";
-import { fetchStopDetail, type StopDetail } from "@/lib/driverStop";
+import { apiFetch, ApiError } from "@/lib/api";
+import { fetchStopDetail, updateCachedStop, type StopDetail } from "@/lib/driverStop";
+import { useSyncContext } from "@/components/SyncProvider";
 import StopDeliveryDetails from "@/components/driver/StopDeliveryDetails";
 import DeviceClock from "@/components/driver/DeviceClock";
 
@@ -21,6 +22,7 @@ const OUTCOME_OPTIONS = [
 
 function DeliveryOutcomeContent() {
   const router = useRouter();
+  const { enqueue } = useSyncContext();
   const searchParams = useSearchParams();
   const stopId = searchParams.get("stop_id");
 
@@ -54,18 +56,31 @@ function DeliveryOutcomeContent() {
     if (selectedOutcome === "partial") backendOutcome = "partial";
     if (selectedOutcome === "issue") backendOutcome = "failed";
 
+    // A failed stop has no proof of delivery — the driver reports why instead
+    const next = backendOutcome === "failed"
+      ? `/driver/report?stop_id=${stopId}`
+      : `/driver/trip/proof?stop_id=${stopId}`;
+
     try {
       await apiFetch(`/driver/stops/${stopId}/outcome`, {
         method: "PATCH",
         body: JSON.stringify({ outcome: backendOutcome })
       });
-      // A failed stop has no proof of delivery — the driver reports why instead
-      router.push(
-        backendOutcome === "failed"
-          ? `/driver/report?stop_id=${stopId}`
-          : `/driver/trip/proof?stop_id=${stopId}`
-      );
+      router.push(next);
     } catch (error) {
+      if (error instanceof ApiError && error.isNetworkError) {
+        // No signal: keep the outcome on the phone and carry on; it syncs before the proof
+        await enqueue({
+          action_type: "outcome",
+          stop_id: Number(stopId),
+          payload: { outcome: backendOutcome },
+          label: `Outcome · ${stop?.customer_name ?? "stop"}`,
+        });
+        updateCachedStop(stopId, { status: backendOutcome as StopDetail["status"] });
+        toast.success("Saved on this device", { description: "It will sync when signal returns." });
+        router.push(next);
+        return;
+      }
       toast.error(error instanceof Error ? error.message : "Couldn't save the outcome");
       setSubmitting(false);
     }

@@ -10,6 +10,7 @@ import {
 import { apiFetch, apiFetchUpload } from "@/lib/api";
 import { useSyncContext } from "@/components/SyncProvider";
 import PhotoAttach, { type PhotoDraft } from "@/components/driver/PhotoAttach";
+import { getCachedStop } from "@/lib/driverStop";
 import DeviceClock from "@/components/driver/DeviceClock";
 
 export default function ReportProblemPage() {
@@ -54,7 +55,15 @@ export default function ReportProblemPage() {
           }
         }
       } catch (error) {
-        console.error("Failed to load active trip:", error);
+        // No signal: a report for a stop can still be saved, from the phone's copy of that stop
+        const requestedStopId = new URLSearchParams(window.location.search).get("stop_id");
+        const cached = requestedStopId ? getCachedStop(requestedStopId) : null;
+        if (cached) {
+          setActiveTrip({ id: cached.driver_trip_id });
+          setCurrentStop(cached);
+        } else {
+          console.error("Failed to load active trip:", error);
+        }
       } finally {
         setLoading(false);
       }
