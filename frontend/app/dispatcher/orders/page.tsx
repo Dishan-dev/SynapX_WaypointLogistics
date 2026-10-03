@@ -268,7 +268,7 @@ export default function DispatcherOrdersPage() {
           }`}
         >
           <Layers className="size-3.5" />
-          <span>Chain Stocks & Inventory</span>
+          <span>Chain Cargo Catalog</span>
           <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
             3 Chains (Fresh · Style · Tech)
           </span>

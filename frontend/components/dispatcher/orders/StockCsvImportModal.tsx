@@ -112,10 +112,10 @@ export function StockCsvImportModal({
           <div>
             <DialogTitle className="text-xl font-bold text-slate-900 flex items-center gap-2">
               <UploadCloud className="size-5 text-[#18385F]" />
-              Import Chain Stock CSV
+              Import Chain Cargo Specifications CSV
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500 mt-1">
-              Upload daily stock update files for Fresh, Style, or Tech retail chains.
+              Upload daily product handling specifications for Fresh, Style, or Tech retail chains.
             </DialogDescription>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
@@ -183,7 +183,7 @@ export function StockCsvImportModal({
                 <UploadCloud className="size-8 text-slate-400 mb-2" />
                 <span className="text-sm font-semibold text-slate-700">Click to upload or drag & drop</span>
                 <span className="text-xs text-slate-400 mt-1">
-                  Supports UTF-8 CSV with columns: sku, name, quantity, unit_weight_kg, unit_volume_m3, temp_requirement
+                  Supports UTF-8 CSV with columns: sku, name, unit_weight_kg, unit_volume_m3, temp_requirement, depot_name
                 </span>
               </div>
             )}
@@ -210,7 +210,7 @@ export function StockCsvImportModal({
           <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-800">
             <AlertTriangle className="size-4 shrink-0 mt-0.5 text-amber-600" />
             <span>
-              Rows matching existing SKUs will update available quantities and physical metrics. New SKUs will be added to the {selectedChain} catalog automatically.
+              Rows matching existing SKUs will update physical handling metrics (unit weight, unit volume, temp class). New SKUs will be added to the {selectedChain} catalog automatically.
             </span>
           </div>
         </div>

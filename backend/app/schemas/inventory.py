@@ -45,12 +45,17 @@ class InventoryItemRead(InventoryItemBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ChainStockSummary(BaseModel):
+class ChainCargoSummary(BaseModel):
     chain: str
     total_skus: int
-    total_quantity: int
-    total_weight_kg: float
-    total_volume_m3: float
-    low_stock_count: int
+    chilled_skus: int
+    ambient_skus: int
+    avg_weight_kg: float
+    avg_volume_m3: float
     last_updated: Optional[datetime] = None
+
+
+# Alias for backward compatibility
+ChainStockSummary = ChainCargoSummary
+
 

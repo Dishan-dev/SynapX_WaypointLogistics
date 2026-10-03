@@ -63,8 +63,6 @@ export interface InventoryItem {
   sku: string;
   name: string;
   chain?: string | null;
-  quantity: number;
-  unit_price: number;
   unit_weight_kg: number;
   unit_volume_m3: number;
   temp_requirement: string;
@@ -72,13 +70,16 @@ export interface InventoryItem {
   updated_at: string;
 }
 
-export interface ChainStockSummary {
+export interface ChainCargoSummary {
   chain: string;
   total_skus: number;
-  total_quantity: number;
-  total_weight_kg: number;
-  total_volume_m3: number;
-  low_stock_count: number;
+  chilled_skus: number;
+  ambient_skus: number;
+  avg_weight_kg: number;
+  avg_volume_m3: number;
   last_updated?: string | null;
 }
+
+export type ChainStockSummary = ChainCargoSummary;
+
 

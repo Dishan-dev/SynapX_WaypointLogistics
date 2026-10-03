@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import { type InventoryItem, type ChainStockSummary } from "@/types/order";
+import { type InventoryItem, type ChainCargoSummary } from "@/types/order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,10 +13,8 @@ import {
   Layers,
   Weight,
   Box,
-  AlertTriangle,
   Snowflake,
   Sun,
-  CheckCircle2,
 } from "lucide-react";
 import { fetchWithFallback } from "@/lib/api";
 import { toast } from "sonner";
@@ -26,7 +24,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001";
 
 export function StocksView() {
   const [items, setItems] = useState<InventoryItem[]>([]);
-  const [summary, setSummary] = useState<ChainStockSummary[]>([]);
+  const [summary, setSummary] = useState<ChainCargoSummary[]>([]);
   const [selectedChain, setSelectedChain] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [tempFilter, setTempFilter] = useState<string>("all");
@@ -34,11 +32,11 @@ export function StocksView() {
   const [refreshCount, setRefreshCount] = useState<number>(0);
   const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
 
-  // Fetch stocks and summaries
+  // Fetch items and summaries
   useEffect(() => {
     let ignore = false;
 
-    async function loadStockData() {
+    async function loadCatalogData() {
       setIsLoading(true);
       try {
         // Fetch summary
@@ -60,14 +58,14 @@ export function StocksView() {
           setItems(iData);
         }
       } catch (err) {
-        console.error("Failed to load inventory stock data:", err);
-        toast.error("Failed to load stock data");
+        console.error("Failed to load chain cargo catalog:", err);
+        toast.error("Failed to load chain cargo specifications");
       } finally {
         if (!ignore) setIsLoading(false);
       }
     }
 
-    loadStockData();
+    loadCatalogData();
 
     return () => {
       ignore = true;
@@ -75,22 +73,28 @@ export function StocksView() {
   }, [selectedChain, tempFilter, searchQuery, refreshCount]);
 
   // Aggregate current metrics
-  const activeSummary = useMemo(() => {
+  const activeMetrics = useMemo(() => {
     if (selectedChain === "all") {
       const totalSkus = summary.reduce((acc, c) => acc + c.total_skus, 0);
-      const totalQty = summary.reduce((acc, c) => acc + c.total_quantity, 0);
-      const totalWeight = summary.reduce((acc, c) => acc + c.total_weight_kg, 0);
-      const totalVol = summary.reduce((acc, c) => acc + c.total_volume_m3, 0);
-      const totalLow = summary.reduce((acc, c) => acc + c.low_stock_count, 0);
-      return { totalSkus, totalQty, totalWeight, totalVol, totalLow };
+      const chilledSkus = summary.reduce((acc, c) => acc + c.chilled_skus, 0);
+      const ambientSkus = summary.reduce((acc, c) => acc + c.ambient_skus, 0);
+      const totalWeightSum = summary.reduce((acc, c) => acc + c.avg_weight_kg * c.total_skus, 0);
+      const totalVolSum = summary.reduce((acc, c) => acc + c.avg_volume_m3 * c.total_skus, 0);
+      return {
+        totalSkus,
+        chilledSkus,
+        ambientSkus,
+        avgWeight: totalSkus > 0 ? (totalWeightSum / totalSkus).toFixed(2) : "0.00",
+        avgVolume: totalSkus > 0 ? (totalVolSum / totalSkus).toFixed(3) : "0.000",
+      };
     }
     const current = summary.find((c) => c.chain.toLowerCase() === selectedChain.toLowerCase());
     return {
       totalSkus: current?.total_skus || 0,
-      totalQty: current?.total_quantity || 0,
-      totalWeight: current?.total_weight_kg || 0,
-      totalVol: current?.total_volume_m3 || 0,
-      totalLow: current?.low_stock_count || 0,
+      chilledSkus: current?.chilled_skus || 0,
+      ambientSkus: current?.ambient_skus || 0,
+      avgWeight: current?.avg_weight_kg?.toFixed(2) || "0.00",
+      avgVolume: current?.avg_volume_m3?.toFixed(3) || "0.000",
     };
   }, [summary, selectedChain]);
 
@@ -98,12 +102,12 @@ export function StocksView() {
   const handleExportCsv = () => {
     const chainParam = selectedChain !== "all" ? `?chain=${encodeURIComponent(selectedChain)}` : "";
     window.open(`${API_BASE}/api/v1/inventory/export-csv${chainParam}`, "_blank");
-    toast.success(`Exporting stock data for ${selectedChain === "all" ? "all chains" : selectedChain}...`);
+    toast.success(`Exporting cargo specifications for ${selectedChain === "all" ? "all chains" : selectedChain}...`);
   };
 
   return (
     <div className="space-y-6">
-      {/* ── Subheader & Quick Chain Selector ── */}
+      {/* ── Subheader & Chain Selector ── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         {/* Chain Navigation Tabs */}
         <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-100 border border-slate-200/80 w-fit">
@@ -152,7 +156,7 @@ export function StocksView() {
           </button>
         </div>
 
-        {/* Import & Export Action Buttons */}
+        {/* Action Buttons */}
         <div className="flex items-center gap-2.5">
           <Button
             size="sm"
@@ -172,7 +176,7 @@ export function StocksView() {
             className="h-9 text-xs border-slate-200 text-slate-700 hover:bg-slate-50 gap-1.5"
           >
             <Download className="size-3.5 text-[#18385F]" />
-            Export CSV
+            Export Specs CSV
           </Button>
 
           <Button
@@ -186,59 +190,55 @@ export function StocksView() {
         </div>
       </div>
 
-      {/* ── Summary Metric Cards ── */}
+      {/* ── Logistics Cargo Metric Cards ── */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
           <div className="flex items-center gap-2 text-slate-500 text-xs font-medium mb-1">
             <Layers className="size-4 text-[#18385F]" />
             <span>Total SKUs</span>
           </div>
-          <div className="text-2xl font-bold text-slate-900">{activeSummary.totalSkus}</div>
+          <div className="text-2xl font-bold text-slate-900">{activeMetrics.totalSkus}</div>
           <p className="text-[11px] text-slate-400 mt-0.5">Catalogued products</p>
         </div>
 
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-          <div className="flex items-center gap-2 text-slate-500 text-xs font-medium mb-1">
-            <CheckCircle2 className="size-4 text-emerald-600" />
-            <span>Available Stock</span>
+          <div className="flex items-center gap-2 text-cyan-700 text-xs font-medium mb-1">
+            <Snowflake className="size-4 text-cyan-600" />
+            <span>Chilled Items</span>
           </div>
-          <div className="text-2xl font-bold text-emerald-700">
-            {activeSummary.totalQty.toLocaleString()}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">In-warehouse units</p>
+          <div className="text-2xl font-bold text-cyan-800">{activeMetrics.chilledSkus}</div>
+          <p className="text-[11px] text-slate-400 mt-0.5">Reefer transport required</p>
         </div>
 
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-          <div className="flex items-center gap-2 text-slate-500 text-xs font-medium mb-1">
-            <Weight className="size-4 text-indigo-600" />
-            <span>Stock Weight</span>
+          <div className="flex items-center gap-2 text-slate-600 text-xs font-medium mb-1">
+            <Sun className="size-4 text-amber-500" />
+            <span>Ambient Items</span>
+          </div>
+          <div className="text-2xl font-bold text-slate-900">{activeMetrics.ambientSkus}</div>
+          <p className="text-[11px] text-slate-400 mt-0.5">Standard transport</p>
+        </div>
+
+        <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
+          <div className="flex items-center gap-2 text-indigo-600 text-xs font-medium mb-1">
+            <Weight className="size-4" />
+            <span>Avg Unit Weight</span>
           </div>
           <div className="text-2xl font-bold text-slate-900">
-            {Math.round(activeSummary.totalWeight).toLocaleString()} <span className="text-sm font-semibold text-slate-500">kg</span>
+            {activeMetrics.avgWeight} <span className="text-sm font-semibold text-slate-500">kg</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">Aggregated payload</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">Payload per unit</p>
         </div>
 
         <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-          <div className="flex items-center gap-2 text-slate-500 text-xs font-medium mb-1">
-            <Box className="size-4 text-blue-600" />
-            <span>Stock Volume</span>
+          <div className="flex items-center gap-2 text-blue-600 text-xs font-medium mb-1">
+            <Box className="size-4" />
+            <span>Avg Unit Volume</span>
           </div>
           <div className="text-2xl font-bold text-slate-900">
-            {activeSummary.totalVol.toFixed(1)} <span className="text-sm font-semibold text-slate-500">m³</span>
+            {activeMetrics.avgVolume} <span className="text-sm font-semibold text-slate-500">m³</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">Estimated cubage</p>
-        </div>
-
-        <div className="p-4 rounded-xl border border-slate-200 bg-white shadow-xs">
-          <div className="flex items-center gap-2 text-amber-600 text-xs font-medium mb-1">
-            <AlertTriangle className="size-4" />
-            <span>Low Stock Alerts</span>
-          </div>
-          <div className={`text-2xl font-bold ${activeSummary.totalLow > 0 ? "text-amber-600" : "text-slate-900"}`}>
-            {activeSummary.totalLow}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-0.5">Below 50 units threshold</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">Cubage per unit</p>
         </div>
       </div>
 
@@ -286,11 +286,11 @@ export function StocksView() {
         </div>
 
         <div className="text-xs text-slate-500 font-medium">
-          Showing <span className="font-bold text-slate-900">{items.length}</span> stocked items
+          Showing <span className="font-bold text-slate-900">{items.length}</span> catalogued products
         </div>
       </div>
 
-      {/* ── Main Stock Inventory Table ── */}
+      {/* ── Main Cargo Specifications Table ── */}
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -299,33 +299,29 @@ export function StocksView() {
                 <th className="py-3 px-4">SKU</th>
                 <th className="py-3 px-4">Product Name</th>
                 <th className="py-3 px-4">Chain</th>
-                <th className="py-3 px-4 text-right">Available Units</th>
-                <th className="py-3 px-4">Temp Class</th>
+                <th className="py-3 px-4">Temp Requirement</th>
                 <th className="py-3 px-4 text-right">Unit Weight</th>
                 <th className="py-3 px-4 text-right">Unit Volume</th>
-                <th className="py-3 px-4 text-right">Price (LKR)</th>
-                <th className="py-3 px-4">Depot</th>
+                <th className="py-3 px-4">Origin Depot</th>
                 <th className="py-3 px-4 text-right">Last Updated</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
                     <RefreshCw className="size-6 animate-spin mx-auto mb-2 text-slate-300" />
-                    Loading inventory records...
+                    Loading product specifications...
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400">
-                    No inventory records match the selected filters.
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
+                    No product specifications match the selected filters.
                   </td>
                 </tr>
               ) : (
                 items.map((item) => {
-                  const isLow = item.quantity < 50;
-                  const isOut = item.quantity === 0;
                   const isChilled = item.temp_requirement?.toLowerCase() === "chilled";
 
                   let chainColor = "bg-slate-100 text-slate-700 border-slate-200";
@@ -336,25 +332,13 @@ export function StocksView() {
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-slate-900">{item.sku}</td>
-                      <td className="py-3 px-4 font-medium text-slate-900 max-w-[240px] truncate">
+                      <td className="py-3 px-4 font-medium text-slate-900 max-w-[280px] truncate">
                         {item.name}
                       </td>
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${chainColor}`}>
                           {item.chain || "General"}
                         </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <span
-                            className={`size-2 rounded-full ${
-                              isOut ? "bg-red-500" : isLow ? "bg-amber-500" : "bg-emerald-500"
-                            }`}
-                          />
-                          <span className={`font-bold ${isOut ? "text-red-600" : isLow ? "text-amber-700" : "text-slate-900"}`}>
-                            {item.quantity.toLocaleString()}
-                          </span>
-                        </div>
                       </td>
                       <td className="py-3 px-4">
                         <Badge
@@ -369,17 +353,14 @@ export function StocksView() {
                           {item.temp_requirement}
                         </Badge>
                       </td>
-                      <td className="py-3 px-4 text-right font-medium text-slate-700">
+                      <td className="py-3 px-4 text-right font-semibold text-slate-900">
                         {item.unit_weight_kg.toFixed(2)} kg
                       </td>
                       <td className="py-3 px-4 text-right font-medium text-slate-700">
                         {item.unit_volume_m3.toFixed(3)} m³
                       </td>
-                      <td className="py-3 px-4 text-right font-medium text-slate-900">
-                        {item.unit_price > 0 ? `LKR ${item.unit_price.toLocaleString()}` : "—"}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 truncate max-w-[140px]">
-                        {item.depot_name || "Peliyagoda"}
+                      <td className="py-3 px-4 text-slate-600 truncate max-w-[160px]">
+                        {item.depot_name || "Peliyagoda Central"}
                       </td>
                       <td className="py-3 px-4 text-right text-slate-400 font-mono text-[11px]">
                         {item.updated_at ? new Date(item.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "—"}

@@ -35,52 +35,52 @@ def create_warehouse(warehouse_in: WarehouseCreate, db: Session = Depends(deps.g
 @router.get("/summary", response_model=Dict[str, Any])
 def get_inventory_summary(db: Session = Depends(deps.get_db)):
     """
-    Returns aggregated metrics for the 3 chains (Fresh, Style, Tech) and total fleet stocks.
+    Returns aggregated cargo specifications for the 3 chains (Fresh, Style, Tech).
     """
     chains = ["fresh", "style", "tech"]
     chain_summaries = []
     
     total_skus = 0
-    total_quantity = 0
+    total_chilled = 0
+    total_ambient = 0
     total_weight = 0.0
     total_volume = 0.0
-    total_low_stock = 0
 
     for ch in chains:
         query = db.query(InventoryItem).filter(func.lower(InventoryItem.chain) == ch.lower())
         items = query.all()
         
         skus_cnt = len(items)
-        qty_sum = sum(i.quantity for i in items)
-        wt_sum = sum((i.unit_weight_kg or 0.0) * i.quantity for i in items)
-        vol_sum = sum((i.unit_volume_m3 or 0.0) * i.quantity for i in items)
-        low_stock = sum(1 for i in items if i.quantity < 50)
+        chilled_cnt = sum(1 for i in items if (i.temp_requirement or "").lower() == "chilled")
+        ambient_cnt = sum(1 for i in items if (i.temp_requirement or "").lower() != "chilled")
+        avg_wt = round(sum(i.unit_weight_kg or 0.0 for i in items) / max(skus_cnt, 1), 2)
+        avg_vol = round(sum(i.unit_volume_m3 or 0.0 for i in items) / max(skus_cnt, 1), 3)
         latest_upd = max((i.updated_at for i in items if i.updated_at), default=None)
 
         chain_summaries.append({
             "chain": ch.capitalize(),
             "total_skus": skus_cnt,
-            "total_quantity": qty_sum,
-            "total_weight_kg": round(wt_sum, 2),
-            "total_volume_m3": round(vol_sum, 2),
-            "low_stock_count": low_stock,
+            "chilled_skus": chilled_cnt,
+            "ambient_skus": ambient_cnt,
+            "avg_weight_kg": avg_wt,
+            "avg_volume_m3": avg_vol,
             "last_updated": latest_upd.isoformat() if latest_upd else None,
         })
 
         total_skus += skus_cnt
-        total_quantity += qty_sum
-        total_weight += wt_sum
-        total_volume += vol_sum
-        total_low_stock += low_stock
+        total_chilled += chilled_cnt
+        total_ambient += ambient_cnt
+        total_weight += sum(i.unit_weight_kg or 0.0 for i in items)
+        total_volume += sum(i.unit_volume_m3 or 0.0 for i in items)
 
     return {
         "chains": chain_summaries,
         "overall": {
             "total_skus": total_skus,
-            "total_quantity": total_quantity,
-            "total_weight_kg": round(total_weight, 2),
-            "total_volume_m3": round(total_volume, 2),
-            "total_low_stock": total_low_stock,
+            "chilled_skus": total_chilled,
+            "ambient_skus": total_ambient,
+            "avg_weight_kg": round(total_weight / max(total_skus, 1), 2),
+            "avg_volume_m3": round(total_volume / max(total_skus, 1), 3),
         }
     }
 
@@ -130,7 +130,7 @@ async def upload_stock_csv(
     db: Session = Depends(deps.get_db),
 ):
     """
-    Import stock updates from a CSV file for Fresh, Style, or Tech chains.
+    Import product handling specifications from a CSV file for Fresh, Style, or Tech chains.
     Rows are upserted by SKU.
     """
     if not file.filename.endswith(".csv"):
@@ -145,12 +145,6 @@ async def upload_stock_csv(
     reader = csv.DictReader(io.StringIO(text))
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="Empty or invalid CSV file")
-
-    # Normalize headers
-    header_map = {}
-    for h in reader.fieldnames:
-        cleaned = h.strip().lower().replace(" ", "_")
-        header_map[cleaned] = h
 
     # Determine default chain from filename or query param
     target_chain = chain
@@ -176,20 +170,6 @@ async def upload_stock_csv(
             continue
 
         name = row.get("name") or row.get("item_name") or row.get("description") or sku
-        
-        # Quantity
-        qty_str = row.get("quantity") or row.get("qty") or row.get("units") or row.get("stock") or "0"
-        try:
-            quantity = int(float(qty_str))
-        except ValueError:
-            quantity = 0
-
-        # Unit price
-        price_str = row.get("unit_price") or row.get("price") or "0.0"
-        try:
-            unit_price = float(price_str)
-        except ValueError:
-            unit_price = 0.0
 
         # Unit weight (kg)
         weight_str = row.get("unit_weight_kg") or row.get("weight_kg") or row.get("weight") or "1.0"
@@ -208,7 +188,6 @@ async def upload_stock_csv(
         # Temperature requirement
         temp_req = row.get("temp_requirement") or row.get("temperature_zone") or row.get("temp")
         if not temp_req:
-            # Default Chilled for certain Fresh items, else Ambient
             temp_req = "Chilled" if target_chain.lower() == "fresh" and any(k in sku.upper() for k in ["EGG", "ICE", "CHK", "BEEF", "FSH", "FRZ"]) else "Ambient"
 
         row_chain = row.get("chain") or target_chain
@@ -217,8 +196,6 @@ async def upload_stock_csv(
         existing = db.query(InventoryItem).filter(InventoryItem.sku == sku).first()
         if existing:
             existing.name = name
-            existing.quantity = quantity
-            existing.unit_price = unit_price
             existing.unit_weight_kg = unit_weight_kg
             existing.unit_volume_m3 = unit_volume_m3
             existing.temp_requirement = temp_req
@@ -230,8 +207,8 @@ async def upload_stock_csv(
             new_item = InventoryItem(
                 sku=sku,
                 name=name,
-                quantity=quantity,
-                unit_price=unit_price,
+                quantity=0,
+                unit_price=0.0,
                 unit_weight_kg=unit_weight_kg,
                 unit_volume_m3=unit_volume_m3,
                 temp_requirement=temp_req,
@@ -245,7 +222,7 @@ async def upload_stock_csv(
     db.commit()
 
     return {
-        "message": f"Successfully processed stock file '{file.filename}' for chain {target_chain.capitalize()}",
+        "message": f"Successfully processed cargo specifications file '{file.filename}' for chain {target_chain.capitalize()}",
         "chain": target_chain.capitalize(),
         "inserted": inserted_count,
         "updated": updated_count,
@@ -259,14 +236,14 @@ def export_stock_csv(
     db: Session = Depends(deps.get_db),
 ):
     """
-    Export current stock records to a downloadable CSV file.
+    Export current chain product cargo specifications to a downloadable CSV file.
     """
     query = db.query(InventoryItem)
     if chain and chain.lower() != "all":
         query = query.filter(func.lower(InventoryItem.chain) == chain.lower())
-        filename = f"{chain.lower()}_stocks_export.csv"
+        filename = f"{chain.lower()}_cargo_specs.csv"
     else:
-        filename = "all_chains_stocks_export.csv"
+        filename = "all_chains_cargo_specs.csv"
 
     items = query.order_by(InventoryItem.chain.asc(), InventoryItem.sku.asc()).all()
 
@@ -276,8 +253,6 @@ def export_stock_csv(
         "sku",
         "name",
         "chain",
-        "quantity",
-        "unit_price",
         "unit_weight_kg",
         "unit_volume_m3",
         "temp_requirement",
@@ -290,8 +265,6 @@ def export_stock_csv(
             item.sku,
             item.name,
             item.chain or "Unassigned",
-            item.quantity,
-            item.unit_price,
             item.unit_weight_kg,
             item.unit_volume_m3,
             item.temp_requirement,
