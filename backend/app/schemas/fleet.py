@@ -16,6 +16,9 @@ class VehicleBase(BaseModel):
     trips_today: int = 0
     trips_planned: int = 0
     maintenance_state: Optional[str] = None
+    fuel_type: str = "diesel"
+    km_per_l: float = 6.0
+    weekly_fuel_quota_l: float = 500.0
 
 class VehicleCreate(VehicleBase):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -61,6 +64,22 @@ class VehicleUpdate(BaseModel):
         if "status" in fields and self.status not in (VehicleStatus.AVAILABLE, VehicleStatus.UNAVAILABLE):
             raise ValueError("Allocation and loading statuses are managed by their workflows")
         return self
+
+class VehicleUpdate(BaseModel):
+    code: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    capacity_kg: Optional[float] = None
+    capacity_vol_m3: Optional[float] = None
+    status: Optional[VehicleStatus] = None
+    temperature_mode: Optional[str] = None
+    depot_name: Optional[str] = None
+    weekly_fuel_status: Optional[str] = None
+    trips_today: Optional[int] = None
+    trips_planned: Optional[int] = None
+    maintenance_state: Optional[str] = None
+    fuel_type: Optional[str] = None
+    km_per_l: Optional[float] = None
+    weekly_fuel_quota_l: Optional[float] = None
 
 class VehicleResponse(VehicleBase):
     id: int

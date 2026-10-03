@@ -14,7 +14,9 @@ from app.schemas.outlet import OutletCreate, OutletRead, OutletUpdate
 from fastapi.responses import Response
 from pydantic import BaseModel
 from app.api import deps
+from app.models.reference import Outlet, Brand, Depot, DockType
 from app.schemas.outlet_settings import OutletSettingsRead, OutletSettingsUpdate
+from app.schemas.admin import OutletRead, OutletCreate, OutletUpdate
 from app.services.outlet_service import outlet_service
 
 router = APIRouter()
