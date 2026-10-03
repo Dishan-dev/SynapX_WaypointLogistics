@@ -31,15 +31,33 @@ function messageFrom(detail: unknown, fallback: string) {
   return fallback;
 }
 
+const CANDIDATE_URLS = [
+  API_URL,
+  "http://localhost:8000",
+  "http://localhost:5000",
+].filter(Boolean);
+
+let activeBaseUrl: string = API_URL;
+
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_URL}/api/v1${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...init.headers },
-      cache: "no-store",
-    });
-  } catch {
+  let response: Response | null = null;
+  const urlsToTry = Array.from(new Set([activeBaseUrl, ...CANDIDATE_URLS]));
+
+  for (const baseUrl of urlsToTry) {
+    try {
+      response = await fetch(`${baseUrl}/api/v1${path}`, {
+        ...init,
+        headers: { "Content-Type": "application/json", ...init.headers },
+        cache: "no-store",
+      });
+      activeBaseUrl = baseUrl;
+      break;
+    } catch {
+      // Try next candidate
+    }
+  }
+
+  if (!response) {
     throw new ApiError("Couldn't reach the Waypoint server. Check your connection and try again.", 0);
   }
 

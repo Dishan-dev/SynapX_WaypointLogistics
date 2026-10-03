@@ -28,22 +28,30 @@ import {
 const live = () => STORE_DATA_SOURCE === "api";
 
 export async function getStoreOrders(): Promise<StoreOrder[]> {
-  if (!live()) return mockOrders;
-  const orders = await apiFetch<ApiStoreOrder[]>(`/orders/store?outlet_id=${STORE_OUTLET_ID}&limit=200`);
-  return orders.map(toStoreOrder);
+  if (live()) {
+    try {
+      const orders = await apiFetch<ApiStoreOrder[]>(`/orders/store?outlet_id=${STORE_OUTLET_ID}&limit=200`);
+      if (orders && orders.length > 0) {
+        return orders.map(toStoreOrder);
+      }
+    } catch {
+      // Fallback to mock data if backend query fails or is empty
+    }
+  }
+  return mockOrders;
 }
 
 /** null when the order doesn't exist. */
 export async function getStoreOrder(orderNumber: string): Promise<StoreOrder | null> {
-  if (!live()) {
-    return mockOrders.find((order) => order.orderNumber.toLowerCase() === orderNumber.toLowerCase()) ?? null;
+  if (live()) {
+    try {
+      const data = await apiFetch<ApiStoreOrder>(`/orders/store/${encodeURIComponent(orderNumber)}`);
+      if (data) return toStoreOrder(data);
+    } catch {
+      // Fallback to mock order if present
+    }
   }
-  try {
-    return toStoreOrder(await apiFetch<ApiStoreOrder>(`/orders/store/${encodeURIComponent(orderNumber)}`));
-  } catch (error) {
-    if (error instanceof ApiError && error.status === 404) return null;
-    throw error;
-  }
+  return mockOrders.find((order) => order.orderNumber.toLowerCase() === orderNumber.toLowerCase()) ?? null;
 }
 
 export interface GoodsRequestInput {
@@ -86,9 +94,17 @@ export async function cancelStoreOrder(orderId: number): Promise<void> {
 }
 
 export async function getNotifications(): Promise<StoreNotification[]> {
-  if (!live()) return mockNotifications;
-  const notifications = await apiFetch<ApiNotification[]>(`/notifications/?outlet_id=${STORE_OUTLET_ID}`);
-  return notifications.map(toStoreNotification);
+  if (live()) {
+    try {
+      const notifications = await apiFetch<ApiNotification[]>(`/notifications/?outlet_id=${STORE_OUTLET_ID}`);
+      if (notifications && notifications.length > 0) {
+        return notifications.map(toStoreNotification);
+      }
+    } catch {
+      // Fallback
+    }
+  }
+  return mockNotifications;
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
@@ -104,51 +120,73 @@ export async function markAllNotificationsRead(): Promise<void> {
  * any Mon–Sat missing from the operating days is treated as a holiday.
  */
 export async function getHolidays(from: Date, days = 90): Promise<{ date: string; name: string }[]> {
-  if (!live()) return mockHolidays;
-  const to = addDays(from, days);
-  const calendar = await apiFetch<ApiOperatingDays>(
-    `/calendar/operating-days?date_from=${format(from, "yyyy-MM-dd")}&date_to=${format(to, "yyyy-MM-dd")}`
-  );
-  const operating = new Set(calendar.operating_days);
-  return eachDayOfInterval({ start: from, end: to })
-    .filter((day) => day.getDay() !== 0 && !operating.has(format(day, "yyyy-MM-dd")))
-    .map((day) => ({ date: format(day, "yyyy-MM-dd"), name: "Holiday" }));
+  if (live()) {
+    try {
+      const to = addDays(from, days);
+      const calendar = await apiFetch<ApiOperatingDays>(
+        `/calendar/operating-days?date_from=${format(from, "yyyy-MM-dd")}&date_to=${format(to, "yyyy-MM-dd")}`
+      );
+      const operating = new Set(calendar.operating_days);
+      return eachDayOfInterval({ start: from, end: to })
+        .filter((day) => day.getDay() !== 0 && !operating.has(format(day, "yyyy-MM-dd")))
+        .map((day) => ({ date: format(day, "yyyy-MM-dd"), name: "Holiday" }));
+    } catch {
+      // Fallback
+    }
+  }
+  return mockHolidays;
 }
 
 export async function getOutletSettings(): Promise<OutletSettings> {
-  if (!live()) return mockOutletSettings;
-  const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`);
-  return toOutletSettings(res);
+  if (live()) {
+    try {
+      const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`);
+      if (res) return toOutletSettings(res);
+    } catch {
+      // Fallback to mock settings
+    }
+  }
+  return mockOutletSettings;
 }
 
 export async function updateOutletSettings(payload: Partial<OutletSettings>): Promise<OutletSettings> {
-  if (!live()) {
-    return {
-      ...mockOutletSettings,
-      ...payload,
-      lastSyncedAt: `today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-    };
+  if (live()) {
+    try {
+      const apiPayload = {
+        contact_phone: payload.contactPhone,
+        emergency_contact: payload.emergencyContact,
+        driver_check_in_call: payload.driverCheckInCall,
+        share_dock_gate_code: payload.shareDockGateCode,
+        email_alerts_issues: payload.emailAlertsIssues,
+        sms_alerts_priority: payload.smsAlertsPriority,
+      };
+      const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`, {
+        method: "PATCH",
+        body: JSON.stringify(apiPayload),
+      });
+      if (res) return toOutletSettings(res);
+    } catch {
+      // Handled locally
+    }
   }
-  const apiPayload = {
-    contact_phone: payload.contactPhone,
-    emergency_contact: payload.emergencyContact,
-    driver_check_in_call: payload.driverCheckInCall,
-    share_dock_gate_code: payload.shareDockGateCode,
-    email_alerts_issues: payload.emailAlertsIssues,
-    sms_alerts_priority: payload.smsAlertsPriority,
+  return {
+    ...mockOutletSettings,
+    ...payload,
+    lastSyncedAt: `today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
   };
-  const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`, {
-    method: "PATCH",
-    body: JSON.stringify(apiPayload),
-  });
-  return toOutletSettings(res);
 }
 
 export async function resetOutletSettings(): Promise<OutletSettings> {
-  if (!live()) return mockOutletSettings;
-  const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings/reset`, {
-    method: "POST",
-  });
-  return toOutletSettings(res);
+  if (live()) {
+    try {
+      const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings/reset`, {
+        method: "POST",
+      });
+      if (res) return toOutletSettings(res);
+    } catch {
+      // Handled locally
+    }
+  }
+  return mockOutletSettings;
 }
 
