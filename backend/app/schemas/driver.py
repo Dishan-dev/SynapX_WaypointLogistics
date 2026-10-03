@@ -1,7 +1,15 @@
-from typing import List, Optional
-from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from typing import List, Optional, Annotated
+from datetime import datetime, timezone
+from pydantic import BaseModel, ConfigDict, PlainSerializer
 from app.models.driver import DriverTripStatus, DeliveryStopStatus, IssueType, IssueStatus, SOSStatus
+
+# Columns are stored as naive UTC (no DB timezone column, to avoid a migration
+# on the shared Neon DB). Stamp UTC back on before serializing so clients don't
+# misread the naive value as local time.
+def _as_utc(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+UTCDateTime = Annotated[datetime, PlainSerializer(_as_utc, return_type=datetime)]
 
 
 class ProofOfDeliveryBase(BaseModel):
@@ -16,7 +24,7 @@ class ProofOfDeliveryCreate(ProofOfDeliveryBase):
 class ProofOfDeliveryRead(ProofOfDeliveryBase):
     id: int
     stop_id: int
-    created_at: datetime
+    created_at: UTCDateTime
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -37,9 +45,9 @@ class DeliveryStopRead(DeliveryStopBase):
     id: int
     driver_trip_id: int
     shipment_id: Optional[int]
-    arrived_at: Optional[datetime]
-    completed_at: Optional[datetime]
-    created_at: datetime
+    arrived_at: Optional[UTCDateTime]
+    completed_at: Optional[UTCDateTime]
+    created_at: UTCDateTime
     pod: Optional[ProofOfDeliveryRead] = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -79,11 +87,11 @@ class DriverTripSummary(DriverTripBase):
     id: int
     driver_id: int
     dispatch_trip_id: int
-    assigned_date: datetime
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
-    created_at: datetime
-    
+    assigned_date: UTCDateTime
+    started_at: Optional[UTCDateTime]
+    completed_at: Optional[UTCDateTime]
+    created_at: UTCDateTime
+
     # Can add fields like stop_count or completed_stops via computed fields if needed
     model_config = ConfigDict(from_attributes=True)
 
@@ -104,7 +112,7 @@ class IssueReportRead(IssueReportBase):
     driver_trip_id: int
     stop_id: Optional[int]
     status: IssueStatus
-    created_at: datetime
+    created_at: UTCDateTime
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -121,8 +129,8 @@ class SOSAlertRead(SOSAlertBase):
     driver_id: int
     driver_trip_id: Optional[int]
     status: SOSStatus
-    triggered_at: datetime
-    acknowledged_at: Optional[datetime]
+    triggered_at: UTCDateTime
+    acknowledged_at: Optional[UTCDateTime]
     model_config = ConfigDict(from_attributes=True)
 
 
