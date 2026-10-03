@@ -321,6 +321,8 @@ def list_admin_users(
             query = query.filter(User.role == UserRole.WAREHOUSE_MANAGER)
         elif role_upper in UserRole.__members__:
             query = query.filter(User.role == UserRole[role_upper])
+        elif role_upper == "LOADER":
+            query = query.filter(User.id == -1)
 
     if q:
         search_pattern = f"%{q}%"
@@ -377,13 +379,52 @@ def create_admin_user(
     user_in: AdminUserCreate,
     db: Session = Depends(deps.get_db),
 ) -> Any:
+    # Check role
+    role_str = user_in.role.upper()
+
+    if role_str == "LOADER":
+        short_name = user_in.full_name.split()[0] if user_in.full_name else "Loader"
+        pin_digits = "".join(c for c in (user_in.password or "") if c.isdigit())
+        if len(pin_digits) < 4:
+            pin_digits = "1234"
+        else:
+            pin_digits = pin_digits[:4]
+
+        new_loader = LoaderUser(
+            full_name=user_in.full_name,
+            short_name=short_name,
+            pin_hash=security.get_password_hash(pin_digits),
+            is_active=user_in.is_active,
+        )
+        db.add(new_loader)
+        db.commit()
+        db.refresh(new_loader)
+
+        record_audit(
+            action_type="USER_MUTATION",
+            entity_name="Loader Account",
+            entity_id=str(10000 + new_loader.id),
+            summary=f"Created loader worker {new_loader.full_name} ({short_name}).",
+            severity="INFO",
+        )
+
+        return AdminUserRead(
+            id=10000 + new_loader.id,
+            email=user_in.email or f"{short_name.lower().replace(' ', '.')}@dock.waypoint.com",
+            full_name=new_loader.full_name,
+            role="LOADER",
+            role_display="Loader",
+            is_active=new_loader.is_active,
+            created_at=new_loader.created_at,
+            updated_at=new_loader.created_at,
+        )
+
     # Check if user already exists
     existing = db.query(User).filter(User.email == user_in.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="User with this email already exists.")
 
     # Map role
-    role_str = user_in.role.upper()
     if role_str == "STORE_MANAGER":
         target_role = UserRole.WAREHOUSE_MANAGER
     elif role_str in UserRole.__members__:
@@ -431,6 +472,49 @@ def update_admin_user(
     user_in: AdminUserUpdate,
     db: Session = Depends(deps.get_db),
 ) -> Any:
+    if user_id >= 10000:
+        loader_id = user_id - 10000
+        loader = db.query(LoaderUser).filter(LoaderUser.id == loader_id).first()
+        if not loader:
+            raise HTTPException(status_code=404, detail="Loader not found.")
+
+        diff = {}
+        if user_in.full_name is not None and user_in.full_name != loader.full_name:
+            diff["full_name"] = {"old": loader.full_name, "new": user_in.full_name}
+            loader.full_name = user_in.full_name
+            loader.short_name = user_in.full_name.split()[0]
+        if user_in.is_active is not None and user_in.is_active != loader.is_active:
+            diff["is_active"] = {"old": loader.is_active, "new": user_in.is_active}
+            loader.is_active = user_in.is_active
+        if user_in.password:
+            pin_digits = "".join(c for c in user_in.password if c.isdigit())
+            if len(pin_digits) >= 4:
+                loader.pin_hash = security.get_password_hash(pin_digits[:4])
+                diff["pin"] = "Updated"
+
+        db.commit()
+        db.refresh(loader)
+
+        record_audit(
+            action_type="USER_MUTATION",
+            entity_name="Loader Account",
+            entity_id=str(user_id),
+            summary=f"Updated details for loader {loader.full_name}.",
+            severity="INFO",
+            diff=diff,
+        )
+
+        return AdminUserRead(
+            id=user_id,
+            email=user_in.email or f"{loader.short_name.lower().replace(' ', '.')}@dock.waypoint.com",
+            full_name=loader.full_name,
+            role="LOADER",
+            role_display="Loader",
+            is_active=loader.is_active,
+            created_at=loader.created_at,
+            updated_at=loader.created_at,
+        )
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -450,7 +534,12 @@ def update_admin_user(
 
     if user_in.role is not None:
         role_str = user_in.role.upper()
-        target_role = UserRole.WAREHOUSE_MANAGER if role_str == "STORE_MANAGER" else UserRole.get(role_str, user.role)
+        if role_str == "STORE_MANAGER":
+            target_role = UserRole.WAREHOUSE_MANAGER
+        elif role_str in UserRole.__members__:
+            target_role = UserRole[role_str]
+        else:
+            target_role = user.role
         if target_role != user.role:
             diff["role"] = {"old": str(user.role), "new": str(target_role)}
             user.role = target_role
@@ -492,6 +581,36 @@ def toggle_admin_user_status(
     status_in: UserStatusToggle,
     db: Session = Depends(deps.get_db),
 ) -> Any:
+    if user_id >= 10000:
+        loader_id = user_id - 10000
+        loader = db.query(LoaderUser).filter(LoaderUser.id == loader_id).first()
+        if not loader:
+            raise HTTPException(status_code=404, detail="Loader not found.")
+
+        loader.is_active = status_in.is_active
+        db.commit()
+        db.refresh(loader)
+
+        status_str = "ENABLED" if loader.is_active else "DISABLED"
+        record_audit(
+            action_type="USER_MUTATION",
+            entity_name="Loader Account",
+            entity_id=str(user_id),
+            summary=f"Loader {loader.full_name} account was {status_str}.",
+            severity="WARNING" if not loader.is_active else "INFO",
+        )
+
+        return AdminUserRead(
+            id=user_id,
+            email=f"{loader.short_name.lower().replace(' ', '.')}@dock.waypoint.com",
+            full_name=loader.full_name,
+            role="LOADER",
+            role_display="Loader",
+            is_active=loader.is_active,
+            created_at=loader.created_at,
+            updated_at=loader.created_at,
+        )
+
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")

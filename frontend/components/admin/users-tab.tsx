@@ -313,7 +313,6 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
                       <Switch
                         checked={user.is_active}
                         onCheckedChange={() => handleToggleStatus(user)}
-                        disabled={user.role === "LOADER"}
                       />
                       <span className={`text-[11px] font-medium ${user.is_active ? "text-emerald-700" : "text-muted-foreground"}`}>
                         {user.is_active ? "Active" : "Disabled"}
@@ -391,13 +390,16 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">Initial Password</Label>
+              <Label className="text-xs">
+                {createForm.role === "LOADER" ? "Dock Tablet PIN (4 digits)" : "Initial Password"}
+              </Label>
               <div className="relative">
                 <Lock className="absolute left-3 top-2.5 size-3.5 text-muted-foreground" />
                 <Input
-                  type="password"
+                  type={createForm.role === "LOADER" ? "text" : "password"}
+                  maxLength={createForm.role === "LOADER" ? 4 : undefined}
                   className="pl-8 text-xs"
-                  placeholder="Temporary password"
+                  placeholder={createForm.role === "LOADER" ? "e.g. 1234 (4 digits)" : "Temporary password"}
                   value={createForm.password}
                   onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
                   required
@@ -416,6 +418,7 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="DISPATCHER">Dispatcher (Route Planning &amp; Trips)</SelectItem>
+                  <SelectItem value="LOADER">Loader (Dock Loading &amp; Dispatch Scan)</SelectItem>
                   <SelectItem value="STORE_MANAGER">Store Manager (Store Orders &amp; Receipts)</SelectItem>
                   <SelectItem value="DRIVER">Driver (Navigation &amp; Proof of Delivery)</SelectItem>
                   <SelectItem value="ADMIN">System Administrator (Full Access)</SelectItem>
@@ -503,12 +506,14 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
               <Select
                 value={editForm.role}
                 onValueChange={(val) => setEditForm({ ...editForm, role: val })}
+                disabled={selectedUser?.role === "LOADER"}
               >
                 <SelectTrigger className="text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="DISPATCHER">Dispatcher</SelectItem>
+                  <SelectItem value="LOADER">Loader (Dock Tablet)</SelectItem>
                   <SelectItem value="STORE_MANAGER">Store Manager</SelectItem>
                   <SelectItem value="DRIVER">Driver</SelectItem>
                   <SelectItem value="ADMIN">System Administrator</SelectItem>
@@ -517,11 +522,14 @@ export function UsersTab({ users, isLoading, onRefresh }: UsersTabProps) {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs">New Password (Optional)</Label>
+              <Label className="text-xs">
+                {selectedUser?.role === "LOADER" ? "New 4-digit PIN (Optional)" : "New Password (Optional)"}
+              </Label>
               <Input
-                type="password"
+                type={selectedUser?.role === "LOADER" ? "text" : "password"}
+                maxLength={selectedUser?.role === "LOADER" ? 4 : undefined}
                 className="text-xs"
-                placeholder="Leave blank to keep existing password"
+                placeholder={selectedUser?.role === "LOADER" ? "Leave blank to keep existing PIN" : "Leave blank to keep existing password"}
                 value={editForm.password}
                 onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
               />

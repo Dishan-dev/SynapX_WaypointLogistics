@@ -151,17 +151,23 @@ export function RolesTab({ roles, users, isLoading, onRefresh }: RolesTabProps) 
 
             <div className="p-3 border-t border-border bg-slate-50/50 rounded-b-lg flex items-center justify-between">
               <span className="text-[11px] text-muted-foreground font-mono">
-                Keycloak / RBAC mapped
+                {role.key === "LOADER" ? "Dock Tablet / PIN Auth" : "Keycloak / RBAC mapped"}
               </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openAssignForRole(role.key)}
-                className="text-xs font-semibold text-primary h-7 gap-1 bg-white border-border"
-              >
-                <span>Assign User</span>
-                <ArrowRight className="size-3" />
-              </Button>
+              {role.key === "LOADER" ? (
+                <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded border border-border">
+                  Managed in Users
+                </span>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openAssignForRole(role.key)}
+                  className="text-xs font-semibold text-primary h-7 gap-1 bg-white border-border"
+                >
+                  <span>Assign User</span>
+                  <ArrowRight className="size-3" />
+                </Button>
+              )}
             </div>
           </Card>
         ))}
