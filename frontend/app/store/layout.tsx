@@ -6,6 +6,7 @@ import { StoreSidebar } from "@/components/store/store-sidebar";
 import { StoreTopBar } from "@/components/store/store-top-bar";
 import { StoreMobileAppBar } from "@/components/store/store-mobile-app-bar";
 import { StoreBottomNav } from "@/components/store/store-bottom-nav";
+import { ServiceWorkerCleanup } from "@/components/store/sw-cleanup";
 
 // Store pages read live data when NEXT_PUBLIC_STORE_DATA_SOURCE=api, so render them per request.
 export const dynamic = "force-dynamic";
@@ -18,6 +19,7 @@ export default function StoreLayout({ children }: LayoutProps<"/store">) {
   return (
     // 15rem instead of Figma's 220px so "Incoming Deliveries" and "Exceptions & Issues" fit without truncating.
     <SidebarProvider style={{ "--sidebar-width": "15rem" } as CSSProperties}>
+      <ServiceWorkerCleanup />
       <StoreSidebar />
       <SidebarInset className="min-w-0 bg-background">
         <StoreMobileAppBar />

@@ -34,7 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { StoreSectionCard } from "@/components/store/store-cards";
 import { StorePill } from "@/components/store/status-pill";
-import { submitDeliveryReceipt, ReceiptCreatePayload } from "@/services/api";
+import { submitDeliveryReceipt, getDeliveryReceipt, ReceiptCreatePayload, DeliveryReceipt } from "@/services/api";
 import { saveIssue } from "@/services/issues-store";
 import { mockOrders, StoreOrder } from "@/components/store/mock-data";
 import { getStoreOrder } from "@/components/store/api/store-data";
@@ -66,6 +66,7 @@ export default function DeliveryDetailsAndReceivingPage({
   const [matchedOrder, setMatchedOrder] = useState<StoreOrder | null>(() => {
     return mockOrders.find((o) => o.orderNumber.toLowerCase() === rawOrderId.toLowerCase()) ?? null;
   });
+  const [existingReceipt, setExistingReceipt] = useState<DeliveryReceipt | null>(null);
 
   const orderNumber = matchedOrder?.orderNumber || rawOrderId;
   const vehicleId = matchedOrder?.vehicleCode || matchedOrder?.vehicle?.code || "VEH001";
@@ -131,7 +132,10 @@ export default function DeliveryDetailsAndReceivingPage({
   useEffect(() => {
     async function loadLiveOrder() {
       try {
-        const orderData = await getStoreOrder(rawOrderId);
+        const [orderData, receiptData] = await Promise.all([
+          getStoreOrder(rawOrderId),
+          getDeliveryReceipt(rawOrderId),
+        ]);
         if (orderData) {
           setMatchedOrder(orderData);
           if (orderData.items && orderData.items.length > 0) {
@@ -149,12 +153,31 @@ export default function DeliveryDetailsAndReceivingPage({
             );
           }
         }
+        if (receiptData) {
+          setExistingReceipt(receiptData);
+        }
       } catch {
         // Fallback to initial mock/defaults
       }
     }
     loadLiveOrder();
   }, [rawOrderId]);
+
+  const isCompleted = matchedOrder?.status === "completed" || !!existingReceipt;
+  const isDelivered = matchedOrder?.status === "delivered";
+  const isDispatched = matchedOrder?.status === "dispatched";
+  const isReady = matchedOrder?.status === "ready_for_dispatch" || matchedOrder?.status === "allocated" || matchedOrder?.status === "processing";
+
+  const stepperSteps = [
+    { label: "Planned", time: "24 Sep • Scheduled", done: true, current: false },
+    { label: "Assigned", time: `${vehicleId}`, done: isReady || isDispatched || isDelivered || isCompleted, current: !isReady && !isDispatched && !isDelivered && !isCompleted },
+    { label: "In Transit", time: isDispatched || isDelivered || isCompleted ? "05:15 AM" : "En route", done: isDispatched || isDelivered || isCompleted, current: isDispatched && !isDelivered && !isCompleted },
+    { label: "Arrived", time: isDelivered || isCompleted ? "Dock 2" : "06:08 AM", done: isDelivered || isCompleted, current: isDelivered && !isCompleted },
+    { label: "Receiving", time: isCompleted ? "Verified & signed" : "Intake in progress", done: isCompleted, current: !isCompleted && (isDelivered || (!isDispatched && !isReady)) },
+    { label: "Completed", time: isCompleted ? "Receipt Confirmed" : "Awaiting sign-off", done: isCompleted, current: isCompleted },
+  ];
+  const activeStepIndex = stepperSteps.findIndex((s) => s.current);
+  const currentStepNum = activeStepIndex >= 0 ? activeStepIndex + 1 : (isCompleted ? 6 : 5);
 
   const [sealVerified, setSealVerified] = useState(true);
   const [tempVerified, setTempVerified] = useState(true);
@@ -414,7 +437,15 @@ export default function DeliveryDetailsAndReceivingPage({
               Delivery {orderNumber}
             </h1>
             <div className="flex flex-wrap gap-2">
-              <StorePill tone="warning">At Dock</StorePill>
+              {isCompleted ? (
+                <StorePill tone="success">Completed</StorePill>
+              ) : isDelivered ? (
+                <StorePill tone="warning">At Dock (Receiving)</StorePill>
+              ) : isDispatched ? (
+                <StorePill tone="info">In Transit</StorePill>
+              ) : (
+                <StorePill tone="neutral">{matchedOrder?.status || "Processing"}</StorePill>
+              )}
               <StorePill tone="brand">Fresh</StorePill>
               {matchedOrder?.temperatureClass === "chilled" ? (
                 <StorePill tone="info" className="gap-1">
@@ -432,15 +463,28 @@ export default function DeliveryDetailsAndReceivingPage({
         </div>
 
         <div className="flex shrink-0 flex-col gap-3 md:flex-row md:gap-4 print:hidden">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => setShowRejectModal(true)}
-            className="h-11 px-4 text-base font-bold text-destructive hover:bg-destructive-muted hover:text-destructive md:h-10"
-          >
-            <XCircle className="size-4 mr-1.5" />
-            <span>Reject Delivery</span>
-          </Button>
+          {!isCompleted && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setShowRejectModal(true)}
+              className="h-11 px-4 text-base font-bold text-destructive hover:bg-destructive-muted hover:text-destructive md:h-10"
+            >
+              <XCircle className="size-4 mr-1.5" />
+              <span>Reject Delivery</span>
+            </Button>
+          )}
+          {isCompleted && (
+            <Button
+              asChild
+              className="h-10 px-4 text-base font-bold bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <Link href={`/store/receipt/${orderNumber}`}>
+                <Printer className="size-4 mr-1.5" />
+                <span>View Receipt</span>
+              </Link>
+            </Button>
+          )}
           <Button
             asChild
             variant="outline"
@@ -459,19 +503,12 @@ export default function DeliveryDetailsAndReceivingPage({
         description="Active shipment milestones from Peliyagoda Hub to store receiving dock"
         action={
           <span className="text-sm font-medium text-muted-foreground">
-            Step 5 of 6 &bull; Intake in progress
+            Step {currentStepNum} of 6 &bull; {isCompleted ? "Completed" : isDelivered ? "Intake in progress" : isDispatched ? "In transit to store" : "Processing"}
           </span>
         }
       >
         <ol className="flex flex-col gap-4 md:flex-row">
-          {[
-            { label: "Planned", time: "24 Sep • Scheduled", done: true, current: false },
-            { label: "Assigned", time: `25 Sep • ${vehicleId}`, done: true, current: false },
-            { label: "In Transit", time: "Today, 05:15", done: true, current: false },
-            { label: "Arrived", time: "Today, 06:08 • Dock", done: true, current: false },
-            { label: "Receiving", time: "Intake in progress", done: false, current: true },
-            { label: "Completed", time: "Awaiting sign-off", done: false, current: false },
-          ].map((step, index) => (
+          {stepperSteps.map((step, index) => (
             <li
               key={step.label}
               aria-current={step.current ? "step" : undefined}
@@ -576,248 +613,328 @@ export default function DeliveryDetailsAndReceivingPage({
               </label>
             </div>
           </div>
-        </StoreSectionCard>
-      </div>
+        </StoreSectionCard>      {/* Item Intake Verification Section or Completed Read-Only Summary */}
+      {isCompleted ? (
+        <StoreSectionCard
+          title="Delivery Intake Confirmed"
+          description={`Consignment ${orderNumber} has been verified and accepted into store inventory.`}
+          action={
+            <div className="flex items-center gap-2">
+              <StorePill tone="success">Intake Complete</StorePill>
+            </div>
+          }
+        >
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl bg-success-muted/30 border border-success/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-success text-success-foreground flex items-center justify-center font-bold shrink-0">
+                  <CheckCircle2 className="size-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-foreground">Official Delivery Receipt Registered</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Received {totalReceived} of {totalSent} total units into store inventory.
+                  </p>
+                </div>
+              </div>
+              <Button asChild size="default" className="bg-primary text-primary-foreground font-bold hover:bg-primary/90 shrink-0">
+                <Link href={`/store/receipt/${orderNumber}`}>
+                  <Printer className="size-4 mr-1.5" />
+                  <span>View Digital Receipt</span>
+                </Link>
+              </Button>
+            </div>
 
-      {/* Item Intake Verification Section */}
-      <StoreSectionCard
-        title="Item Intake Verification"
-        description={`Count each consignment item against ${orderNumber}, mark condition, and attach photo evidence for discrepancies.`}
-        action={
-          <div className="text-sm font-bold">
-            Received: <span className={totalReceived < totalSent ? "text-warning" : "text-foreground"}>{totalReceived}</span> / {totalSent} units
-          </div>
-        }
-      >
-        <div className="space-y-4">
-          {items.map((item) => {
-            const hasDiscrepancy = item.condition !== "good" || item.receivedUnits !== item.sentUnits;
-
-            return (
-              <div
-                key={item.id}
-                className={`rounded-xl border transition-all p-4 sm:p-5 space-y-4 ${
-                  hasDiscrepancy
-                    ? "border-warning/60 bg-warning-muted/20"
-                    : "border-border bg-card"
-                }`}
-              >
-                {/* Main Item Row */}
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-base text-foreground">{item.name}</span>
-                      <span className="text-xs font-mono px-2 py-0.5 bg-muted rounded text-muted-foreground font-semibold">
-                        {item.sku}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        &bull; Sent: <strong className="text-foreground">{item.sentUnits} cases</strong>
-                      </span>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Category: {item.category}
-                    </div>
+            <div className="divide-y divide-border border rounded-xl bg-card overflow-hidden">
+              <div className="p-3 bg-muted/40 text-[11px] font-bold uppercase tracking-wider text-muted-foreground grid grid-cols-12 gap-2">
+                <div className="col-span-6">Item &amp; SKU</div>
+                <div className="col-span-3 text-center">Received / Sent</div>
+                <div className="col-span-3 text-right">Condition</div>
+              </div>
+              {items.map((item) => (
+                <div key={item.id} className="p-3.5 text-xs grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-6 space-y-0.5">
+                    <div className="font-bold text-foreground">{item.name}</div>
+                    <div className="text-[11px] font-mono text-muted-foreground">{item.sku}</div>
                   </div>
-
-                  <div className="flex items-center gap-3 self-end lg:self-auto flex-wrap">
-                    {/* Received Quantity Stepper */}
-                    <div className="flex items-center gap-1.5 bg-background border border-border rounded-lg p-1">
-                      <span className="text-xs font-semibold text-muted-foreground px-2">Received:</span>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateUnits(item.id, -1)}
-                        className="w-8 h-8 rounded bg-muted hover:bg-muted/80 flex items-center justify-center font-bold text-sm cursor-pointer"
-                      >
-                        <Minus className="size-3.5" />
-                      </button>
-                      <input
-                        type="number"
-                        min="0"
-                        value={item.receivedUnits}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value, 10) || 0;
-                          setItems((prev) =>
-                            prev.map((it) => (it.id === item.id ? { ...it, receivedUnits: val } : it))
-                          );
-                        }}
-                        className="w-12 text-center font-bold text-base text-foreground bg-transparent border-0 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateUnits(item.id, 1)}
-                        className="w-8 h-8 rounded bg-muted hover:bg-muted/80 flex items-center justify-center font-bold text-sm cursor-pointer"
-                      >
-                        <Plus className="size-3.5" />
-                      </button>
-                    </div>
-
-                    {/* Segmented Condition Selector */}
-                    <div className="flex items-center bg-background border border-border rounded-lg p-1 gap-1 text-xs">
-                      {[
-                        { key: "good", label: "Good" },
-                        { key: "damaged", label: "Damaged" },
-                        { key: "missing", label: "Missing" },
-                        { key: "incorrect", label: "Incorrect" },
-                      ].map((c) => {
-                        const isSelected = item.condition === c.key;
-                        let activeClass = "bg-primary text-primary-foreground";
-                        if (c.key === "good") activeClass = "bg-success text-success-foreground font-bold";
-                        if (c.key === "damaged") activeClass = "bg-destructive text-destructive-foreground font-bold";
-                        if (c.key === "missing") activeClass = "bg-warning text-warning-foreground font-bold";
-                        if (c.key === "incorrect") activeClass = "bg-info text-info-foreground font-bold";
-
-                        return (
-                          <button
-                            key={c.key}
-                            type="button"
-                            onClick={() => handleSetCondition(item.id, c.key as any)}
-                            className={`px-3 py-1.5 rounded-md font-medium transition-colors cursor-pointer ${
-                              isSelected
-                                ? activeClass
-                                : "text-muted-foreground hover:bg-muted"
-                            }`}
-                          >
-                            {c.label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                  <div className="col-span-3 text-center font-semibold text-foreground">
+                    {item.receivedUnits} / {item.sentUnits} cases
+                  </div>
+                  <div className="col-span-3 text-right">
+                    <StorePill tone={item.condition === "good" ? "success" : "warning"}>
+                      {item.condition.toUpperCase()}
+                    </StorePill>
                   </div>
                 </div>
+              ))}
+            </div>
+          </div>
+        </StoreSectionCard>
+      ) : (
+        <StoreSectionCard
+          title="Item Intake Verification"
+          description={`Count each consignment item against ${orderNumber}, mark condition, and attach photo evidence for discrepancies.`}
+          action={
+            <div className="text-sm font-bold">
+              Received: <span className={totalReceived < totalSent ? "text-warning" : "text-foreground"}>{totalReceived}</span> / {totalSent} units
+            </div>
+          }
+        >
+          <div className="space-y-4">
+            {items.map((item) => {
+              const hasDiscrepancy = item.condition !== "good" || item.receivedUnits !== item.sentUnits;
 
-                {/* Inline Discrepancy & Photo Evidence Logger */}
-                {hasDiscrepancy && (
-                  <div className="pt-3 border-t border-warning/40 space-y-3 bg-muted/30 p-4 rounded-lg">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-warning">
-                        <AlertTriangle className="size-4" />
-                        <span className="text-xs font-bold uppercase tracking-wider">
-                          Log Issue: {item.condition.toUpperCase()} ({item.name})
+              return (
+                <div
+                  key={item.id}
+                  className={`rounded-xl border transition-all p-4 sm:p-5 space-y-4 ${
+                    hasDiscrepancy
+                      ? "border-warning/60 bg-warning-muted/20"
+                      : "border-border bg-card"
+                  }`}
+                >
+                  {/* Main Item Row */}
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-base text-foreground">{item.name}</span>
+                        <span className="text-xs font-mono px-2 py-0.5 bg-muted rounded text-muted-foreground font-semibold">
+                          {item.sku}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          &bull; Sent: <strong className="text-foreground">{item.sentUnits} cases</strong>
                         </span>
                       </div>
-                      <span className="text-xs text-muted-foreground">
-                        {item.receivedUnits < item.sentUnits
-                          ? `${item.sentUnits - item.receivedUnits} units short`
-                          : item.condition === "damaged"
-                          ? "Damage inspection required"
-                          : "Item discrepancy"}
-                      </span>
+                      <div className="text-xs text-muted-foreground">
+                        Category: {item.category}
+                      </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Discrepancy Note */}
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-muted-foreground">
-                          Issue Description / Defect Details
-                        </label>
-                        <textarea
-                          rows={2}
-                          value={item.issueNote}
-                          onChange={(e) => handleUpdateIssueNote(item.id, e.target.value)}
-                          placeholder="e.g. 2 boxes crushed in transit, outer seal ripped, contents spilled..."
-                          className="w-full text-xs p-3 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                    <div className="flex items-center gap-3 self-end lg:self-auto flex-wrap">
+                      {/* Received Quantity Stepper */}
+                      <div className="flex items-center gap-1.5 bg-background border border-border rounded-lg p-1">
+                        <span className="text-xs font-semibold text-muted-foreground px-2">Received:</span>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateUnits(item.id, -1)}
+                          className="w-8 h-8 rounded bg-muted hover:bg-muted/80 flex items-center justify-center font-bold text-sm cursor-pointer"
+                        >
+                          <Minus className="size-3.5" />
+                        </button>
+                        <input
+                          type="number"
+                          min="0"
+                          value={item.receivedUnits}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10) || 0;
+                            setItems((prev) =>
+                              prev.map((it) => (it.id === item.id ? { ...it, receivedUnits: val } : it))
+                            );
+                          }}
+                          className="w-12 text-center font-bold text-base text-foreground bg-transparent border-0 focus:outline-none"
                         />
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateUnits(item.id, 1)}
+                          className="w-8 h-8 rounded bg-muted hover:bg-muted/80 flex items-center justify-center font-bold text-sm cursor-pointer"
+                        >
+                          <Plus className="size-3.5" />
+                        </button>
                       </div>
 
-                      {/* Photo Evidence Attachment Box */}
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
-                          <span>Photo Evidence</span>
-                          <span className="text-[10px] text-muted-foreground">Required for claims</span>
-                        </label>
+                      {/* Segmented Condition Selector */}
+                      <div className="flex items-center bg-background border border-border rounded-lg p-1 gap-1 text-xs">
+                        {[
+                          { key: "good", label: "Good" },
+                          { key: "damaged", label: "Damaged" },
+                          { key: "missing", label: "Missing" },
+                          { key: "incorrect", label: "Incorrect" },
+                        ].map((c) => {
+                          const isSelected = item.condition === c.key;
+                          let activeClass = "bg-primary text-primary-foreground";
+                          if (c.key === "good") activeClass = "bg-success text-success-foreground font-bold";
+                          if (c.key === "damaged") activeClass = "bg-destructive text-destructive-foreground font-bold";
+                          if (c.key === "missing") activeClass = "bg-warning text-warning-foreground font-bold";
+                          if (c.key === "incorrect") activeClass = "bg-info text-info-foreground font-bold";
 
-                        {item.photoUrl ? (
-                          <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-background text-xs">
-                            <div className="flex items-center gap-2.5">
-                              <img
-                                src={item.photoUrl}
-                                alt="Damage evidence preview"
-                                className="w-10 h-10 object-cover rounded border border-border shrink-0"
-                              />
-                              <div>
-                                <div className="font-semibold text-foreground truncate max-w-[150px]">
-                                  {item.photoName || "damage_photo.jpg"}
-                                </div>
-                                <div className="text-[10px] text-muted-foreground">{item.photoSize}</div>
-                              </div>
-                            </div>
+                          return (
                             <button
+                              key={c.key}
                               type="button"
-                              onClick={() => handleRemovePhoto(item.id)}
-                              className="p-1 text-destructive hover:bg-destructive-muted rounded cursor-pointer"
-                              title="Remove photo"
+                              onClick={() => handleSetCondition(item.id, c.key as any)}
+                              className={`px-3 py-1.5 rounded-md font-medium transition-colors cursor-pointer ${
+                                isSelected
+                                  ? activeClass
+                                  : "text-muted-foreground hover:bg-muted"
+                              }`}
                             >
-                              <Trash2 className="size-4" />
+                              {c.label}
                             </button>
-                          </div>
-                        ) : (
-                          <label className="flex items-center justify-center gap-2 p-3.5 rounded-lg border border-dashed border-border hover:border-primary/60 bg-background hover:bg-muted/40 cursor-pointer transition-colors text-xs text-muted-foreground">
-                            <Camera className="size-4 text-primary" />
-                            <span className="font-semibold text-foreground">Attach Photo Evidence</span>
-                            <span className="text-[10px] text-muted-foreground">(camera / browse)</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              capture="environment"
-                              onChange={(e) => handlePhotoUpload(item.id, e)}
-                              className="hidden"
-                            />
-                          </label>
-                        )}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
 
-        {/* General Receiving Remarks */}
-        <div className="space-y-1.5 pt-4 border-t border-border">
-          <label className="text-xs font-bold uppercase text-muted-foreground">
-            General Receiving Remarks / Driver Signature Notes
-          </label>
-          <textarea
-            rows={2}
-            value={generalRemarks}
-            onChange={(e) => setGeneralRemarks(e.target.value)}
-            placeholder="Add any additional remarks regarding dock access, driver handover, or cold-chain condition..."
-            className="w-full text-xs p-3 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
-          />
-        </div>
-      </StoreSectionCard>
+                  {/* Inline Discrepancy & Photo Evidence Logger */}
+                  {hasDiscrepancy && (
+                    <div className="pt-3 border-t border-warning/40 space-y-3 bg-muted/30 p-4 rounded-lg">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-warning">
+                          <AlertTriangle className="size-4" />
+                          <span className="text-xs font-bold uppercase tracking-wider">
+                            Log Issue: {item.condition.toUpperCase()} ({item.name})
+                          </span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {item.receivedUnits < item.sentUnits
+                            ? `${item.sentUnits - item.receivedUnits} units short`
+                            : item.condition === "damaged"
+                            ? "Damage inspection required"
+                            : "Item discrepancy"}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Discrepancy Note */}
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-muted-foreground">
+                            Issue Description / Defect Details
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={item.issueNote}
+                            onChange={(e) => handleUpdateIssueNote(item.id, e.target.value)}
+                            placeholder="e.g. 2 boxes crushed in transit, outer seal ripped, contents spilled..."
+                            className="w-full text-xs p-3 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+                          />
+                        </div>
+
+                        {/* Photo Evidence Attachment Box */}
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
+                            <span>Photo Evidence</span>
+                            <span className="text-[10px] text-muted-foreground">Required for claims</span>
+                          </label>
+
+                          {item.photoUrl ? (
+                            <div className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-background text-xs">
+                              <div className="flex items-center gap-2.5">
+                                <img
+                                  src={item.photoUrl}
+                                  alt="Damage evidence preview"
+                                  className="w-10 h-10 object-cover rounded border border-border shrink-0"
+                                />
+                                <div>
+                                  <div className="font-semibold text-foreground truncate max-w-[150px]">
+                                    {item.photoName || "damage_photo.jpg"}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground">{item.photoSize}</div>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePhoto(item.id)}
+                                className="p-1 text-destructive hover:bg-destructive-muted rounded cursor-pointer"
+                                title="Remove photo"
+                              >
+                                <Trash2 className="size-4" />
+                              </button>
+                            </div>
+                          ) : (
+                            <label className="flex items-center justify-center gap-2 p-3.5 rounded-lg border border-dashed border-border hover:border-primary/60 bg-background hover:bg-muted/40 cursor-pointer transition-colors text-xs text-muted-foreground">
+                              <Camera className="size-4 text-primary" />
+                              <span className="font-semibold text-foreground">Attach Photo Evidence</span>
+                              <span className="text-[10px] text-muted-foreground">(camera / browse)</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                onChange={(e) => handlePhotoUpload(item.id, e)}
+                                className="hidden"
+                              />
+                            </label>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* General Receiving Remarks */}
+          <div className="space-y-1.5 pt-4 border-t border-border">
+            <label className="text-xs font-bold uppercase text-muted-foreground">
+              General Receiving Remarks / Driver Signature Notes
+            </label>
+            <textarea
+              rows={2}
+              value={generalRemarks}
+              onChange={(e) => setGeneralRemarks(e.target.value)}
+              placeholder="Add any additional remarks regarding dock access, driver handover, or cold-chain condition..."
+              className="w-full text-xs p-3 rounded-lg border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+            />
+          </div>
+        </StoreSectionCard>
+      )}
 
       {/* Action Toolbar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => setShowRejectModal(true)}
-          className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-bold text-sm h-11"
-        >
-          <XCircle className="size-4 mr-1.5" />
-          <span>Reject Consignment</span>
-        </Button>
+      {isCompleted ? (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+          <Button
+            asChild
+            variant="outline"
+            className="w-full sm:w-auto font-bold text-sm h-11"
+          >
+            <Link href={`/store/requests/${orderNumber}`}>
+              <span>View Goods Request</span>
+            </Link>
+          </Button>
 
-        <Button
-          type="button"
-          onClick={handleConfirmReceipt}
-          disabled={isSubmitting}
-          className="w-full sm:w-auto min-w-[260px] bg-primary text-primary-foreground font-bold hover:bg-primary/90 cursor-pointer h-11 text-base shadow-xs"
-        >
-          {isSubmitting ? (
-            <>
-              <RefreshCw className="size-4 animate-spin mr-2" />
-              <span>Submitting Receipt...</span>
-            </>
-          ) : (
-            <>
-              <CheckCircle2 className="size-4 mr-2" />
-              <span>{hasItemIssues ? "Confirm with Discrepancies" : "Confirm Delivery Receipt"}</span>
-            </>
-          )}
-        </Button>
+          <Button
+            asChild
+            className="w-full sm:w-auto min-w-[260px] bg-primary text-primary-foreground font-bold hover:bg-primary/90 h-11 text-base shadow-xs"
+          >
+            <Link href={`/store/receipt/${orderNumber}`}>
+              <Printer className="size-4 mr-2" />
+              <span>View Digital Receipt</span>
+            </Link>
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowRejectModal(true)}
+            className="w-full sm:w-auto text-destructive border-destructive/40 hover:bg-destructive-muted hover:text-destructive font-bold text-sm h-11"
+          >
+            <XCircle className="size-4 mr-1.5" />
+            <span>Reject Consignment</span>
+          </Button>
+
+          <Button
+            type="button"
+            onClick={handleConfirmReceipt}
+            disabled={isSubmitting}
+            className="w-full sm:w-auto min-w-[260px] bg-primary text-primary-foreground font-bold hover:bg-primary/90 cursor-pointer h-11 text-base shadow-xs"
+          >
+            {isSubmitting ? (
+              <>
+                <RefreshCw className="size-4 animate-spin mr-2" />
+                <span>Submitting Receipt...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="size-4 mr-2" />
+                <span>{hasItemIssues ? "Confirm with Discrepancies" : "Confirm Delivery Receipt"}</span>
+              </>
+            )}
+          </Button>
+        </div>
+      )}
       </div>
 
       {/* Reject Delivery Modal */}

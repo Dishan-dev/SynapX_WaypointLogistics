@@ -66,8 +66,9 @@ def _delivery_label(day: date) -> str:
 
 def _window(outlet: Outlet) -> Optional[str]:
     if outlet.window_start and outlet.window_end:
-        return f"{outlet.window_start.strftime('%H:%M')} – {outlet.window_end.strftime('%H:%M')}"
+        return f"{outlet.window_start.strftime('%H:%M')} - {outlet.window_end.strftime('%H:%M')}"
     return None
+
 
 
 class OrderService:

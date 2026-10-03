@@ -27,6 +27,7 @@ import { StoreOrder, mockOrders } from "@/components/store/mock-data";
 interface HistoryRecord {
   orderId: string;
   deliveryDate: string;
+  rawDate: string;
   arrivalInfo: string;
   vehicleId: string;
   vehicleType: string;
@@ -96,6 +97,7 @@ export default function DeliveryHistoryPage() {
           return {
             orderId: ord.orderNumber,
             deliveryDate: dateStr,
+            rawDate: ord.orderDate || new Date().toISOString(),
             arrivalInfo: "Arrived • Rear dock",
             vehicleId: ord.vehicle?.code || ord.vehicleCode || "VEH001",
             vehicleType: ord.vehicle?.description || "Truck • Ambient",
@@ -108,54 +110,6 @@ export default function DeliveryHistoryPage() {
             status: "completed",
           };
         });
-
-        // Ensure we always show history records even if only a few orders are marked completed
-        if (records.length === 0) {
-          records.push(
-            {
-              orderId: "ORD0000001",
-              deliveryDate: "Today, 26 Sep 2026",
-              arrivalInfo: "Arrived 06:08 • Rear dock",
-              vehicleId: "VEH001",
-              vehicleType: "Truck • Reefer",
-              driverName: "Marcus Vance",
-              itemCount: 3,
-              unitCount: 33,
-              outcomeType: "clean",
-              outcomeTitle: "Clean delivery",
-              outcomeDetail: "Verified in full • zero defects",
-              status: "completed",
-            },
-            {
-              orderId: "ORD0000005",
-              deliveryDate: "23 Sep 2026",
-              arrivalInfo: "Arrived 04:50 • Rear dock",
-              vehicleId: "VEH037",
-              vehicleType: "Van • Ambient",
-              driverName: "Elena Ramos",
-              itemCount: 6,
-              unitCount: 28,
-              outcomeType: "issue_resolved",
-              outcomeTitle: "1 issue • resolved",
-              outcomeDetail: "ISS0000003 • 1 case over",
-              status: "completed",
-            },
-            {
-              orderId: "ORD0000006",
-              deliveryDate: "19 Sep 2026",
-              arrivalInfo: "Arrived 05:10 • Rear dock",
-              vehicleId: "VEH009",
-              vehicleType: "Truck • Ambient",
-              driverName: "Marcus Vance",
-              itemCount: 12,
-              unitCount: 75,
-              outcomeType: "issue_under_review",
-              outcomeTitle: "1 issue • under review",
-              outcomeDetail: "ISS0000002 • 2 cases short",
-              status: "completed",
-            }
-          );
-        }
 
         setHistoryRecords(records);
       } catch {
@@ -182,6 +136,15 @@ export default function DeliveryHistoryPage() {
 
     if (issuesFilter === "clean" && rec.outcomeType !== "clean") return false;
     if (issuesFilter === "with_issues" && rec.outcomeType === "clean") return false;
+
+    if (dateFilter !== "all") {
+      const days = parseInt(dateFilter, 10);
+      if (!isNaN(days) && rec.rawDate) {
+        const itemDate = new Date(rec.rawDate).getTime();
+        const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+        if (itemDate < cutoff) return false;
+      }
+    }
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();

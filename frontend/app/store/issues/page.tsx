@@ -109,6 +109,18 @@ function ExceptionsAndIssuesContent() {
     // Type filter
     if (typeFilter !== "all" && iss.type !== typeFilter) return false;
 
+    // Date filter
+    if (dateFilter !== "all") {
+      const days = parseInt(dateFilter, 10);
+      if (!isNaN(days) && iss.reportedAt) {
+        const parsed = Date.parse(iss.reportedAt);
+        if (!isNaN(parsed)) {
+          const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+          if (parsed < cutoff) return false;
+        }
+      }
+    }
+
     // Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -201,7 +213,7 @@ function ExceptionsAndIssuesContent() {
             Exceptions &amp; Issues
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-            Track delivery discrepancies, short shipments, damage claims, and credit notes.
+            Track delivery discrepancies, short shipments, damage reports, and reconciliation status.
           </p>
         </div>
 
@@ -238,7 +250,7 @@ function ExceptionsAndIssuesContent() {
         <StoreMetricCard
           label="Resolved"
           value={String(resolvedCount)}
-          caption="Credits issued or reconciled"
+          caption="Discrepancies settled or reconciled"
           mobileCaption="14 closed"
         />
       </section>
@@ -601,15 +613,14 @@ function ExceptionsAndIssuesContent() {
                 Close
               </Button>
               <Button
-                type="button"
+                asChild
                 size="sm"
                 className="bg-primary text-primary-foreground font-bold hover:bg-primary/90 gap-1.5"
-                onClick={() => {
-                  alert(`Credit Note Request #REQ-${selectedIssue.id} submitted to Central Dispatch.`);
-                }}
               >
-                <Download className="size-3.5" />
-                <span>Request Credit Note</span>
+                <Link href={`/store/deliveries/${selectedIssue.orderId}`}>
+                  <span>View Delivery</span>
+                  <ExternalLink className="size-3.5" />
+                </Link>
               </Button>
             </div>
           </div>

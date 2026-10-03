@@ -1,10 +1,12 @@
 import { addDays, eachDayOfInterval, format } from "date-fns";
 import {
   mockHolidays,
+  mockIssues,
   mockNotifications,
   mockOrders,
   mockOutletSettings,
   type OutletSettings,
+  type StoreIssue,
   type StoreNotification,
   type StoreOrder,
   type TemperatureClass,
@@ -13,9 +15,11 @@ import { ApiError, apiFetch } from "@/components/store/api/client";
 import { STORE_DATA_SOURCE, STORE_OUTLET_ID } from "@/components/store/api/config";
 import {
   toOutletSettings,
+  toStoreDashboardIssue,
   toStoreNotification,
   toStoreOrder,
   toTemperatureZone,
+  type ApiDeliveryIssueDashboard,
   type ApiNotification,
   type ApiOperatingDays,
   type ApiOutletSettings,
@@ -188,5 +192,19 @@ export async function resetOutletSettings(): Promise<OutletSettings> {
     }
   }
   return mockOutletSettings;
+}
+
+export async function getStoreIssues(): Promise<StoreIssue[]> {
+  if (live()) {
+    try {
+      const apiIssues = await apiFetch<ApiDeliveryIssueDashboard[]>(`/issues?outlet_id=${STORE_OUTLET_ID}`);
+      if (apiIssues && apiIssues.length > 0) {
+        return apiIssues.map(toStoreDashboardIssue);
+      }
+    } catch {
+      // Fallback
+    }
+  }
+  return mockIssues;
 }
 

@@ -52,15 +52,20 @@ class ReceiptService:
                 detail="Receipt already submitted for this order",
             )
 
-        # Update order status: receipt confirmation is the final step -> COMPLETED
+        # Update order status: receipt confirmation is the final step
+        # If delivery was rejected (0 units received with issues), mark as CANCELLED instead of COMPLETED
+        is_rejection = payload.units_received == 0 and payload.has_issues
         try:
             order = order_service._get(db, payload.order_id)
-            if order.status == OrderStatus.DISPATCHED:
-                order_service.update_order_status(db, payload.order_id, OrderStatus.DELIVERED)
-            if order.status == OrderStatus.DELIVERED:
-                order_service.update_order_status(db, payload.order_id, OrderStatus.COMPLETED)
-            elif order.status not in (OrderStatus.COMPLETED, OrderStatus.CANCELLED):
-                order_service.update_order_status(db, payload.order_id, OrderStatus.COMPLETED)
+            if is_rejection:
+                order_service.update_order_status(db, payload.order_id, OrderStatus.CANCELLED)
+            else:
+                if order.status == OrderStatus.DISPATCHED:
+                    order_service.update_order_status(db, payload.order_id, OrderStatus.DELIVERED)
+                if order.status == OrderStatus.DELIVERED:
+                    order_service.update_order_status(db, payload.order_id, OrderStatus.COMPLETED)
+                elif order.status not in (OrderStatus.COMPLETED, OrderStatus.CANCELLED):
+                    order_service.update_order_status(db, payload.order_id, OrderStatus.COMPLETED)
         except Exception:
             pass
 
@@ -75,22 +80,29 @@ class ReceiptService:
                 pass
 
             issue_type_formatted = (payload.issue_type or "Discrepancy").replace("_", " ").title()
-            delivery_issue = DeliveryIssue(
-                order_id=payload.order_id,
-                order_number=order_number,
-                outlet_id=payload.outlet_id,
-                issue_type=issue_type_formatted,
-                title=f"Delivery Discrepancy on {order_number} ({issue_type_formatted})",
-                received_units=payload.units_received,
-                description=payload.issue_description or f"Discrepancy reported on receipt confirmation ({payload.issue_type}).",
-                reported_by="Sarah Jenkins (Store Manager)",
-                status="open",
-            )
-            db.add(delivery_issue)
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+
+            # Prevent duplicate issue creation if frontend/intake already created per-item issues
+            existing_issue = db.execute(
+                select(DeliveryIssue).where(DeliveryIssue.order_id == payload.order_id)
+            ).scalars().first()
+
+            if not existing_issue:
+                delivery_issue = DeliveryIssue(
+                    order_id=payload.order_id,
+                    order_number=order_number,
+                    outlet_id=payload.outlet_id,
+                    issue_type=issue_type_formatted,
+                    title=f"Delivery Discrepancy on {order_number} ({issue_type_formatted})",
+                    received_units=payload.units_received,
+                    description=payload.issue_description or f"Discrepancy reported on receipt confirmation ({payload.issue_type}).",
+                    reported_by="Sarah Jenkins (Store Manager)",
+                    status="open",
+                )
+                db.add(delivery_issue)
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
             notification_service.send(
                 db,

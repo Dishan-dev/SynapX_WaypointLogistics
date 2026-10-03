@@ -1,6 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Generator, Optional
-from zoneinfo import ZoneInfo
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -9,6 +8,8 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.user import User, UserRole
 from app.schemas.auth import TokenPayload
+
+COLOMBO_TZ = timezone(timedelta(hours=5, minutes=30))
 
 # Make token optional so KEYCLOAK_DEV_MODE endpoints don't require the header
 reusable_oauth2 = OAuth2PasswordBearer(
@@ -27,7 +28,8 @@ def get_db() -> Generator:
 
 def get_now() -> datetime:
     """Current Colombo time (naive), used for cutoffs. Tests override this to pin the clock."""
-    return datetime.now(ZoneInfo("Asia/Colombo")).replace(tzinfo=None)
+    return datetime.now(COLOMBO_TZ).replace(tzinfo=None)
+
 
 
 def get_current_user(

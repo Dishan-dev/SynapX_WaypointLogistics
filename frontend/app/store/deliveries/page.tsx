@@ -67,20 +67,28 @@ export default function IncomingDeliveriesPage() {
 
           let status: DeliveryItem["status"] = "in_transit";
           let location = "En route from Peliyagoda Hub";
-          let eta = "07:30 AM";
+          let eta = ord.eta ? ord.eta.slice(11, 16) : "07:30 AM";
 
-          if (ord.status === "delivered" || ord.status === "completed") {
+          if (ord.status === "completed") {
             status = "delivered";
             location = "Loading Dock 2 (Completed)";
-            eta = "Arrived";
-          } else if (idx === 0) {
+            eta = "Delivered";
+          } else if (ord.status === "delivered") {
             status = "at_dock";
             location = "Rear Dock (Ready for receiving)";
             eta = "Arrived";
-          } else if (idx === 1) {
-            status = "arriving_soon";
-            location = "1.2 km away (Maradana Junction)";
-            eta = "06:45 AM (in 15 mins)";
+          } else if (ord.status === "dispatched") {
+            status = "in_transit";
+            location = "En route from Peliyagoda Hub";
+            eta = ord.eta ? ord.eta.slice(11, 16) : "06:45 AM";
+          } else if (ord.status === "ready_for_dispatch") {
+            status = "in_transit";
+            location = "Staged at Depot Bay 4";
+            eta = "Ready for departure";
+          } else {
+            status = "in_transit";
+            location = "Processing at Central Depot";
+            eta = "Scheduled";
           }
 
           return {

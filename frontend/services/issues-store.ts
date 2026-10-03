@@ -225,7 +225,12 @@ function saveToLocalStorage(newIssue: StoreIssue) {
 
 export function saveIssue(issue: Omit<StoreIssue, "id" | "reportedAt" | "reportedBy" | "status">): StoreIssue {
   const current = getStoredIssues();
-  const nextNum = current.length + 1;
+  let maxId = 0;
+  current.forEach((i) => {
+    const num = parseInt(i.id.replace(/\D/g, ""), 10);
+    if (!isNaN(num) && num > maxId) maxId = num;
+  });
+  const nextNum = maxId + 1;
   const newIssue: StoreIssue = {
     ...issue,
     id: `ISS${String(nextNum).padStart(7, "0")}`,
