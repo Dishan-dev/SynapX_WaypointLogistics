@@ -46,6 +46,11 @@ export function isStopOpen(stop: { status: string; completed_at: string | null }
   return (stop.status === "delivered" || stop.status === "partial") && !stop.completed_at;
 }
 
+/** Delivered (full or partial) and its proof saved: done, for the map and the progress counts. */
+export function isStopDelivered(stop: { status: string; completed_at: string | null }) {
+  return (stop.status === "delivered" || stop.status === "partial") && !isStopOpen(stop);
+}
+
 // The last copy of each stop, so the at-stop screens still open with no
 // signal. The map saves every open stop of the trip while it has signal, and
 // an action saved offline moves the copy on (updateCachedStop).

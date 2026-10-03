@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { Map, Marker, LngLatBounds, setWorkerUrl, AttributionControl, GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { DeliveryStop, GPSPosition } from "@/types/driver-map";
+import { isStopDelivered, isStopOpen } from "@/lib/driverStop";
 
 // Fix: point MapLibre at the pre-built worker served from /public.
 // Turbopack cannot bundle the MapLibre Web Worker inline, so we serve it
@@ -34,7 +35,8 @@ function getStopVisualState(
   stop: DeliveryStop,
   nextStopId: number | null
 ): "completed" | "current" | "upcoming" | "problem" {
-  if (stop.status === "delivered" || stop.status === "partial") return "completed";
+  // Delivered but the proof isn't saved yet: still the driver's to finish, not ✓
+  if (isStopDelivered(stop)) return "completed";
   if (stop.status === "failed" || stop.status === "rescheduled") return "problem";
   if (stop.status === "arrived" || stop.id === nextStopId) return "current";
   return "upcoming";
@@ -57,10 +59,8 @@ export default function DriverMapCanvas({
   const initializedRef = useRef(false);
   const [mapLoaded, setMapLoaded] = useState(false);
 
-  // Find the next pending/arrived stop
-  const nextStop = stops.find(
-    (s) => s.status === "pending" || s.status === "arrived"
-  );
+  // The next stop still open (by sequence), the same one the Next delivery card shows
+  const nextStop = [...stops].sort((a, b) => a.sequence - b.sequence).find(isStopOpen);
 
   // ── Init map once ─────────────────────────────────────────────
   useEffect(() => {

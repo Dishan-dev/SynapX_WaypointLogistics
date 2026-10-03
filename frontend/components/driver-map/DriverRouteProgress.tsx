@@ -1,6 +1,7 @@
 "use client";
 
 import type { DeliveryStop } from "@/types/driver-map";
+import { isStopDelivered } from "@/lib/driverStop";
 
 interface DriverRouteProgressProps {
   stops: DeliveryStop[];
@@ -8,9 +9,8 @@ interface DriverRouteProgressProps {
 
 export default function DriverRouteProgress({ stops }: DriverRouteProgressProps) {
   const total = stops.length;
-  const completed = stops.filter(
-    (s) => s.status === "delivered" || s.status === "partial"
-  ).length;
+  // Done once the proof is saved; a delivery waiting for its proof still counts as left
+  const completed = stops.filter(isStopDelivered).length;
   const failed = stops.filter(
     (s) => s.status === "failed" || s.status === "rescheduled"
   ).length;

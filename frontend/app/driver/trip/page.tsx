@@ -33,7 +33,7 @@ import { toast } from "sonner";
 import { apiFetch } from "@/lib/api";
 import { cachedGet } from "@/lib/driverCache";
 import { gpsLabel } from "@/lib/gps";
-import { fetchStopDetail, isStopOpen, mergeLocalProgress, rememberActiveTrip } from "@/lib/driverStop";
+import { fetchStopDetail, isStopDelivered, isStopOpen, mergeLocalProgress, rememberActiveTrip } from "@/lib/driverStop";
 import type { DriverTripDetail, DeliveryStop, GPSPosition } from "@/types/driver-map";
 
 // Heavy map canvas loaded client-side only
@@ -341,7 +341,7 @@ export default function DriverRouteMapPage() {
                 style={{ backgroundColor: "rgba(9,44,76,0.92)", backdropFilter: "blur(4px)" }}
               >
                 <span className="text-[11px] font-bold text-white">
-                  {stops.filter(s => s.status === "delivered" || s.status === "partial").length}
+                  {stops.filter(isStopDelivered).length}
                   /{stops.length} stops done
                 </span>
               </div>

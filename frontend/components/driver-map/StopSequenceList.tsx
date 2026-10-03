@@ -3,6 +3,7 @@
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import type { DeliveryStop } from "@/types/driver-map";
+import { isStopOpen } from "@/lib/driverStop";
 
 interface StopSequenceListProps {
   stops: DeliveryStop[];
@@ -45,8 +46,11 @@ export default function StopSequenceList({ stops, onStopClick }: StopSequenceLis
       </div>
 
       {sorted.map((stop, index) => {
-        const cfg = STATUS_COLOR[stop.status] ?? STATUS_COLOR.pending;
-        const icon = STATUS_ICON[stop.status] ?? "○";
+        // Delivered but the proof isn't saved yet: shown as still in progress
+        const needsProof = isStopOpen(stop) && (stop.status === "delivered" || stop.status === "partial");
+        const shownStatus = needsProof ? "arrived" : stop.status;
+        const cfg = STATUS_COLOR[shownStatus] ?? STATUS_COLOR.pending;
+        const icon = STATUS_ICON[shownStatus] ?? "○";
         const isLast = index === sorted.length - 1;
 
         return (
@@ -85,7 +89,7 @@ export default function StopSequenceList({ stops, onStopClick }: StopSequenceLis
               className="text-[10px] font-bold shrink-0 ml-1"
               style={{ color: cfg.text }}
             >
-              {stop.status.toUpperCase()}
+              {needsProof ? "NEEDS PROOF" : stop.status.toUpperCase()}
             </span>
           </button>
         );

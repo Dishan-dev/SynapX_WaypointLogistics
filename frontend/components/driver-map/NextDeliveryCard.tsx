@@ -76,10 +76,11 @@ export default function NextDeliveryCard({
               Mapped
             </span>
           )}
+          {/* The details open below: ▼ to open them, ▲ to close */}
           {expanded ? (
-            <ChevronDown size={20} color="#5D6A78" />
-          ) : (
             <ChevronUp size={20} color="#5D6A78" />
+          ) : (
+            <ChevronDown size={20} color="#5D6A78" />
           )}
         </div>
       </button>
