@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 
 from app.api import deps
-from app.core import security
+from app.core import security, keycloak_admin
 from app.core.config import settings
 from app.models.user import User, UserRole
 from app.models.loader_user import LoaderUser
@@ -25,7 +25,9 @@ from app.schemas.admin import (
     AdminUserRead,
     AdminUserCreate,
     AdminUserUpdate,
+    AdminUserPasswordReset,
     UserStatusToggle,
+    KeycloakSyncResult,
     RoleDetail,
     RolePermissionItem,
     RoleAssignRequest,
@@ -301,7 +303,7 @@ def get_admin_overview(db: Session = Depends(deps.get_db)) -> Any:
     )
 
 
-# ── 2. Users Management Endpoints ─────────────────────────
+# ── 2. Users Management Endpoints (Keycloak IAM Direct) ──────────
 
 @router.get("/users", response_model=List[AdminUserRead])
 def list_admin_users(
@@ -311,6 +313,119 @@ def list_admin_users(
     include_loaders: bool = True,
     db: Session = Depends(deps.get_db),
 ) -> Any:
+    # When Keycloak Admin is configured, Keycloak is the authoritative single source of truth!
+    if keycloak_admin.is_keycloak_admin_configured():
+        kc_users = keycloak_admin.list_keycloak_users(max_users=500)
+        result = []
+        for ku in kc_users:
+            kc_id = ku.get("id")
+            email = ku.get("email") or ku.get("username") or ""
+            username = ku.get("username") or email
+            first = ku.get("firstName") or ""
+            last = ku.get("lastName") or ""
+            full_name = f"{first} {last}".strip() or username
+            enabled = ku.get("enabled", True)
+            email_verified = ku.get("emailVerified", True)
+            created_ts = ku.get("createdTimestamp")
+            created_dt = (
+                datetime.fromtimestamp(created_ts / 1000.0, tz=timezone.utc)
+                if created_ts
+                else None
+            )
+
+            # Get user realm roles
+            roles = keycloak_admin.get_user_realm_roles(kc_id) if kc_id else []
+            mapped_role = "DISPATCHER"
+            for r in roles:
+                r_lower = r.lower()
+                if r_lower == "admin":
+                    mapped_role = "ADMIN"
+                    break
+                elif r_lower in ("store_manager", "warehouse_manager"):
+                    mapped_role = "STORE_MANAGER"
+                    break
+                elif r_lower == "driver":
+                    mapped_role = "DRIVER"
+                    break
+                elif r_lower == "loader":
+                    mapped_role = "LOADER"
+                    break
+                elif r_lower == "dispatcher":
+                    mapped_role = "DISPATCHER"
+
+            # Filter checks
+            if is_active is not None and enabled != is_active:
+                continue
+            if role and role.upper() != "ALL" and mapped_role.upper() != role.upper():
+                continue
+            if q:
+                q_low = q.lower()
+                if q_low not in email.lower() and q_low not in full_name.lower() and q_low not in username.lower():
+                    continue
+
+            # Maintain operational shadow row in local PostgreSQL for foreign keys
+            shadow = keycloak_admin.shadow_keycloak_user_to_db(
+                db=db,
+                kc_id=kc_id,
+                email=email,
+                full_name=full_name,
+                role_name=mapped_role,
+                is_active=enabled,
+            )
+
+            result.append(
+                AdminUserRead(
+                    id=shadow.id if shadow else None,
+                    keycloak_id=kc_id,
+                    username=username,
+                    email=email,
+                    full_name=full_name,
+                    role=mapped_role,
+                    role_display=role_to_display(mapped_role),
+                    is_active=enabled,
+                    email_verified=email_verified,
+                    is_keycloak_managed=True,
+                    created_at=created_dt or (shadow.created_at if shadow else None),
+                    updated_at=shadow.updated_at if shadow else None,
+                )
+            )
+
+        # Include local loaders if requested and not already provisioned in Keycloak
+        if include_loaders and (not role or role.upper() == "LOADER"):
+            kc_emails = {r.email.lower() for r in result if r.email}
+            kc_names = {r.full_name.lower() for r in result if r.full_name}
+            loader_query = db.query(LoaderUser)
+            if is_active is not None:
+                loader_query = loader_query.filter(LoaderUser.is_active == is_active)
+            if q:
+                l_pattern = f"%{q}%"
+                loader_query = loader_query.filter(
+                    or_(LoaderUser.full_name.ilike(l_pattern), LoaderUser.short_name.ilike(l_pattern))
+                )
+            for l in loader_query.all():
+                l_email = f"{l.short_name.lower().replace(' ', '.')}@dock.waypoint.com"
+                if l_email.lower() in kc_emails or l.full_name.lower() in kc_names:
+                    continue
+                result.append(
+                    AdminUserRead(
+                        id=10000 + l.id,
+                        keycloak_id=f"loader-{l.id}",
+                        username=l.short_name.lower().replace(" ", "."),
+                        email=l_email,
+                        full_name=l.full_name,
+                        role="LOADER",
+                        role_display="Dock Loader",
+                        is_active=l.is_active,
+                        is_keycloak_managed=False,
+                        created_at=l.created_at,
+                        updated_at=l.created_at,
+                    )
+                )
+
+        return result
+
+
+    # Fallback to local DB when Keycloak Admin is temporarily not configured
     query = db.query(User)
     if is_active is not None:
         query = query.filter(User.is_active == is_active)
@@ -337,11 +452,14 @@ def list_admin_users(
         result.append(
             AdminUserRead(
                 id=u.id,
+                keycloak_id=u.keycloak_id,
+                username=u.email.split("@")[0] if u.email else None,
                 email=u.email,
                 full_name=u.full_name,
                 role=mapped_role,
                 role_display=role_to_display(val),
                 is_active=u.is_active,
+                is_keycloak_managed=bool(u.keycloak_id is not None),
                 created_at=u.created_at,
                 updated_at=u.updated_at,
             )
@@ -361,11 +479,14 @@ def list_admin_users(
             result.append(
                 AdminUserRead(
                     id=10000 + l.id,
+                    keycloak_id=f"loader-{l.id}",
+                    username=l.short_name.lower().replace(" ", "."),
                     email=f"{l.short_name.lower().replace(' ', '.')}@dock.waypoint.com",
                     full_name=l.full_name,
                     role="LOADER",
                     role_display="Loader",
                     is_active=l.is_active,
+                    is_keycloak_managed=False,
                     created_at=l.created_at,
                     updated_at=l.created_at,
                 )
@@ -374,14 +495,62 @@ def list_admin_users(
     return result
 
 
+@router.post("/users/sync", response_model=KeycloakSyncResult)
+def sync_users_from_keycloak(
+    db: Session = Depends(deps.get_db),
+) -> Any:
+    """Manually reconcile all Keycloak realm users into the local PostgreSQL database."""
+    result = keycloak_admin.sync_keycloak_to_db(db)
+    record_audit(
+        action_type="USER_SYNC",
+        entity_name="Keycloak Directory",
+        summary=result["message"],
+        severity="INFO" if result["success"] else "WARNING",
+    )
+    return KeycloakSyncResult(**result)
+
+
+
 @router.post("/users", response_model=AdminUserRead, status_code=status.HTTP_201_CREATED)
 def create_admin_user(
     user_in: AdminUserCreate,
     db: Session = Depends(deps.get_db),
 ) -> Any:
-    # Check role
+    # Check if user already exists in local DB
+    existing = db.query(User).filter(User.email == user_in.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="User with this email already exists.")
+
     role_str = user_in.role.upper()
 
+    # 1. Require Keycloak and provision user directly in Keycloak
+    if not keycloak_admin.is_keycloak_admin_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="Keycloak Admin is not configured. Please save your valid KEYCLOAK_CLIENT_SECRET in backend/.env to create users in Keycloak.",
+        )
+
+    kc_id, kc_err = keycloak_admin.create_keycloak_user(
+        email=user_in.email,
+        full_name=user_in.full_name,
+        password=user_in.password,
+        role=role_str,
+        is_active=user_in.is_active,
+    )
+    if kc_err:
+        raise HTTPException(status_code=400, detail=f"Keycloak Provisioning Error: {kc_err}")
+
+    # 2. Shadow user into local PostgreSQL database for foreign key relational integrity
+    new_user = keycloak_admin.shadow_keycloak_user_to_db(
+        db=db,
+        kc_id=kc_id,
+        email=user_in.email,
+        full_name=user_in.full_name,
+        role_name=role_str,
+        is_active=user_in.is_active,
+    )
+
+    # 3. If role is LOADER, also ensure LoaderUser record exists for physical dock tablet PIN stations
     if role_str == "LOADER":
         short_name = user_in.full_name.split()[0] if user_in.full_name else "Loader"
         pin_digits = "".join(c for c in (user_in.password or "") if c.isdigit())
@@ -389,78 +558,38 @@ def create_admin_user(
             pin_digits = "1234"
         else:
             pin_digits = pin_digits[:4]
-
-        new_loader = LoaderUser(
-            full_name=user_in.full_name,
-            short_name=short_name,
-            pin_hash=security.get_password_hash(pin_digits),
-            is_active=user_in.is_active,
-        )
-        db.add(new_loader)
-        db.commit()
-        db.refresh(new_loader)
-
-        record_audit(
-            action_type="USER_MUTATION",
-            entity_name="Loader Account",
-            entity_id=str(10000 + new_loader.id),
-            summary=f"Created loader worker {new_loader.full_name} ({short_name}).",
-            severity="INFO",
-        )
-
-        return AdminUserRead(
-            id=10000 + new_loader.id,
-            email=user_in.email or f"{short_name.lower().replace(' ', '.')}@dock.waypoint.com",
-            full_name=new_loader.full_name,
-            role="LOADER",
-            role_display="Loader",
-            is_active=new_loader.is_active,
-            created_at=new_loader.created_at,
-            updated_at=new_loader.created_at,
-        )
-
-    # Check if user already exists
-    existing = db.query(User).filter(User.email == user_in.email).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="User with this email already exists.")
-
-    # Map role
-    if role_str == "STORE_MANAGER":
-        target_role = UserRole.WAREHOUSE_MANAGER
-    elif role_str in UserRole.__members__:
-        target_role = UserRole[role_str]
-    else:
-        target_role = UserRole.DISPATCHER
-
-    new_user = User(
-        email=user_in.email,
-        full_name=user_in.full_name,
-        hashed_password=security.get_password_hash(user_in.password),
-        role=target_role,
-        is_active=user_in.is_active,
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+        existing_loader = db.query(LoaderUser).filter(LoaderUser.full_name == user_in.full_name).first()
+        if not existing_loader:
+            new_loader = LoaderUser(
+                full_name=user_in.full_name,
+                short_name=short_name,
+                pin_hash=security.get_password_hash(pin_digits),
+                is_active=user_in.is_active,
+            )
+            db.add(new_loader)
+            db.commit()
 
     val = new_user.role.value if hasattr(new_user.role, "value") else str(new_user.role)
-    mapped_role = "STORE_MANAGER" if val == "WAREHOUSE_MANAGER" else val
+    mapped_role = "STORE_MANAGER" if val in ("STORE_MANAGER", "WAREHOUSE_MANAGER") else val
 
     record_audit(
         action_type="USER_MUTATION",
-        entity_name="User Account",
-        entity_id=str(new_user.id),
-        summary=f"Created user {new_user.full_name} ({new_user.email}) with role {role_to_display(val)}.",
+        entity_name="Keycloak User Account",
+        entity_id=kc_id,
+        summary=f"Provisioned Keycloak user {new_user.full_name} ({new_user.email}) with realm role {keycloak_admin.db_role_to_kc(val)}.",
         severity="INFO",
     )
 
     return AdminUserRead(
         id=new_user.id,
+        keycloak_id=kc_id,
+        username=new_user.email.split("@")[0] if new_user.email else kc_id,
         email=new_user.email,
         full_name=new_user.full_name,
         role=mapped_role,
-        role_display=role_to_display(val),
+        role_display=role_to_display(mapped_role),
         is_active=new_user.is_active,
+        is_keycloak_managed=True,
         created_at=new_user.created_at,
         updated_at=new_user.updated_at,
     )
@@ -468,12 +597,13 @@ def create_admin_user(
 
 @router.put("/users/{user_id}", response_model=AdminUserRead)
 def update_admin_user(
-    user_id: int,
+    user_id: str,
     user_in: AdminUserUpdate,
     db: Session = Depends(deps.get_db),
 ) -> Any:
-    if user_id >= 10000:
-        loader_id = user_id - 10000
+    # 1. Check if user is a loader worker
+    if str(user_id).startswith("loader-") or (str(user_id).isdigit() and int(user_id) >= 10000):
+        loader_id = int(str(user_id).replace("loader-", "")) if not str(user_id).isdigit() else int(user_id) - 10000
         loader = db.query(LoaderUser).filter(LoaderUser.id == loader_id).first()
         if not loader:
             raise HTTPException(status_code=404, detail="Loader not found.")
@@ -505,84 +635,104 @@ def update_admin_user(
         )
 
         return AdminUserRead(
-            id=user_id,
+            id=10000 + loader.id,
+            keycloak_id=f"loader-{loader.id}",
+            username=loader.short_name.lower().replace(" ", "."),
             email=user_in.email or f"{loader.short_name.lower().replace(' ', '.')}@dock.waypoint.com",
             full_name=loader.full_name,
             role="LOADER",
             role_display="Loader",
             is_active=loader.is_active,
+            is_keycloak_managed=False,
             created_at=loader.created_at,
             updated_at=loader.created_at,
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
+    # 2. Keycloak user update (Primary)
+    kc_id = str(user_id)
+    # Check if user_id is a local integer ID
+    if kc_id.isdigit():
+        local_u = db.query(User).filter(User.id == int(kc_id)).first()
+        if local_u and local_u.keycloak_id:
+            kc_id = local_u.keycloak_id
 
-    diff = {}
-    if user_in.email is not None and user_in.email != user.email:
-        diff["email"] = {"old": user.email, "new": user_in.email}
-        user.email = user_in.email
+    # If Keycloak is active, perform update in Keycloak
+    if keycloak_admin.is_keycloak_admin_configured():
+        ok, err = keycloak_admin.update_keycloak_user(
+            keycloak_id=kc_id,
+            full_name=user_in.full_name,
+            email=user_in.email,
+            role=user_in.role,
+            is_active=user_in.is_active,
+            password=user_in.password if user_in.password else None,
+        )
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"Keycloak Update Error: {err}")
 
-    if user_in.full_name is not None and user_in.full_name != user.full_name:
-        diff["full_name"] = {"old": user.full_name, "new": user_in.full_name}
-        user.full_name = user_in.full_name
+    # Maintain local PostgreSQL shadow
+    target_email = user_in.email
+    target_name = user_in.full_name
+    target_role = user_in.role or "DISPATCHER"
+    target_active = user_in.is_active if user_in.is_active is not None else True
 
-    if user_in.is_active is not None and user_in.is_active != user.is_active:
-        diff["is_active"] = {"old": user.is_active, "new": user_in.is_active}
-        user.is_active = user_in.is_active
+    local_u = db.query(User).filter(or_(User.keycloak_id == kc_id, User.email == target_email)).first()
+    if local_u:
+        if user_in.email:
+            local_u.email = user_in.email
+        if user_in.full_name:
+            local_u.full_name = user_in.full_name
+        if user_in.is_active is not None:
+            local_u.is_active = user_in.is_active
+        if user_in.role:
+            local_u.role = keycloak_admin.kc_role_to_db(user_in.role)
+        local_u.keycloak_id = kc_id
+        db.commit()
+        db.refresh(local_u)
+    else:
+        local_u = keycloak_admin.shadow_keycloak_user_to_db(
+            db=db,
+            kc_id=kc_id,
+            email=target_email or f"{kc_id}@waypoint.com",
+            full_name=target_name or "Operator",
+            role_name=target_role,
+            is_active=target_active,
+        )
 
-    if user_in.role is not None:
-        role_str = user_in.role.upper()
-        if role_str == "STORE_MANAGER":
-            target_role = UserRole.WAREHOUSE_MANAGER
-        elif role_str in UserRole.__members__:
-            target_role = UserRole[role_str]
-        else:
-            target_role = user.role
-        if target_role != user.role:
-            diff["role"] = {"old": str(user.role), "new": str(target_role)}
-            user.role = target_role
-
-    if user_in.password:
-        user.hashed_password = security.get_password_hash(user_in.password)
-        diff["password"] = "Updated"
-
-    db.commit()
-    db.refresh(user)
-
-    val = user.role.value if hasattr(user.role, "value") else str(user.role)
+    val = local_u.role.value if hasattr(local_u.role, "value") else str(local_u.role)
     mapped_role = "STORE_MANAGER" if val == "WAREHOUSE_MANAGER" else val
 
     record_audit(
         action_type="USER_MUTATION",
-        entity_name="User Account",
-        entity_id=str(user.id),
-        summary=f"Updated details for user {user.full_name} ({user.email}).",
+        entity_name="Keycloak User Account",
+        entity_id=kc_id,
+        summary=f"Updated details for Keycloak user {local_u.full_name} ({local_u.email}).",
         severity="INFO",
-        diff=diff,
     )
 
     return AdminUserRead(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
+        id=local_u.id,
+        keycloak_id=kc_id,
+        username=local_u.email.split("@")[0] if local_u.email else kc_id,
+        email=local_u.email,
+        full_name=local_u.full_name,
         role=mapped_role,
         role_display=role_to_display(val),
-        is_active=user.is_active,
-        created_at=user.created_at,
-        updated_at=user.updated_at,
+        is_active=local_u.is_active,
+        is_keycloak_managed=True,
+        created_at=local_u.created_at,
+        updated_at=local_u.updated_at,
     )
 
 
 @router.patch("/users/{user_id}/status", response_model=AdminUserRead)
 def toggle_admin_user_status(
-    user_id: int,
+    user_id: str,
     status_in: UserStatusToggle,
     db: Session = Depends(deps.get_db),
 ) -> Any:
-    if user_id >= 10000:
-        loader_id = user_id - 10000
+    # 1. Loader check
+    if str(user_id).startswith("loader-") or (str(user_id).isdigit() and int(user_id) >= 10000):
+        loader_id = int(str(user_id).replace("loader-", "")) if not str(user_id).isdigit() else int(user_id) - 10000
         loader = db.query(LoaderUser).filter(LoaderUser.id == loader_id).first()
         if not loader:
             raise HTTPException(status_code=404, detail="Loader not found.")
@@ -601,46 +751,139 @@ def toggle_admin_user_status(
         )
 
         return AdminUserRead(
-            id=user_id,
+            id=10000 + loader.id,
+            keycloak_id=f"loader-{loader.id}",
+            username=loader.short_name.lower().replace(" ", "."),
             email=f"{loader.short_name.lower().replace(' ', '.')}@dock.waypoint.com",
             full_name=loader.full_name,
             role="LOADER",
             role_display="Loader",
             is_active=loader.is_active,
+            is_keycloak_managed=False,
             created_at=loader.created_at,
             updated_at=loader.created_at,
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
+    # 2. Keycloak user status toggle (Primary)
+    kc_id = str(user_id)
+    if kc_id.isdigit():
+        local_u = db.query(User).filter(User.id == int(kc_id)).first()
+        if local_u and local_u.keycloak_id:
+            kc_id = local_u.keycloak_id
 
-    user.is_active = status_in.is_active
-    db.commit()
-    db.refresh(user)
+    if keycloak_admin.is_keycloak_admin_configured():
+        ok, err = keycloak_admin.toggle_keycloak_user_status(keycloak_id=kc_id, is_active=status_in.is_active)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"Keycloak Status Toggle Error: {err}")
 
-    status_str = "ENABLED" if user.is_active else "DISABLED"
+    # Update local shadow
+    local_u = db.query(User).filter(or_(User.keycloak_id == kc_id, User.id == int(kc_id) if kc_id.isdigit() else False)).first()
+    if local_u:
+        local_u.is_active = status_in.is_active
+        db.commit()
+        db.refresh(local_u)
+
+    status_str = "ENABLED" if status_in.is_active else "DISABLED"
     record_audit(
         action_type="USER_MUTATION",
-        entity_name="User Account",
-        entity_id=str(user.id),
-        summary=f"Account for {user.full_name} ({user.email}) was {status_str}.",
-        severity="WARNING" if not user.is_active else "INFO",
+        entity_name="Keycloak User Account",
+        entity_id=kc_id,
+        summary=f"Keycloak account {local_u.email if local_u else kc_id} was {status_str}.",
+        severity="WARNING" if not status_in.is_active else "INFO",
     )
 
-    val = user.role.value if hasattr(user.role, "value") else str(user.role)
+    val = local_u.role.value if local_u and hasattr(local_u.role, "value") else "DISPATCHER"
     mapped_role = "STORE_MANAGER" if val == "WAREHOUSE_MANAGER" else val
 
     return AdminUserRead(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
+        id=local_u.id if local_u else None,
+        keycloak_id=kc_id,
+        username=local_u.email.split("@")[0] if local_u and local_u.email else kc_id,
+        email=local_u.email if local_u else "",
+        full_name=local_u.full_name if local_u else "",
         role=mapped_role,
         role_display=role_to_display(val),
-        is_active=user.is_active,
-        created_at=user.created_at,
-        updated_at=user.updated_at,
+        is_active=status_in.is_active,
+        is_keycloak_managed=True,
+        created_at=local_u.created_at if local_u else None,
+        updated_at=local_u.updated_at if local_u else None,
     )
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_admin_user(
+    user_id: str,
+    db: Session = Depends(deps.get_db),
+) -> None:
+    """Permanently delete user from Keycloak realm."""
+    kc_id = str(user_id)
+    if kc_id.isdigit() and int(kc_id) >= 10000:
+        loader_id = int(kc_id) - 10000
+        loader = db.query(LoaderUser).filter(LoaderUser.id == loader_id).first()
+        if loader:
+            db.delete(loader)
+            db.commit()
+            return None
+
+    if kc_id.isdigit():
+        local_u = db.query(User).filter(User.id == int(kc_id)).first()
+        if local_u and local_u.keycloak_id:
+            kc_id = local_u.keycloak_id
+
+    if keycloak_admin.is_keycloak_admin_configured():
+        ok, err = keycloak_admin.delete_keycloak_user(kc_id)
+        if not ok:
+            raise HTTPException(status_code=400, detail=f"Keycloak Delete Error: {err}")
+
+    # Remove or deactivate local shadow record
+    local_u = db.query(User).filter(or_(User.keycloak_id == kc_id, User.id == int(kc_id) if kc_id.isdigit() else False)).first()
+    if local_u:
+        local_u.is_active = False
+        db.commit()
+
+    record_audit(
+        action_type="USER_DELETION",
+        entity_name="Keycloak User Account",
+        entity_id=kc_id,
+        summary=f"Purged Keycloak account {kc_id} from IAM directory.",
+        severity="WARNING",
+    )
+    return None
+
+
+@router.post("/users/{user_id}/reset-password", response_model=Dict[str, Any])
+def reset_admin_user_password(
+    user_id: str,
+    payload: AdminUserPasswordReset,
+    db: Session = Depends(deps.get_db),
+) -> Any:
+    """Reset user password directly in Keycloak."""
+    kc_id = str(user_id)
+    if kc_id.isdigit():
+        local_u = db.query(User).filter(User.id == int(kc_id)).first()
+        if local_u and local_u.keycloak_id:
+            kc_id = local_u.keycloak_id
+
+    if not keycloak_admin.is_keycloak_admin_configured():
+        raise HTTPException(status_code=400, detail="Keycloak Admin is not configured.")
+
+    ok, err = keycloak_admin.reset_keycloak_user_password(
+        keycloak_id=kc_id,
+        new_password=payload.password,
+        temporary=payload.temporary,
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Keycloak Password Reset Error: {err}")
+
+    record_audit(
+        action_type="PASSWORD_RESET",
+        entity_name="Keycloak IAM Password",
+        entity_id=kc_id,
+        summary=f"Admin reset Keycloak password for user {kc_id} (temporary={payload.temporary}).",
+        severity="INFO",
+    )
+    return {"success": True, "message": "Password successfully updated in Keycloak."}
+
 
 
 # ── 3. Roles & Access Endpoints ───────────────────────────

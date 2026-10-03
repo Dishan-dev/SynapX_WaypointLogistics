@@ -7,16 +7,35 @@ from app.models.reference import Brand, Depot, DockType
 # ── User Schemas ──────────────────────────────────────────
 
 class AdminUserRead(BaseModel):
-    id: int
+    id: Optional[int] = None
+    keycloak_id: Optional[str] = None
+    username: Optional[str] = None
     email: str
     full_name: str
     role: str
     role_display: str
     is_active: bool
+    email_verified: bool = True
+    is_keycloak_managed: bool = True
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AdminUserPasswordReset(BaseModel):
+    password: str
+    temporary: bool = False
+
+
+class KeycloakSyncResult(BaseModel):
+    success: bool
+    message: str
+    synced_count: int
+    created_count: int
+    updated_count: int
+    keycloak_total: int
+    db_total: int
 
 
 class AdminUserCreate(BaseModel):

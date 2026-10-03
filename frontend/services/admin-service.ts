@@ -9,12 +9,16 @@ function adminFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 export interface AdminUser {
-  id: number;
+  id?: number | null;
+  keycloak_id?: string;
+  username?: string;
   email: string;
   full_name: string;
   role: string;
   role_display: string;
   is_active: boolean;
+  email_verified?: boolean;
+  is_keycloak_managed?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -238,8 +242,8 @@ export const adminService = {
     return res.json();
   },
 
-  async updateUser(id: number, payload: Partial<AdminUser> & { password?: string }): Promise<AdminUser> {
-    const res = await adminFetch(`/api/v1/admin/users/${id}`, {
+  async updateUser(idOrKeycloakId: string | number, payload: Partial<AdminUser> & { password?: string }): Promise<AdminUser> {
+    const res = await adminFetch(`/api/v1/admin/users/${idOrKeycloakId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -251,8 +255,8 @@ export const adminService = {
     return res.json();
   },
 
-  async toggleUserStatus(id: number, isActive: boolean): Promise<AdminUser> {
-    const res = await adminFetch(`/api/v1/admin/users/${id}/status`, {
+  async toggleUserStatus(idOrKeycloakId: string | number, isActive: boolean): Promise<AdminUser> {
+    const res = await adminFetch(`/api/v1/admin/users/${idOrKeycloakId}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_active: isActive }),
@@ -260,6 +264,29 @@ export const adminService = {
     if (!res.ok) throw new Error("Failed to toggle user status");
     return res.json();
   },
+
+  async deleteUser(idOrKeycloakId: string | number): Promise<void> {
+    const res = await adminFetch(`/api/v1/admin/users/${idOrKeycloakId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to delete user");
+    }
+  },
+
+  async resetUserPassword(idOrKeycloakId: string | number, password: string, temporary: boolean = false): Promise<void> {
+    const res = await adminFetch(`/api/v1/admin/users/${idOrKeycloakId}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password, temporary }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to reset password");
+    }
+  },
+
 
   // Roles & Access
   async getRoles(): Promise<RoleDetail[]> {
