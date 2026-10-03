@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import health, auth, orders, inventory, dispatch, tracking, fleet, allocations
+from app.api.v1.endpoints import health, auth, orders, inventory, dispatch, tracking, fleet, allocations, outlets
 
 api_router = APIRouter()
 
@@ -11,3 +11,4 @@ api_router.include_router(dispatch.router, prefix="/dispatch", tags=["Dispatch"]
 api_router.include_router(tracking.router, prefix="/tracking", tags=["Tracking"])
 api_router.include_router(fleet.router, prefix="/fleet", tags=["Fleet"])
 api_router.include_router(allocations.router, prefix="/allocations", tags=["Allocations"])
+api_router.include_router(outlets.router, prefix="/outlets", tags=["Outlets"])

@@ -4,6 +4,7 @@ from app.models.inventory import InventoryItem, Warehouse
 from app.models.shipment import Shipment, DispatchTrip
 from app.models.fleet import Vehicle, DriverProfile
 from app.models.allocation import Allocation
+from app.models.outlet import Outlet, OutletContact, OutletReceivingWindow
 
 __all__ = [
     "User",
@@ -16,4 +17,7 @@ __all__ = [
     "Vehicle",
     "DriverProfile",
     "Allocation",
+    "Outlet",
+    "OutletContact",
+    "OutletReceivingWindow",
 ]

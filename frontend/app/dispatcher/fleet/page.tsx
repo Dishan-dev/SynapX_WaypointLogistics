@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { MetricCard } from "@/components/domain/metric-card";
 import { fetchFleet, formatCapacity, normalize, type FleetVehicle } from "@/components/dispatcher/fleet/fleet-data";
 import { VehicleDetails } from "@/components/dispatcher/fleet/VehicleDetails";
+import { VehicleEditor } from "@/components/dispatcher/fleet/VehicleEditor";
 import { downloadCsv } from "@/components/dispatcher/operations/data";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const PAGE_SIZE = 7;
-const columns = ["Vehicle", "Type", "Temp", "Depot", "Weight Cap", "Volume Cap", "Efficiency", "Weekly Fuel", "Action"];
+const columns = ["Vehicle", "Type", "Temp", "Depot", "Weight Cap", "Volume Cap", "Availability", "Fuel status", "Action"];
 
 function FleetFilter({ label, value, options, onChange }: {
   label: string;
@@ -46,6 +47,7 @@ export default function FleetPage() {
   const [temperature, setTemperature] = useState("all");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
+  const [editor, setEditor] = useState<FleetVehicle | "new" | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -100,9 +102,10 @@ export default function FleetPage() {
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
         <h1 className="text-3xl font-bold tracking-tight">Fleet</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Reference vehicle capacity, temperature capability, depot assignment, efficiency, and fuel limits.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Manage vehicle specifications, availability, and current maintenance and fuel status.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setEditor("new")}>Add vehicle</Button>
           <Button variant="outline" disabled={loading} onClick={() => { setLoading(true); setError(null); setRequest((value) => value + 1); }}>Refresh</Button>
           <Button variant="outline" disabled={loading || !!error || !filtered.length} onClick={() => downloadCsv("fleet.csv", [["Vehicle", "Type", "Temperature", "Depot", "Weight capacity (kg)", "Volume capacity (m3)", "Status", "Fuel status", "Maintenance"], ...filtered.map((v) => [v.code, v.vehicle_type, v.temperature_mode, v.depot_name, v.capacity_kg, v.capacity_vol_m3, v.status, v.weekly_fuel_status, v.maintenance_state ?? "Not recorded"])])}>Export CSV</Button>
         </div>
@@ -160,13 +163,13 @@ export default function FleetPage() {
                   <TableCell className="whitespace-normal capitalize text-muted-foreground">{vehicle.depot_name}</TableCell>
                   <TableCell>{formatCapacity(vehicle.capacity_kg, "kg")}</TableCell>
                   <TableCell>{formatCapacity(vehicle.capacity_vol_m3, "m³")}</TableCell>
-                  <TableCell className="text-muted-foreground">Not recorded</TableCell>
-                  <TableCell className="text-muted-foreground">Not recorded</TableCell>
-                  <TableCell className="text-center"><VehicleDetails vehicle={vehicle} /></TableCell>
+                  <TableCell className="capitalize text-muted-foreground">{vehicle.status}</TableCell>
+                  <TableCell className="whitespace-normal break-words text-muted-foreground">{vehicle.weekly_fuel_status}</TableCell>
+                  <TableCell className="text-center"><div className="flex flex-col gap-2"><VehicleDetails vehicle={vehicle} /><Button size="sm" variant="outline" aria-label={`Edit ${vehicle.code}`} onClick={() => setEditor(vehicle)}>Edit</Button></div></TableCell>
                 </TableRow>)}
             </TableBody>
           </Table>
-          {!loading && !error && vehicles.length > 0 && <p className="mt-4 text-xs text-muted-foreground">Efficiency and weekly fuel limits have not been recorded. Fuel availability is shown in vehicle details.</p>}
+          {!loading && !error && vehicles.length > 0 && <p className="mt-4 text-xs text-muted-foreground">Fuel and maintenance statuses describe the current state. Service history and numeric fuel transactions are not stored yet.</p>}
           {!loading && !error && filtered.length > PAGE_SIZE && <nav aria-label="Fleet pagination" className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4 text-xs text-muted-foreground">
             <span>Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length} vehicles</span>
             <div className="flex items-center gap-3">
@@ -177,6 +180,10 @@ export default function FleetPage() {
           </nav>}
         </CardContent>
       </Card>
+      {editor && <VehicleEditor vehicle={editor === "new" ? undefined : editor} onClose={() => setEditor(null)} onSaved={(saved) => {
+        setVehicles((current) => [...current.filter((v) => v.id !== saved.id), saved].sort((a, b) => a.code.localeCompare(b.code, "en", { numeric: true })));
+        clearFilters();
+      }} />}
     </div>
   );
 }

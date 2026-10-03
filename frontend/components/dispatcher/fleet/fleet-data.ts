@@ -11,6 +11,7 @@ export interface FleetVehicle {
   trips_today: number;
   trips_planned: number;
   maintenance_state: string | null;
+  updated_at: string;
 }
 
 export const normalize = (value: string) => value.trim().toLowerCase();

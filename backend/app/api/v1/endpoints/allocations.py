@@ -41,7 +41,7 @@ def create_allocation(
     """
     Create new allocation. Ensures vehicle is available and marks it as allocated.
     """
-    vehicle = db.query(Vehicle).filter(Vehicle.id == allocation_in.vehicle_id).first()
+    vehicle = db.query(Vehicle).filter(Vehicle.id == allocation_in.vehicle_id).with_for_update().first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
         
