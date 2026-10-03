@@ -4,6 +4,7 @@ import pytest
 
 from app.api import deps
 from app.main import app
+from app.models.catalogue import FreshItem, StyleItem
 from app.models.reference import Brand, CalendarDay, Depot, DockType, Outlet
 
 NOW = datetime(2026, 9, 26, 6, 0)  # Sat 26 Sep, 06:00 — the day the Figma screens show
@@ -29,8 +30,32 @@ def outlets(db_session):
         dock_type=DockType.MALL_BAY, window_start=time(8, 0), window_end=time(10, 0), depot=Depot.PELIYAGODA,
     )
     db_session.add_all([fresh, style, CalendarDay(date=date(2026, 10, 1), is_operating=False, holiday_name="Poya Day")])
+    db_session.add_all(catalogue_rows())
     db_session.commit()
     return {"fresh": fresh, "style": style}
+
+
+def spec(sku, name, model, zone, weight=2.0, volume=0.01):
+    return model, {
+        "sku": sku, "name": name, "temperature_zone": zone,
+        "unit_weight_kg": weight, "unit_volume_m3": volume, "depot_name": "Peliyagoda Central",
+    }
+
+
+# Catalogue rows as seeded from docs/<brand>_cargo_specs.csv (weight and volume per carton).
+CATALOGUE = [
+    spec("SKU-063", "Greek Yogurt 500g - 12 unit Chilled Carton", FreshItem, "Chilled", 6.5, 0.02),
+    spec("SKU-014", "Soft Drinks 1L - 12 unit Chilled Carton", FreshItem, "Chilled", 12.4, 0.03),
+    spec("SKU-070", "Cheddar Block 250g - 20 unit Chilled Carton", FreshItem, "Chilled"),
+    spec("SKU-001", "Bottled Water 500ml - 24 unit Carton", FreshItem, "Ambient", 12.0, 0.025),
+    spec("SKU-500", "Silk Scarves - 10 unit Climate Carton", StyleItem, "Chilled"),
+    spec("SKU-501", "Denim Jeans - 20 unit Assortment Carton", StyleItem, "Ambient"),
+    spec("SKU-502", "Leather Belts - 12 unit Assortment Carton", StyleItem, "Ambient"),
+]
+
+
+def catalogue_rows():
+    return [model(**fields) for model, fields in CATALOGUE]
 
 
 def item(sku, zone, qty=5, name=None):
@@ -237,3 +262,32 @@ def test_calendar_lists_operating_days_and_earliest_dates(client, clock, outlets
     assert body["operating_days"][:3] == ["2026-09-26", "2026-09-28", "2026-09-29"]
     assert body["earliest_default"] == "2026-09-29"
     assert body["earliest_high_priority"] == "2026-09-28"
+
+
+def test_catalogue_lists_only_the_outlets_brand_with_pack_labels(client, outlets):
+    res = client.get("/api/v1/catalogue/", params={"outlet_id": outlets["style"].id})
+    assert res.status_code == 200
+    items = res.json()
+    assert {i["sku"] for i in items} == {"SKU-500", "SKU-501", "SKU-502"}
+    jeans = next(i for i in items if i["sku"] == "SKU-501")
+    assert jeans["name"] == "Denim Jeans"
+    assert jeans["pack_label"] == "20 unit Assortment Carton"
+    assert jeans["brand"] == "Style" and jeans["temperature_zone"] == "Ambient"
+    assert client.get("/api/v1/catalogue/", params={"outlet_id": 9999}).status_code == 404
+
+
+def test_items_from_another_brand_are_rejected(client, clock, outlets):
+    res = place(client, outlets["style"].id, "2026-09-30", [item("SKU-063", "Chilled"), item("NOPE-1", "Ambient")])
+    assert res.status_code == 422
+    assert res.json()["detail"]["code"] == "ITEM_NOT_AVAILABLE"
+    assert res.json()["detail"]["skus"] == ["NOPE-1", "SKU-063"]
+
+
+def test_catalogue_sets_zone_name_weight_and_volume(client, clock, outlets):
+    # The browser says Ambient, but the catalogue says yogurt is chilled.
+    res = place(client, outlets["fresh"].id, "2026-09-30", [item("SKU-063", "Ambient", 10, name="whatever"), item("SKU-014", "Chilled", 2)])
+    assert res.status_code == 201
+    (order,) = res.json()
+    assert order["temperature_zone"] == "Chilled"
+    assert order["weight_kg"] == round(10 * 6.5 + 2 * 12.4, 2)
+    assert {i["item_name"] for i in order["items"]} == {"Greek Yogurt 500g", "Soft Drinks 1L"}

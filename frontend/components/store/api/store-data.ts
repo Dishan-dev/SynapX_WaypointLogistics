@@ -1,21 +1,28 @@
 import { addDays, eachDayOfInterval, format } from "date-fns";
 import {
+  currentOutlet,
+  mockCatalogue,
   mockHolidays,
   mockNotifications,
   mockOrders,
   mockOutletSettings,
+  type CatalogueItem,
   type OutletSettings,
   type StoreNotification,
+  type StoreOutlet,
   type StoreOrder,
   type TemperatureClass,
 } from "@/components/store/mock-data";
 import { ApiError, apiFetch } from "@/components/store/api/client";
 import { STORE_DATA_SOURCE, STORE_OUTLET_ID } from "@/components/store/api/config";
 import {
+  toCatalogueItem,
   toOutletSettings,
+  toStoreOutlet,
   toStoreNotification,
   toStoreOrder,
   toTemperatureZone,
+  type ApiCatalogueItem,
   type ApiNotification,
   type ApiOperatingDays,
   type ApiOutletSettings,
@@ -26,6 +33,19 @@ import {
 // is mock or live (see api/config.ts). Works from server components and from the browser.
 
 const live = () => STORE_DATA_SOURCE === "api";
+
+/** The signed-in manager's outlet. Its brand decides the catalogue and the ordering rules. */
+export async function getCurrentOutlet(): Promise<StoreOutlet> {
+  if (!live()) return currentOutlet;
+  return toStoreOutlet(await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`));
+}
+
+/** Only the items the outlet's brand can order (fresh_items, style_items or tech_items). */
+export async function getCatalogue(): Promise<CatalogueItem[]> {
+  if (!live()) return mockCatalogue;
+  const items = await apiFetch<ApiCatalogueItem[]>(`/catalogue/?outlet_id=${STORE_OUTLET_ID}`);
+  return items.map(toCatalogueItem);
+}
 
 export async function getStoreOrders(): Promise<StoreOrder[]> {
   if (live()) {

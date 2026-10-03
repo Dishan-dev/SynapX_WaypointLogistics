@@ -520,7 +520,7 @@ export function NewRequestForm({
                             <TableRow key={line.sku} className="hover:bg-transparent">
                               <StoreTableCell className="whitespace-normal">
                                 <span className="block font-medium">{line.item.itemName}</span>
-                                <span className="mt-2 block text-muted-foreground">{line.item.category}</span>
+                                <span className="mt-2 block text-muted-foreground">{line.item.packLabel}</span>
                               </StoreTableCell>
                               <StoreTableCell>{line.sku}</StoreTableCell>
                               <StoreTableCell>

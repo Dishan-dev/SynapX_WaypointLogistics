@@ -1,10 +1,13 @@
 import {
   mockCatalogue,
+  type Brand,
+  type CatalogueItem,
   type NotificationCategory,
   type NotificationType,
   type OrderStatus,
   type StoreNotification,
   type StoreOrder,
+  type StoreOutlet,
   type TemperatureClass,
 } from "@/components/store/mock-data";
 
@@ -65,6 +68,16 @@ export interface ApiNotification {
   created_at: string;
 }
 
+export interface ApiCatalogueItem {
+  sku: string;
+  name: string;
+  pack_label: string | null;
+  brand: string;
+  temperature_zone: string;
+  unit_weight_kg: number;
+  unit_volume_m3: number;
+}
+
 export interface ApiOperatingDays {
   operating_days: string[];
   earliest_default: string;
@@ -79,6 +92,22 @@ export function toTemperatureClass(zone: string): TemperatureClass {
 
 export function toTemperatureZone(temperature: TemperatureClass) {
   return temperature === "chilled" ? "Chilled" : "Ambient";
+}
+
+/** "6 unit Chilled Carton" -> "Cartons", "2 unit Shipping Pallet" -> "Pallets". */
+function unitLabelFor(pack: string | null) {
+  const last = pack?.trim().split(/\s+/).pop();
+  return last ? `${last.charAt(0).toUpperCase()}${last.slice(1)}s` : "Units";
+}
+
+export function toCatalogueItem(item: ApiCatalogueItem): CatalogueItem {
+  return {
+    sku: item.sku,
+    itemName: item.name,
+    packLabel: item.pack_label ?? "",
+    temperatureClass: toTemperatureClass(item.temperature_zone),
+    unitLabel: unitLabelFor(item.pack_label),
+  };
 }
 
 export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
@@ -102,12 +131,12 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
         }
       : undefined,
     items: order.items.map((item) => {
-      // The API doesn't have catalogue details yet (contract Q4), so category and unit come from the catalogue.
+      // Order items don't carry pack details; the mock catalogue fills them in for the demo SKUs.
       const catalogue = catalogueBySku.get(item.sku);
       return {
         sku: item.sku,
         itemName: item.item_name,
-        category: catalogue?.category ?? "",
+        category: catalogue?.packLabel ?? "",
         temperatureClass: catalogue?.temperatureClass ?? temperatureClass,
         quantity: item.quantity,
         quantitySent: item.quantity_sent ?? undefined,
@@ -174,6 +203,17 @@ export interface ApiOutletSettings {
   sms_alerts_priority: boolean;
   is_verified: boolean;
   last_synced_at?: string;
+}
+
+export function toStoreOutlet(api: ApiOutletSettings): StoreOutlet {
+  return {
+    code: api.outlet_code,
+    name: api.outlet_name,
+    brand: api.brand.toLowerCase() as Brand,
+    district: api.district,
+    windowStart: api.window_start,
+    windowEnd: api.window_end,
+  };
 }
 
 export function toOutletSettings(api: ApiOutletSettings) {

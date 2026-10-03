@@ -11,6 +11,7 @@ from app.schemas.order import OrderCreate
 from app.schemas.store_order import GoodsRequestCreate
 from app.services import order_rules
 from app.services.calendar_service import calendar_service
+from app.services.catalogue_service import catalogue_service, split_name
 from app.services.notification_service import notification_service
 
 # Statuses that hold a slot for the outlet on its delivery date (Fresh dual-order rule).
@@ -126,6 +127,18 @@ class OrderService:
         if outlet is None:
             raise NotFoundError("Outlet not found", entity="Outlet", entity_id=request.outlet_id)
 
+        # Every line must be an item from the outlet's own chain. The catalogue decides the temperature zone
+        # and supplies the per-carton weight and volume the loader plans with.
+        specs = catalogue_service.items_by_sku(db, outlet, (item.sku for item in request.items))
+        unavailable = sorted({item.sku for item in request.items if item.sku not in specs})
+        if unavailable:
+            raise OrderRuleError(
+                f"{', '.join(unavailable)} {'is' if len(unavailable) == 1 else 'are'} not in {outlet.name}'s catalogue.",
+                code="ITEM_NOT_AVAILABLE",
+                details={"skus": unavailable},
+            )
+        zone_of = {item.sku: specs[item.sku].temperature_zone for item in request.items}
+
         delivery_date = request.delivery_date
         if not calendar_service.is_operating_day(db, delivery_date):
             suggestion = calendar_service.get_next_operating_day(db, delivery_date)
@@ -150,7 +163,7 @@ class OrderService:
                 details={"earliest_date": earliest.isoformat()},
             )
 
-        zones = order_rules.split_by_temperature(item.temperature_zone for item in request.items)
+        zones = order_rules.split_by_temperature(zone_of[item.sku] for item in request.items)
         brand = outlet.brand.value if outlet.brand else None
         if brand != "fresh" and len(zones) > 1:
             raise OrderRuleError(
@@ -183,7 +196,7 @@ class OrderService:
         numbers = OrderService.next_order_numbers(db, len(zones))
         created: List[Order] = []
         for number, zone in zip(numbers, zones):
-            lines = [item for item in request.items if item.temperature_zone == zone]
+            lines = [item for item in request.items if zone_of[item.sku] == zone]
             order = Order(
                 order_number=number,
                 client_name=outlet.name,
@@ -195,7 +208,8 @@ class OrderService:
                 district=outlet.district,
                 temperature_zone=zone,
                 delivery_window=_window(outlet),
-                weight_kg=0.0,
+                weight_kg=round(sum(item.quantity * specs[item.sku].unit_weight_kg for item in lines), 2),
+                volume_m3=round(sum(item.quantity * specs[item.sku].unit_volume_m3 for item in lines), 4),
                 is_priority=request.is_priority,
                 operating_date=delivery_date.isoformat(),
                 outlet_id=outlet.id,
@@ -205,7 +219,13 @@ class OrderService:
                 notes=request.notes,
                 placed_by=placed_by,
                 items=[
-                    OrderItem(sku=item.sku, item_name=item.item_name, quantity=item.quantity, unit_price=item.unit_price)
+                    # The name comes from the catalogue, not the browser.
+                    OrderItem(
+                        sku=item.sku,
+                        item_name=split_name(specs[item.sku].name)[0],
+                        quantity=item.quantity,
+                        unit_price=item.unit_price,
+                    )
                     for item in lines
                 ],
             )

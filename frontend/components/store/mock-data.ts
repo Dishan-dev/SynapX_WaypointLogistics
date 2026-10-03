@@ -374,38 +374,31 @@ export const brandLabels: Record<Brand, string> = {
   tech: "Tech",
 };
 
-// ── Depot catalogue (Figma 03b Add Item) — inventory_items + the catalogue columns in contract §2 ──
-
-export type StockLevel = "in_stock" | "low" | "out";
+// ── Depot catalogue (Figma 03b Add Item) — the outlet's brand table (fresh_items / style_items / tech_items) ──
 
 export interface CatalogueItem {
   sku: string;
   itemName: string;
-  category: string;
+  /** The pack the item ships in, e.g. "12 unit Chilled Carton". */
+  packLabel: string;
   temperatureClass: TemperatureClass;
+  /** What the quantity counts, from the pack (e.g. "Cartons"). */
   unitLabel: string;
-  stock: StockLevel;
-  /** Units left when stock is low. */
-  stockLeft?: number;
-  /** YYYY-MM-DD, when an out-of-stock item is expected back. */
-  restockEta?: string;
 }
 
+// Mock mode is Fresh Colombo, so this stands in for fresh_items.
 export const mockCatalogue: CatalogueItem[] = [
-  { sku: "SKU-014", itemName: "Soft Drinks 1L (12pk)", category: "Beverages · Carbonated", temperatureClass: "chilled", unitLabel: "Cases", stock: "low", stockLeft: 8 },
-  { sku: "SKU-063", itemName: "Greek Yogurt 500g", category: "Dairy", temperatureClass: "chilled", unitLabel: "Cases", stock: "in_stock" },
-  { sku: "SKU-022", itemName: "Oat Milk 1L (6pk)", category: "Beverages · Dairy-free", temperatureClass: "chilled", unitLabel: "Cases", stock: "out", restockEta: "2026-09-30" },
-  { sku: "SKU-070", itemName: "Cheddar Block 250g", category: "Dairy", temperatureClass: "chilled", unitLabel: "Cases", stock: "in_stock" },
-  { sku: "SKU-081", itemName: "Fresh Chicken Breast 1kg", category: "Meat · Poultry", temperatureClass: "chilled", unitLabel: "Crates", stock: "in_stock" },
-  { sku: "SKU-001", itemName: "Bottled Water 500ml", category: "Beverages · Packaged liquids", temperatureClass: "ambient", unitLabel: "Cases", stock: "in_stock" },
-  { sku: "SKU-048", itemName: "Espresso Roast Beans 1kg", category: "Beverages · Coffee", temperatureClass: "ambient", unitLabel: "Bags", stock: "in_stock" },
-  { sku: "SKU-032", itemName: "Paper Cups 8oz (500ct)", category: "Consumables · Disposables", temperatureClass: "ambient", unitLabel: "Boxes", stock: "in_stock" },
-  { sku: "SKU-035", itemName: "Paper Napkins (1000ct)", category: "Consumables · Disposables", temperatureClass: "ambient", unitLabel: "Boxes", stock: "low", stockLeft: 12 },
-  { sku: "SKU-090", itemName: "Basmati Rice 5kg", category: "Grocery · Staples", temperatureClass: "ambient", unitLabel: "Bags", stock: "in_stock" },
+  { sku: "SKU-014", itemName: "Soft Drinks 1L (12pk)", packLabel: "12 unit Chilled Carton", temperatureClass: "chilled", unitLabel: "Cases" },
+  { sku: "SKU-063", itemName: "Greek Yogurt 500g", packLabel: "12 unit Chilled Carton", temperatureClass: "chilled", unitLabel: "Cases" },
+  { sku: "SKU-022", itemName: "Oat Milk 1L (6pk)", packLabel: "6 unit Chilled Carton", temperatureClass: "chilled", unitLabel: "Cases" },
+  { sku: "SKU-070", itemName: "Cheddar Block 250g", packLabel: "20 unit Chilled Carton", temperatureClass: "chilled", unitLabel: "Cases" },
+  { sku: "SKU-081", itemName: "Fresh Chicken Breast 1kg", packLabel: "8 unit Insulated Crate", temperatureClass: "chilled", unitLabel: "Crates" },
+  { sku: "SKU-001", itemName: "Bottled Water 500ml", packLabel: "24 unit Carton", temperatureClass: "ambient", unitLabel: "Cases" },
+  { sku: "SKU-048", itemName: "Espresso Roast Beans 1kg", packLabel: "6 unit Carton", temperatureClass: "ambient", unitLabel: "Bags" },
+  { sku: "SKU-032", itemName: "Paper Cups 8oz (500ct)", packLabel: "4 unit Carton", temperatureClass: "ambient", unitLabel: "Boxes" },
+  { sku: "SKU-035", itemName: "Paper Napkins (1000ct)", packLabel: "6 unit Carton", temperatureClass: "ambient", unitLabel: "Boxes" },
+  { sku: "SKU-090", itemName: "Basmati Rice 5kg", packLabel: "4 unit Sack Bundle", temperatureClass: "ambient", unitLabel: "Bags" },
 ];
-
-export const CATALOGUE_DEPOT = "Peliyagoda Depot";
-export const CATALOGUE_UPDATED_AT = "05:00";
 
 // ── Operating calendar (calendar_days) — Sundays and these dates have no deliveries ──
 

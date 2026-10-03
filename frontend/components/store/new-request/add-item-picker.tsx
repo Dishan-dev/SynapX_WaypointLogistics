@@ -1,9 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { format, parseISO } from "date-fns";
 import { Search } from "lucide-react";
-import { toast } from "sonner";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,12 +19,7 @@ import { Table, TableBody, TableRow } from "@/components/ui/table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { StorePill } from "@/components/store/status-pill";
 import { StoreTableCell, StoreTableHeader } from "@/components/store/store-table";
-import {
-  CATALOGUE_DEPOT,
-  CATALOGUE_UPDATED_AT,
-  type CatalogueItem,
-  type TemperatureClass,
-} from "@/components/store/mock-data";
+import { type CatalogueItem, type TemperatureClass } from "@/components/store/mock-data";
 import { QuantityStepper } from "@/components/store/new-request/quantity-stepper";
 
 type StorageFilter = "all" | TemperatureClass;
@@ -36,35 +29,6 @@ export const temperatureLabel: Record<TemperatureClass, string> = { chilled: "Ch
 export function TemperaturePill({ value }: { value: TemperatureClass }) {
   return <StorePill tone={value === "chilled" ? "info" : "neutral"}>{temperatureLabel[value]}</StorePill>;
 }
-
-function StockText({ item }: { item: CatalogueItem }) {
-  if (item.stock === "out") {
-    return (
-      <span className="flex flex-col gap-2">
-        <span className="font-medium text-destructive">Out of stock</span>
-        {item.restockEta && (
-          <span className="text-muted-foreground">Restock ETA {format(parseISO(item.restockEta), "d MMM")}</span>
-        )}
-      </span>
-    );
-  }
-  if (item.stock === "low") {
-    return (
-      <span className="flex flex-col gap-2">
-        <span className="font-medium text-warning-muted-foreground">Low stock</span>
-        {item.stockLeft !== undefined && (
-          <span className="text-muted-foreground">
-            {item.stockLeft} {item.unitLabel.toLowerCase()} left
-          </span>
-        )}
-      </span>
-    );
-  }
-  return <span className="font-medium text-success">In stock</span>;
-}
-
-const stockShort = (item: CatalogueItem) =>
-  item.stock === "out" ? "Out of stock" : item.stock === "low" ? "Low stock" : "In stock";
 
 export function AddItemPicker({
   open,
@@ -146,6 +110,9 @@ function PickerBody({
   const [quantities, setQuantities] = useState<Record<string, number>>(() => ({ ...selected }));
   const [added, setAdded] = useState<Set<string>>(() => new Set(Object.keys(selected)));
 
+  // Fresh stores only get chilled items and Style/Tech only ambient, so the filter only shows for a mix.
+  const hasBothZones = useMemo(() => new Set(catalogue.map((item) => item.temperatureClass)).size > 1, [catalogue]);
+
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return catalogue.filter(
@@ -154,7 +121,7 @@ function PickerBody({
         (!query ||
           item.itemName.toLowerCase().includes(query) ||
           item.sku.toLowerCase().includes(query) ||
-          item.category.toLowerCase().includes(query))
+          item.packLabel.toLowerCase().includes(query))
     );
   }, [catalogue, search, storage]);
 
@@ -171,27 +138,8 @@ function PickerBody({
     onConfirm(result);
   };
 
-  const notify = (item: CatalogueItem) =>
-    toast.success(`We'll notify you when ${item.itemName} is back in stock.`);
-
   const action = (item: CatalogueItem) => {
     if (added.has(item.sku)) return <StorePill tone="success">Added</StorePill>;
-    if (item.stock === "out") {
-      return (
-        <span className="flex flex-col items-start gap-2">
-          <Button variant="outline" disabled className="h-11 border-2 border-primary px-4 text-base font-bold md:h-10">
-            Unavailable
-          </Button>
-          <button
-            type="button"
-            onClick={() => notify(item)}
-            className="min-h-11 text-sm font-bold text-primary underline-offset-4 hover:underline md:min-h-0"
-          >
-            Notify me<span className="sr-only"> when {item.itemName} is back</span>
-          </button>
-        </span>
-      );
-    }
     return (
       <Button
         variant="outline"
@@ -207,7 +155,7 @@ function PickerBody({
     <>
       <div className="relative">
         <Label htmlFor="catalogue-search" className="sr-only">
-          Search by item name, SKU or category
+          Search by item name, SKU or pack
         </Label>
         <Search
           aria-hidden="true"
@@ -218,35 +166,35 @@ function PickerBody({
           type="search"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder={compact ? "Search item, SKU or category" : "Search by item name, SKU or category"}
+          placeholder={compact ? "Search item, SKU or pack" : "Search by item name, SKU or pack"}
           className="h-12 bg-card pl-10 text-base md:text-base"
         />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div role="group" aria-label="Storage" className="flex gap-2">
-          {(["all", "chilled", "ambient"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={storage === value}
-              onClick={() => setStorage(value)}
-              className={cn(
-                "min-h-11 rounded-md border px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9",
-                storage === value
-                  ? "border-primary bg-primary font-bold text-primary-foreground"
-                  : "border-input bg-card text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {value === "all" ? (compact ? "All" : "All Items") : temperatureLabel[value]}
-            </button>
-          ))}
-        </div>
-        {!compact && (
-          <p className="text-sm text-muted-foreground">
-            Stock shown for {CATALOGUE_DEPOT} · updated {CATALOGUE_UPDATED_AT}
-          </p>
+        {hasBothZones && (
+          <div role="group" aria-label="Storage" className="flex gap-2">
+            {(["all", "chilled", "ambient"] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={storage === value}
+                onClick={() => setStorage(value)}
+                className={cn(
+                  "min-h-11 rounded-md border px-4 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9",
+                  storage === value
+                    ? "border-primary bg-primary font-bold text-primary-foreground"
+                    : "border-input bg-card text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {value === "all" ? (compact ? "All" : "All Items") : temperatureLabel[value]}
+              </button>
+            ))}
+          </div>
         )}
+        <p className="text-sm text-muted-foreground">
+          {visible.length} of {catalogue.length} items
+        </p>
       </div>
 
       <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
@@ -259,7 +207,7 @@ function PickerBody({
                 <div className="flex min-w-0 flex-col gap-2">
                   <span className="text-sm font-medium text-foreground">{item.itemName}</span>
                   <span className="text-sm text-muted-foreground">
-                    {item.sku} · {temperatureLabel[item.temperatureClass]} · {stockShort(item)}
+                    {item.sku} · {item.packLabel || temperatureLabel[item.temperatureClass]}
                   </span>
                 </div>
                 <div className="shrink-0">{action(item)}</div>
@@ -273,7 +221,6 @@ function PickerBody({
                 { label: "Item" },
                 { label: "SKU" },
                 { label: "Storage" },
-                { label: "Depot Stock" },
                 { label: "Quantity" },
                 { label: "Action", className: "text-transparent select-none" },
               ]}
@@ -283,21 +230,17 @@ function PickerBody({
                 <TableRow key={item.sku} className="hover:bg-transparent">
                   <StoreTableCell className="whitespace-normal">
                     <span className="block font-medium">{item.itemName}</span>
-                    <span className="mt-2 block text-muted-foreground">{item.category}</span>
+                    <span className="mt-2 block text-muted-foreground">{item.packLabel}</span>
                   </StoreTableCell>
                   <StoreTableCell>{item.sku}</StoreTableCell>
                   <StoreTableCell>
                     <TemperaturePill value={item.temperatureClass} />
                   </StoreTableCell>
                   <StoreTableCell>
-                    <StockText item={item} />
-                  </StoreTableCell>
-                  <StoreTableCell>
                     <QuantityStepper
                       label={`Quantity for ${item.itemName}`}
                       value={quantities[item.sku] ?? 0}
                       min={added.has(item.sku) ? 1 : 0}
-                      disabled={item.stock === "out"}
                       onChange={(value) => setQuantities((current) => ({ ...current, [item.sku]: value }))}
                     />
                   </StoreTableCell>
@@ -314,10 +257,7 @@ function PickerBody({
           Add to Request ({newlyAdded})
         </Button>
       ) : (
-        <DialogFooter className="flex-row items-center justify-between gap-4 sm:justify-between">
-          <p className="text-sm text-muted-foreground">
-            Low-stock items may be sent short. You&apos;ll see a dispatcher note if that happens.
-          </p>
+        <DialogFooter className="flex-row items-center justify-end gap-4">
           <div className="flex shrink-0 gap-4">
             <Button variant="outline" onClick={onCancel} className="h-10 border-2 border-primary px-4 text-base font-bold">
               Cancel

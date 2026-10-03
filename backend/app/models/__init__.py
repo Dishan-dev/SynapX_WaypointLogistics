@@ -2,6 +2,7 @@ from app.core.database import Base  # noqa: F401
 from app.models.user import User
 from app.models.order import Order, OrderItem
 from app.models.inventory import InventoryItem, Warehouse
+from app.models.catalogue import FreshItem, StyleItem, TechItem
 from app.models.shipment import Shipment, DispatchTrip
 from app.models.fleet import Vehicle, DriverProfile
 from app.models.allocation import Allocation
@@ -45,6 +46,9 @@ __all__ = [
     "Base",
     "User",
     "Order",
+    "FreshItem",
+    "StyleItem",
+    "TechItem",
     "OrderItem",
     "InventoryItem",
     "Warehouse",
