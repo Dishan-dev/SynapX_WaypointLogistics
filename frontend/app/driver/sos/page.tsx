@@ -5,9 +5,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, AlertTriangle, HeartPulse, ShieldAlert,
-  Car, Flame, MoreHorizontal, MapPin, Camera, Route
+  Car, Flame, MoreHorizontal, MapPin, Route
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiFetchUpload } from "@/lib/api";
+import { gpsLabel } from "@/lib/gps";
+import PhotoAttach, { type PhotoDraft } from "@/components/driver/PhotoAttach";
+
+// sos_alerts.message is 500 characters: "<type>: <notes>"
+const MAX_NOTES = 450;
+
+type Fix = { latitude: number; longitude: number; accuracy: number };
 
 export default function SOSPage() {
   const router = useRouter();
@@ -17,6 +24,26 @@ export default function SOSPage() {
   const [activeTrip, setActiveTrip] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [photo, setPhoto] = useState<PhotoDraft | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [fix, setFix] = useState<Fix | null>(null);
+  const [locating, setLocating] = useState(true);
+
+  // The real position to share with the dispatcher; the alert still goes without one
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      Promise.resolve().then(() => setLocating(false));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setFix({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy });
+        setLocating(false);
+      },
+      () => setLocating(false),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+    );
+  }, []);
 
   const emergencyTypes = [
     { label: "Accident", icon: AlertTriangle },
@@ -32,7 +59,7 @@ export default function SOSPage() {
     async function loadActiveTrip() {
       try {
         const trips = await apiFetch<any[]>("/driver/trips/today");
-        const startedTrip = trips.find(t => t.status === "STARTED");
+        const startedTrip = trips.find(t => t.status === "started");
         
         if (startedTrip) {
           const detail = await apiFetch<any>(`/driver/trips/${startedTrip.id}`);
@@ -49,14 +76,29 @@ export default function SOSPage() {
 
   async function handleSubmit() {
     setSubmitting(true);
-    
+
+    // A photo that fails to upload must not hold up the alert
+    let photo_url: string | undefined;
+    if (photo) {
+      try {
+        const form = new FormData();
+        form.append("file", photo.file);
+        ({ photo_url } = await apiFetchUpload<{ photo_url: string }>("/driver/upload/photo", form));
+      } catch (error) {
+        console.error("SOS photo upload failed, sending without it:", error);
+      }
+    }
+
     try {
       await apiFetch("/driver/sos", {
         method: "POST",
         body: JSON.stringify({
-          trip_id: activeTrip ? activeTrip.id : null,
-          location: "6.9271, 79.8612",
-          notes: `${selectedType} - ${notes}`
+          driver_trip_id: activeTrip ? activeTrip.id : null,
+          latitude: fix?.latitude ?? null,
+          longitude: fix?.longitude ?? null,
+          message: notes.trim() ? `${selectedType}: ${notes.trim()}` : selectedType,
+          // Saved once sos_alerts has a photo_url column; ignored until then
+          photo_url,
         })
       });
       router.push("/driver/sos/success");
@@ -66,7 +108,7 @@ export default function SOSPage() {
     }
   }
 
-  const currentStop = activeTrip?.stops?.find((s: any) => s.status === 'PENDING');
+  const currentStop = activeTrip?.stops?.find((s: { status: string }) => s.status === 'pending');
 
   return (
     <div className="h-[100dvh] flex flex-col font-sans overflow-hidden relative" style={{ backgroundColor: "#F2F5F8", fontFamily: "Inter, sans-serif" }}>
@@ -168,17 +210,26 @@ export default function SOSPage() {
           >
             <div className="flex flex-col gap-1">
               <span className="font-bold text-[12px]" style={{ color: "#171A1F" }}>Current Location</span>
-              <div className="flex items-center px-1.5 py-0.5 rounded" style={{ backgroundColor: "#F0F7F2", width: "fit-content" }}>
-                <span className="font-bold text-[9px]" style={{ color: "#3D7954" }}>Location Available</span>
+              <div
+                className="flex items-center px-1.5 py-0.5 rounded"
+                style={{ backgroundColor: fix ? "#F0F7F2" : "#FBEFEF", width: "fit-content" }}
+              >
+                <span className="font-bold text-[9px]" style={{ color: fix ? "#3D7954" : "#AD3D3D" }}>
+                  {locating ? "Locating…" : fix ? "Location Available" : "Location unavailable"}
+                </span>
               </div>
             </div>
             <div className="flex justify-center items-center h-[42px] rounded" style={{ backgroundColor: "#DCE3EB" }}>
               <MapPin size={14} color="#171A1F" />
             </div>
             <div className="flex flex-col gap-0.5">
-              <span className="font-semibold text-[10px]" style={{ color: "#171A1F" }}>6.9271° N, 79.8612° E</span>
+              <span className="font-semibold text-[10px]" style={{ color: "#171A1F" }}>
+                {fix ? `${fix.latitude.toFixed(4)}° N, ${fix.longitude.toFixed(4)}° E` : "--"}
+              </span>
+              <span className="font-normal text-[9px]" style={{ color: "#6B7280" }}>
+                {fix ? gpsLabel(fix.accuracy) : "Alert will be sent without location"}
+              </span>
               <span className="font-normal text-[9px]" style={{ color: "#6B7280" }}>Shared with dispatcher</span>
-              <span className="font-normal text-[9px]" style={{ color: "#6B7280" }}>Location captured automatically</span>
             </div>
           </div>
         </div>
@@ -186,8 +237,9 @@ export default function SOSPage() {
         {/* Input Section */}
         <div className="flex flex-col gap-2">
           <span className="font-bold text-[13px]" style={{ color: "#171A1F" }}>Tell us what happened</span>
-          <textarea 
+          <textarea
             value={notes}
+            maxLength={MAX_NOTES}
             onChange={(e) => setNotes(e.target.value)}
             className="w-full h-[120px] p-4 rounded bg-white outline-none resize-none font-normal text-[16px]"
             style={{ border: "1px solid #E5E5E2", color: "#4F4F4F" }}
@@ -196,14 +248,15 @@ export default function SOSPage() {
         </div>
 
         {/* Photo Upload */}
-        <div className="flex items-center p-3 gap-2.5 bg-white rounded-md cursor-pointer" style={{ border: "1px dashed #E5E5E2" }}>
-          <div className="flex justify-center items-center w-[18px] h-[18px]">
-            <Camera size={18} color="#171A1F" />
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="font-semibold text-[12px]" style={{ color: "#171A1F" }}>Add Photo</span>
-            <span className="font-normal text-[10px]" style={{ color: "#6B7280" }}>Optional proof of incident</span>
-          </div>
+        <div className="flex flex-col gap-1">
+          <PhotoAttach
+            photo={photo}
+            onChange={setPhoto}
+            title="Add Photo"
+            hint="Optional proof of incident"
+            onError={setPhotoError}
+          />
+          {photoError && <span className="text-[11px] font-medium" style={{ color: "#AD3D3D" }}>{photoError}</span>}
         </div>
       </div>
 

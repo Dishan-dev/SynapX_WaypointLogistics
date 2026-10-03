@@ -9,66 +9,21 @@ import {
 } from "lucide-react";
 import { apiFetch, apiFetchUpload } from "@/lib/api";
 import { useSyncContext } from "@/components/SyncProvider";
+import PhotoAttach, { type PhotoDraft } from "@/components/driver/PhotoAttach";
+import DeviceClock from "@/components/driver/DeviceClock";
 
 export default function ReportProblemPage() {
   const router = useRouter();
   const { enqueue, enqueueWithPhoto, online } = useSyncContext();
-  const [offlinePhotoBlob, setOfflinePhotoBlob] = useState<Blob | null>(null);
-  
+
   const [selectedIssue, setSelectedIssue] = useState("Outlet closed");
   const [notes, setNotes] = useState("");
   const [activeTrip, setActiveTrip] = useState<any>(null);
   const [currentStop, setCurrentStop] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null); // local preview
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);          // server URL
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 10 * 1024 * 1024) {
-      setUploadError("Photo is too large (max 10 MB).");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      return;
-    }
-
-    // Keep the raw file blob for offline queuing
-    setOfflinePhotoBlob(file);
-
-    // Show local preview immediately
-    const objectUrl = URL.createObjectURL(file);
-    setPhotoDataUrl(objectUrl);
-    setUploadError(null);
-    setUploadingPhoto(true);
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const result = await apiFetchUpload<{ photo_url: string }>("/driver/upload/photo", formData);
-      setPhotoUrl(result.photo_url);
-    } catch (err: any) {
-      setUploadError(err?.message || "Upload failed. Please try again.");
-      setPhotoDataUrl(null);
-      setPhotoUrl(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    } finally {
-      setUploadingPhoto(false);
-    }
-  };
-
-  const removePhoto = () => {
-    if (photoDataUrl) URL.revokeObjectURL(photoDataUrl);
-    setPhotoDataUrl(null);
-    setPhotoUrl(null);
-    setUploadError(null);
-    setOfflinePhotoBlob(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
+  const [photo, setPhoto] = useState<PhotoDraft | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   const issues = [
     { label: "Outlet closed", icon: Store, backendType: "customer_unavailable" },
@@ -116,53 +71,42 @@ export default function ReportProblemPage() {
       stop_id: currentStop ? currentStop.id : null,
       issue_type: issueConfig.backendType,
       description: notes || selectedIssue,
-      photo_url: photoUrl ?? undefined,
+    };
+    const action = {
+      action_type: "issue" as const,
+      trip_id: activeTrip.id,
+      stop_id: currentStop?.id,
+      payload: basePayload,
+      label: selectedIssue,
     };
 
-    // ── Offline path ──────────────────────────────────────────────────────────
-    if (!online) {
-      if (offlinePhotoBlob) {
-        await enqueueWithPhoto(
-          {
-            action_type: "issue",
-            trip_id: activeTrip.id,
-            stop_id: currentStop?.id,
-            payload: basePayload,
-            label: selectedIssue,
-          },
-          offlinePhotoBlob
-        );
-      } else {
-        await enqueue({
-          action_type: "issue",
-          trip_id: activeTrip.id,
-          stop_id: currentStop?.id,
-          payload: basePayload,
-          label: selectedIssue,
-        });
-      }
+    // Offline, or the network drops mid-send: keep the report (and its photo) for sync
+    async function saveForLater() {
+      if (photo) await enqueueWithPhoto(action, photo.file);
+      else await enqueue(action);
       router.push("/driver/queue");
+    }
+
+    if (!online) {
+      await saveForLater();
       return;
     }
 
-    // ── Online path ───────────────────────────────────────────────────────────
     try {
+      let photo_url: string | undefined;
+      if (photo) {
+        const form = new FormData();
+        form.append("file", photo.file);
+        ({ photo_url } = await apiFetchUpload<{ photo_url: string }>("/driver/upload/photo", form));
+      }
       await apiFetch(`/driver/trips/${activeTrip.id}/issues`, {
         method: "POST",
-        body: JSON.stringify(basePayload),
+        body: JSON.stringify({ ...basePayload, photo_url }),
       });
       router.push("/driver/trip");
     } catch (error) {
-      // Network error while online — queue for later
-      await enqueue({
-        action_type: "issue",
-        trip_id: activeTrip.id,
-        stop_id: currentStop?.id,
-        payload: basePayload,
-        label: selectedIssue,
-      });
       console.error("Failed to submit issue, queued for sync:", error);
-      router.push("/driver/queue");
+      await saveForLater();
     }
   }
 
@@ -176,7 +120,7 @@ export default function ReportProblemPage() {
       >
         {/* Device status */}
         <div className="flex justify-between items-center px-5 h-[34px] w-full">
-          <span className="text-[12px] font-semibold" style={{ color: "#12202E" }}>06:58</span>
+          <DeviceClock className="text-[12px] font-semibold" style={{ color: "#12202E" }} />
           <div className="flex items-center gap-2">
             <span className="text-[14px] font-normal" style={{ color: "#BDBDBD" }}>Online</span>
             <Signal size={16} color="#BDBDBD" />
@@ -257,70 +201,26 @@ export default function ReportProblemPage() {
           />
         </div>
 
-        {/* Hidden file input */}
-        <input 
-          type="file" 
-          accept="image/*" 
-          capture="environment" 
-          ref={fileInputRef} 
-          className="hidden" 
-          onChange={handlePhotoUpload} 
-        />
-
-        {/* Secondary action / Photo preview */}
-        {uploadError && (
-          <p className="text-red-500 text-[12px] font-medium mt-1">{uploadError}</p>
-        )}
-
-        {photoDataUrl ? (
-          <div className="flex flex-col gap-2 mt-1">
-            <label className="font-semibold text-[12px]" style={{ color: "#12202E" }}>
-              {uploadingPhoto ? "Uploading…" : "Attached photo"}
-            </label>
-            <div className="relative w-full h-32 rounded-md overflow-hidden border border-[#E0E0E0]">
-              <img src={photoDataUrl} alt="Attached" className="object-cover w-full h-full" />
-              {/* Uploading overlay */}
-              {uploadingPhoto && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                  <svg className="animate-spin h-7 w-7 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                  </svg>
-                </div>
-              )}
-              {/* Uploaded badge */}
-              {!uploadingPhoto && photoUrl && (
-                <div className="absolute bottom-2 left-2 bg-green-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  ✓ Uploaded
-                </div>
-              )}
-              <button
-                onClick={removePhoto}
-                className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold"
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="w-full flex justify-center items-center h-[40px] rounded-md mt-1"
-            style={{ border: "1px solid #E5E5E2", backgroundColor: "#FFFFFF" }}
-          >
-            <span className="font-semibold text-[13px]" style={{ color: "#171A1F" }}>Add photo +</span>
-          </button>
-        )}
+        {/* Optional photo */}
+        <div className="flex flex-col gap-1 w-full mt-1">
+          <PhotoAttach
+            photo={photo}
+            onChange={setPhoto}
+            hint="Show the problem, e.g. a closed shutter or a damaged box."
+            onError={setPhotoError}
+          />
+          {photoError && <p className="text-[12px] font-medium" style={{ color: "#AD3D3D" }}>{photoError}</p>}
+        </div>
 
         {/* Primary action */}
         <div className="w-full mt-1">
           <button
             onClick={handleSubmit}
-            disabled={submitting || !activeTrip || uploadingPhoto}
+            disabled={submitting || !activeTrip}
             className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px] disabled:opacity-50"
             style={{ backgroundColor: "#092C4C" }}
           >
-            {submitting ? "Submitting..." : uploadingPhoto ? "Waiting for photo…" : "Submit report"}
+            {submitting ? (photo && online ? "Uploading photo…" : "Submitting...") : "Submit report"}
           </button>
         </div>
       </div>
