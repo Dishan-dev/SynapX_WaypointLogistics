@@ -189,7 +189,7 @@ docker compose up --build
 
 ### Database migrations
 
-Database schema changes use Alembic. Do not rely on application startup to create tables. The shared Neon database has a controlled migration process: only the DB lead should apply migrations to shared environments. See [database-migrations.md](database-migrations.md) before changing database structure.
+Database schema changes use Alembic. Do not rely on application startup to create tables. The shared Neon database has a controlled migration process: only the DB lead should apply migrations to shared environments.
 
 ## 10. Where to safely change common things
 

@@ -68,7 +68,7 @@ Frontend:
 - `lib/route-planning-api.ts`, `allocation-api.ts`
 - `types/allocation.ts`
 
-Documentation: `docs/reference/route-planning.md`, `docs/reference/allocation-recommendations.md`.
+Documentation: `docs/reference/route-planning.md`.
 
 ## Verification results
 

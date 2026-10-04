@@ -33,8 +33,6 @@ backend/
 
 ## Getting Started
 
-Dispatcher allocation recommendations, reference data, fuel-input requirements, and atomic confirmation are documented in [allocation-recommendations.md](../docs/reference/allocation-recommendations.md).
-
 ### Local Setup with UV or Pip
 
 ```bash

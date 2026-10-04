@@ -11,7 +11,7 @@ Nothing is deleted, and only these three tables are touched. Safe to re-run.
     python scripts/seed_catalogue.py --yes    # write it
 
 Needs migration 0008_store_catalogue applied first. Writing to a non-local database (e.g. the shared Neon
-database) needs the DB lead's OK (docs/reference/database-migrations.md); the script prints the target host first.
+database) needs the DB lead's OK; the script prints the target host first.
 """
 from __future__ import annotations
 

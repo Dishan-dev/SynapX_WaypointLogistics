@@ -86,8 +86,6 @@ uv pip install -e ".[dev]"
 uvicorn app.main:app --reload --port 5000
 ```
 
-Apply database migrations through the approved process before using a new or empty database. See [docs/reference/database-migrations.md](docs/reference/database-migrations.md).
-
 #### Frontend:
 ```powershell
 cd frontend
@@ -149,8 +147,6 @@ keycloak-theme/    Custom Keycloak login theme
 
 - [How the complete system works](docs/reference/HOW_THIS_PROJECT_WORKS.md)
 - [Backend API and local development](backend/README.md)
-- [Database migration process](docs/reference/database-migrations.md)
-- [Data model notes](docs/reference/data-model.md)
 - [Store Manager contract](docs/reference/store-manager-contract.md)
 - [Loader documentation](docs/reference/loader/)
 
