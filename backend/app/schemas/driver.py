@@ -1,6 +1,6 @@
 from typing import List, Optional, Annotated, Literal
 from datetime import date, datetime, timezone
-from pydantic import BaseModel, ConfigDict, PlainSerializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 from app.models.driver import DriverTripStatus, DeliveryStopStatus, IssueType, IssueStatus, SOSStatus
 
 # Columns are stored as naive UTC (no DB timezone column, to avoid a migration
@@ -45,6 +45,8 @@ class DeliveryStopRead(DeliveryStopBase):
     id: int
     driver_trip_id: int
     shipment_id: Optional[int]
+    outlet_id: Optional[int] = None  # the store this stop delivers to
+    eta: Optional[UTCDateTime] = None  # when the truck is expected there
     arrived_at: Optional[UTCDateTime]
     completed_at: Optional[UTCDateTime]
     created_at: UTCDateTime
@@ -120,6 +122,8 @@ class IssueReportBase(BaseModel):
 
 class IssueReportCreate(IssueReportBase):
     stop_id: Optional[int] = None
+    # How late the problem makes the truck: the stores still to come get a later ETA
+    delay_minutes: Optional[int] = Field(default=None, ge=0, le=240)
 
 class IssueReportRead(IssueReportBase):
     id: int

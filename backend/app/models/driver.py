@@ -102,6 +102,10 @@ class DeliveryStop(Base):
     arrived_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # The store this stop delivers to (outlet names aren't unique), and when the
+    # truck is expected there: set when the trip starts, moved on by a reported delay
+    outlet_id = Column(Integer, ForeignKey("outlets.id"), nullable=True, index=True)
+    eta = Column(DateTime, nullable=True)
 
     driver_trip = relationship("DriverTrip", back_populates="stops")
     shipment = relationship("Shipment")
