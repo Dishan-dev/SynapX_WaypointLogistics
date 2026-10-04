@@ -96,6 +96,7 @@ class DriverTripSummary(DriverTripBase):
     planned_departure: Optional[UTCDateTime] = None  # the dispatcher's departure time
     run_code: Optional[str] = None  # e.g. RUN-0067, as the dispatcher and loader call it
     vehicle_number: Optional[str] = None  # the truck, e.g. VEH005
+    depot_name: Optional[str] = None  # the truck's depot (set by Admin), e.g. peliyagoda
 
     # Can add fields like stop_count or completed_stops via computed fields if needed
     model_config = ConfigDict(from_attributes=True)

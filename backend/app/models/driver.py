@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, Date, DateTime, Enum, Text, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import object_session, relationship
 from app.core.database import Base
 
 class DriverTripStatus(str, enum.Enum):
@@ -67,6 +67,22 @@ class DriverTrip(Base):
     def vehicle_number(self):
         """The truck on this trip, e.g. VEH005 (not a column)."""
         return self.dispatch_trip.vehicle_number if self.dispatch_trip else None
+
+    @property
+    def depot_name(self):
+        """The depot of the trip's truck (set by Admin), e.g. peliyagoda (not a column).
+        Copied onto the dispatcher's trip at dispatch; else read from the truck."""
+        trip = self.dispatch_trip
+        if trip is None:
+            return None
+        if trip.depot_name:
+            return trip.depot_name
+        session = object_session(self)
+        if trip.vehicle_id is None or session is None:
+            return None
+        from app.models.fleet import Vehicle
+        vehicle = session.get(Vehicle, trip.vehicle_id)
+        return vehicle.depot_name if vehicle is not None else None
 
 
 class DeliveryStop(Base):

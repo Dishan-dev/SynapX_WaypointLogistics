@@ -338,6 +338,20 @@ def test_trip_shows_the_run_code_and_truck(loader_client, released):
     assert (detail["run_code"], detail["vehicle_number"]) == ("RUN-0024", "VEH014")
 
 
+def test_trip_shows_the_trucks_depot(loader_client, released):
+    db, driver = released["db"], released["driver"]
+
+    trip = today(loader_client, driver)[0]
+
+    assert trip["depot_name"] == "peliyagoda"
+    # No depot copied onto the dispatcher's trip: the truck's own depot (a Kandy truck here)
+    dispatch_trip = released["dispatch_trip"]
+    dispatch_trip.depot_name = None
+    dispatch_trip.allocation.vehicle.depot_name = "kandy"
+    db.flush()
+    assert trip_detail(loader_client, driver, trip["id"])["depot_name"] == "kandy"
+
+
 # ---- End of trip -----------------------------------------------------------------------
 
 def test_completing_the_trip_closes_the_dispatchers_run(loader_client, released):
