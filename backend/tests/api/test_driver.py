@@ -328,6 +328,113 @@ def test_failed_stop_keeps_orders_dispatched_and_warns_the_dispatcher(loader_cli
     assert event["status"] == "warning"
 
 
+# ---- What the stores see: ETAs, arrivals, orders sent back ------------------------------
+
+@pytest.fixture
+def deferring_allowed(monkeypatch):
+    """The order rules once the store side allows DISPATCHED → DEFERRED."""
+    from app.services import order_service as order_rules_module
+    monkeypatch.setitem(
+        order_rules_module.TRANSITIONS, OrderStatus.DISPATCHED, {OrderStatus.DELIVERED, OrderStatus.DEFERRED},
+    )
+
+
+def fail_stop(client, driver, stop_id):
+    assert client.patch(f"{API}/stops/{stop_id}/arrive", headers=auth(driver)).status_code == 200
+    res = client.patch(f"{API}/stops/{stop_id}/outcome", headers=auth(driver), json={"outcome": "failed"})
+    assert res.status_code == 200, res.text
+
+
+def test_starting_gives_every_store_its_own_eta(loader_client, released):
+    db = released["db"]
+    trip = started_trip(loader_client, released)
+    stops = sorted(trip["stops"], key=lambda s: s["sequence"])
+
+    etas = [datetime.fromisoformat(s["eta"]) for s in stops]
+    assert all(eta is not None for eta in etas)
+    assert etas == sorted(etas) and len(set(etas)) == len(etas)  # later stop, later ETA
+    outlets = {o.outlet_id for o in released["orders"].values()}
+    assert {s["outlet_id"] for s in stops} == outlets  # each stop names its store
+
+    dispatch_trip = db.get(DispatchTrip, released["dispatch_trip"].id)
+    assert dispatch_trip.estimated_arrival == db.get(DeliveryStop, stops[-1]["id"]).eta
+
+
+def test_a_delay_moves_the_eta_on_and_tells_the_stores_still_to_come(loader_client, released):
+    db, driver, orders = released["db"], released["driver"], released["orders"]
+    trip = started_trip(loader_client, released)
+    first, *rest = sorted(trip["stops"], key=lambda s: s["sequence"])
+    deliver(loader_client, driver, first["id"])
+    before = {s["id"]: db.get(DeliveryStop, s["id"]).eta for s in rest}
+
+    res = loader_client.post(f"{API}/trips/{trip['id']}/issues", headers=auth(driver), json={
+        "issue_type": "traffic_delay", "description": "Road closed at Kirulapone", "delay_minutes": 30,
+    })
+
+    assert res.status_code == 200, res.text
+    for stop_id, eta in before.items():
+        assert (db.get(DeliveryStop, stop_id).eta - eta).total_seconds() >= 30 * 60
+    told = db.execute(select(Notification).where(Notification.type == NotificationType.ETA_UPDATED)).scalars().all()
+    waiting_outlets = {db.get(DeliveryStop, s["id"]).outlet_id for s in rest}
+    assert told and {n.outlet_id for n in told} <= waiting_outlets
+    assert orders[FLAGGED].id not in {n.order_id for n in told}  # not on the truck
+    assert db.get(DispatchTrip, released["dispatch_trip"].id).loading_events[-1]["event"] == "Running late"
+
+
+def test_a_failed_stop_report_sends_its_orders_back_to_dispatch(loader_client, released, deferring_allowed):
+    db, driver, orders = released["db"], released["driver"], released["orders"]
+    trip = started_trip(loader_client, released)
+    stop = next(s for s in trip["stops"] if s["customer_name"] == "Outlet OUT027")
+    fail_stop(loader_client, driver, stop["id"])
+
+    res = loader_client.post(f"{API}/trips/{trip['id']}/issues", headers=auth(driver), json={
+        "stop_id": stop["id"], "issue_type": "customer_unavailable", "description": "Outlet closed",
+    })
+
+    assert res.status_code == 200, res.text
+    db.refresh(orders["ORD1002"])
+    assert orders["ORD1002"].status == OrderStatus.DEFERRED
+    assert orders["ORD1002"].deferral_reason == "Not delivered: Outlet closed"
+    db.refresh(orders["ORD1001"])
+    assert orders["ORD1001"].status == OrderStatus.DISPATCHED  # another stop
+    deferred = db.execute(select(Notification).where(Notification.type == NotificationType.DEFERRED)).scalars().all()
+    assert [n.order_id for n in deferred] == [orders["ORD1002"].id]
+
+    # Sent back: the stop can't be turned into a delivery on this trip
+    res = loader_client.patch(f"{API}/stops/{stop['id']}/outcome", headers=auth(driver), json={"outcome": "delivered"})
+    assert res.status_code == 409
+
+
+def test_completing_the_trip_sends_back_an_unreported_failed_stop(loader_client, released, deferring_allowed):
+    db, driver, orders = released["db"], released["driver"], released["orders"]
+    trip = started_trip(loader_client, released)
+    for stop in trip["stops"]:
+        if stop["customer_name"] == "Outlet OUT027":
+            fail_stop(loader_client, driver, stop["id"])
+        else:
+            deliver(loader_client, driver, stop["id"])
+
+    assert loader_client.post(f"{API}/trips/{trip['id']}/complete", headers=auth(driver)).status_code == 200
+
+    db.refresh(orders["ORD1002"])
+    assert orders["ORD1002"].status == OrderStatus.DEFERRED
+
+
+def test_until_dispatch_allows_it_a_failed_stops_orders_stay_dispatched(loader_client, released):
+    db, driver, orders = released["db"], released["driver"], released["orders"]
+    trip = started_trip(loader_client, released)
+    stop = next(s for s in trip["stops"] if s["customer_name"] == "Outlet OUT027")
+    fail_stop(loader_client, driver, stop["id"])
+
+    res = loader_client.post(f"{API}/trips/{trip['id']}/issues", headers=auth(driver), json={
+        "stop_id": stop["id"], "issue_type": "customer_unavailable", "description": "Outlet closed",
+    })
+
+    assert res.status_code == 200, res.text
+    db.refresh(orders["ORD1002"])
+    assert orders["ORD1002"].status == OrderStatus.DISPATCHED
+
+
 def test_trip_shows_the_run_code_and_truck(loader_client, released):
     driver = released["driver"]
 
