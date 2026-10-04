@@ -11,6 +11,8 @@ import { colomboNow, greeting, READY_CUTOFF_HOUR } from "@/lib/colomboTime";
 import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
 import SyncStatus from "@/components/driver/SyncStatus";
 import { UserNotificationBell } from "@/components/notifications/user-notification-bell";
+import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
+import DockArrival from "@/components/driver/DockArrival";
 
 // "I'm ready" for the next working day, saved on the server for the dispatcher.
 interface ReadyState {
@@ -270,7 +272,7 @@ export default function DriverDashboard() {
                   {atDock && (
                     <DockArrival
                       trip={trip}
-                      onArrived={(updated) => setTrips((list) => list.map((t) => (t.id === updated.id ? updated : t)))}
+                      onArrived={(updated: any) => setTrips((list) => list.map((t) => (t.id === updated.id ? updated : t)))}
                     />
                   )}
 
