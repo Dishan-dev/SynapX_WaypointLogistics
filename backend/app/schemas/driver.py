@@ -106,6 +106,9 @@ class DriverTripSummary(DriverTripBase):
     run_code: Optional[str] = None  # e.g. RUN-0067, as the dispatcher and loader call it
     vehicle_number: Optional[str] = None  # the truck, e.g. VEH005
     depot_name: Optional[str] = None  # the truck's depot (set by Admin), e.g. peliyagoda
+    loader_status: Optional[str] = None  # the loader's run; Start waits for ready_to_depart
+    dock_name: Optional[str] = None  # where the truck is loaded, e.g. Dock 3
+    at_dock_at: Optional[UTCDateTime] = None  # when the driver said they were at the dock
 
     # Can add fields like stop_count or completed_stops via computed fields if needed
     model_config = ConfigDict(from_attributes=True)
@@ -148,6 +151,7 @@ class SOSAlertRead(SOSAlertBase):
     driver_id: int
     driver_trip_id: Optional[int]
     status: SOSStatus
+    photo_url: Optional[str] = None
     triggered_at: UTCDateTime
     acknowledged_at: Optional[UTCDateTime]
     model_config = ConfigDict(from_attributes=True)

@@ -6,7 +6,7 @@ the dispatcher's trip names the driver, the loader builds and releases the run.
 """
 import base64
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -132,16 +132,81 @@ def started_trip(client, setup):
 
 # ---- Hand-off from the loader --------------------------------------------------
 
-def test_run_shows_only_once_the_loader_signs_it_off(loader_client, dispatched):
-    db, driver = dispatched["db"], dispatched["driver"]
-    assert today(loader_client, driver) == []
+def departs_soon(db, run):
+    """As Quick Allocate plans it: leaving two hours from now."""
+    run.departs_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=2)
+    db.flush()
 
-    release(db, dispatched["run"])
+
+def test_dispatched_run_shows_at_once_and_start_waits_for_the_loader(loader_client, dispatched):
+    db, driver = dispatched["db"], dispatched["driver"]
+    departs_soon(db, dispatched["run"])
     trips = today(loader_client, driver)
 
     assert len(trips) == 1
     assert trips[0]["status"] == "assigned"
     assert trips[0]["dispatch_trip_id"] == dispatched["dispatch_trip"].id
+    assert trips[0]["loader_status"] == "not_started"
+    res = loader_client.post(f"{API}/trips/{trips[0]['id']}/start", headers=auth(driver))
+    assert res.status_code == 409
+    assert "still at the dock" in res.json()["detail"]
+
+    release(db, dispatched["run"])
+
+    assert [t["loader_status"] for t in today(loader_client, driver)] == ["ready_to_depart"]
+    assert start(loader_client, driver, trips[0]["id"])["status"] == "started"
+
+
+def test_trip_waiting_at_the_dock_follows_the_loaders_plan(loader_client, dispatched):
+    db, driver, run = dispatched["db"], dispatched["driver"], dispatched["run"]
+    departs_soon(db, run)
+    trip = today(loader_client, driver)[0]
+    assert len(trip_detail(loader_client, driver, trip["id"])["stops"]) == 3
+
+    release(db, run)
+
+    detail = trip_detail(loader_client, driver, trip["id"])
+    assert [t["id"] for t in today(loader_client, driver)] == [trip["id"]]  # the same trip, not a second one
+    assert detail["loader_status"] == "ready_to_depart"
+    assert len(detail["stops"]) == 3
+
+
+def test_driver_at_the_dock_shows_in_the_loaders_and_dispatchers_logs(loader_client, dispatched):
+    from app.models.loader_activity import LoaderActivity
+
+    db, driver, run = dispatched["db"], dispatched["driver"], dispatched["run"]
+    departs_soon(db, run)
+    trip = today(loader_client, driver)[0]
+    assert trip["dock_name"] == "Dock 3"
+    assert trip["at_dock_at"] is None
+
+    res = loader_client.post(f"{API}/trips/{trip['id']}/at-dock", headers=auth(driver))
+    again = loader_client.post(f"{API}/trips/{trip['id']}/at-dock", headers=auth(driver))
+
+    assert res.status_code == 200, res.text
+    assert res.json()["at_dock_at"] is not None
+    assert again.json()["at_dock_at"] == res.json()["at_dock_at"]  # saying it twice changes nothing
+    logged = db.query(LoaderActivity).filter(LoaderActivity.run_id == run.id, LoaderActivity.event_type == "driver_at_dock").all()
+    assert len(logged) == 1
+    assert LoaderService._activity_summary(logged[0]) == "Driver at Dock 3 · Tharindu Fernando"  # as the tablet shows it
+    events = db.get(DispatchTrip, dispatched["dispatch_trip"].id).loading_events
+    assert [e["event"] for e in events].count("Driver at dock") == 1
+
+
+def test_at_the_dock_is_refused_once_the_trip_has_left(loader_client, released):
+    trip = started_trip(loader_client, released)
+
+    res = loader_client.post(f"{API}/trips/{trip['id']}/at-dock", headers=auth(released["driver"]))
+
+    assert res.status_code == 400
+
+
+def test_old_run_never_loaded_does_not_show(loader_client, dispatched):
+    db, driver, run = dispatched["db"], dispatched["driver"], dispatched["run"]
+    run.departs_at = datetime(2026, 1, 1, 3, 30)  # dispatched long ago, never loaded
+    db.flush()
+
+    assert today(loader_client, driver) == []
 
 
 def test_trip_stops_follow_the_run_stop_order(loader_client, released):
@@ -919,8 +984,10 @@ def test_photo_stays_local_without_r2_settings(loader_client, released, monkeypa
 # ---- SOS photo (sos_alerts.photo_url, migration 0016) ------------------------------
 
 def sos_photo(db, alert_id):
-    sos = SOSAlert.__table__
-    return db.execute(select(sos.c.photo_url).where(sos.c.id == alert_id)).scalar()
+    """The link as the dispatcher's Exceptions reads it: alert.photo_url."""
+    alert = db.get(SOSAlert, alert_id)
+    db.refresh(alert)
+    return alert.photo_url
 
 
 def test_sos_photo_link_is_saved(loader_client, released):
@@ -933,6 +1000,7 @@ def test_sos_photo_link_is_saved(loader_client, released):
     })
 
     assert res.status_code == 200, res.text
+    assert res.json()["photo_url"] == link
     assert sos_photo(released["db"], res.json()["id"]) == link
 
 
@@ -951,20 +1019,12 @@ def test_offline_sos_keeps_its_photo_link(loader_client, released):
     assert sos_photo(released["db"], alert.id) == link
 
 
-def test_sos_goes_through_even_if_the_photo_link_cant_be_saved(loader_client, released, monkeypatch):
-    """Before migration 0016 the photo column is missing: the SOS must still be saved."""
-    from sqlalchemy.exc import OperationalError
-    from app.services import driver_service
-
-    def missing_column(*_args, **_kwargs):
-        raise OperationalError("UPDATE sos_alerts", {}, Exception("no such column: photo_url"))
-
-    monkeypatch.setattr(driver_service, "update", missing_column)
+def test_sos_without_a_photo_has_no_link(loader_client, released):
     trip = started_trip(loader_client, released)
 
     res = loader_client.post(f"{API}/sos", headers=auth(released["driver"]), json={
-        "driver_trip_id": trip["id"], "message": "Medical Emergency", "photo_url": "https://pub-test.r2.dev/x.jpg",
+        "driver_trip_id": trip["id"], "message": "Medical Emergency",
     })
 
     assert res.status_code == 200, res.text
-    assert released["db"].query(SOSAlert).filter(SOSAlert.message == "Medical Emergency").count() == 1
+    assert sos_photo(released["db"], res.json()["id"]) is None
