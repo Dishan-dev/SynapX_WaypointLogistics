@@ -6,7 +6,7 @@ from app.api import deps
 from app.models.order import Order, OrderStatus
 from app.models.reference import Depot
 from app.schemas.order import OrderCreate, OrderRead, OrderUpdate
-from app.services.order_service import order_service
+from app.services.order_service import TRANSITIONS, order_service
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -156,8 +156,9 @@ def bulk_allocate_orders(
         raise HTTPException(status_code=404, detail="No matching orders found")
 
     # Up-front validation
+    from app.services.order_service import TRANSITIONS
     for order in orders:
-        if order.status != OrderStatus.ALLOCATED and OrderStatus.ALLOCATED not in order_service.TRANSITIONS.get(order.status, set()):
+        if order.status != OrderStatus.ALLOCATED and OrderStatus.ALLOCATED not in TRANSITIONS.get(order.status, set()):
             raise HTTPException(
                 status_code=409,
                 detail=f"{order.order_number} can't move from {order.status.value.lower()} to allocated."

@@ -56,12 +56,13 @@ def create_allocation(
     if vehicle.status != VehicleStatus.AVAILABLE:
         raise HTTPException(status_code=400, detail="Vehicle is not available for allocation")
 
-    if allocation_in.driver_id is not None:
-        driver = db.query(DriverProfile).filter(DriverProfile.id == allocation_in.driver_id).first()
-        if not driver:
-            raise HTTPException(status_code=404, detail="Driver not found")
+    allocation_in_data = allocation_in.model_dump()
 
-    allocation = Allocation(**allocation_in.model_dump())
+    # Auto-assign the driver from the vehicle's assigned driver profile
+    if vehicle and vehicle.driver:
+        allocation_in_data["driver_id"] = vehicle.driver.id
+
+    allocation = Allocation(**allocation_in_data)
     db.add(allocation)
     
     # Mark vehicle as allocated
@@ -133,11 +134,7 @@ def update_allocation(
 
     update_data = allocation_in.model_dump(exclude_unset=True)
 
-    if "driver_id" in update_data and update_data["driver_id"] is not None:
-        driver = db.query(DriverProfile).filter(DriverProfile.id == update_data["driver_id"]).first()
-        if not driver:
-            raise HTTPException(status_code=404, detail="Driver not found")
-    
+    # Removed driver_id update block
     for field, val in update_data.items():
         setattr(allocation, field, val)
         

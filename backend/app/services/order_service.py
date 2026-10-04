@@ -1,9 +1,11 @@
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional, Set
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 from app.core.exceptions import InvalidStateTransitionError, NotFoundError, OrderRuleError
+from app.models.allocation import Allocation
+from app.models.fleet import DriverProfile
 from app.models.notification import NotificationType
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.reference import Depot, Outlet
@@ -11,7 +13,9 @@ from app.schemas.order import OrderCreate
 from app.schemas.store_order import GoodsRequestCreate
 from app.services import order_rules
 from app.services.calendar_service import calendar_service
+from app.services.catalogue_service import catalogue_service, split_name
 from app.services.notification_service import notification_service
+from app.email.service import queue_store_change
 
 # Statuses that hold a slot for the outlet on its delivery date (Fresh dual-order rule).
 BLOCKING_STATUSES = {
@@ -64,10 +68,44 @@ def _delivery_label(day: date) -> str:
     return f"{day:%a} {day.day} {day:%b}"
 
 
+def _window_label(start: time, end: time) -> str:
+    return f"{start.strftime('%H:%M')} – {end.strftime('%H:%M')}"
+
+
 def _window(outlet: Outlet) -> Optional[str]:
     if outlet.window_start and outlet.window_end:
-        return f"{outlet.window_start.strftime('%H:%M')} – {outlet.window_end.strftime('%H:%M')}"
+        return _window_label(outlet.window_start, outlet.window_end)
     return None
+
+
+def _requested_window(outlet: Outlet, request: GoodsRequestCreate) -> Optional[str]:
+    """The delivery window for this request: the manager's choice inside the outlet window, or the whole window."""
+    start, end = request.window_start, request.window_end
+    if start is None and end is None:
+        return _window(outlet)
+    if start is None or end is None:
+        raise OrderRuleError("Choose both a start and an end time for the delivery window.", code="WINDOW_INCOMPLETE")
+    if start >= end:
+        raise OrderRuleError("The delivery window has to end after it starts.", code="WINDOW_INVALID")
+    if outlet.window_start and outlet.window_end and (start < outlet.window_start or end > outlet.window_end):
+        usual = _window(outlet)
+        raise OrderRuleError(
+            f"Choose a window inside {outlet.name}'s receiving hours ({usual}).",
+            code="WINDOW_OUTSIDE_OUTLET",
+            details={"outlet_window": usual},
+        )
+    return _window_label(start, end)
+
+
+# What the Store Manager order views read: items, the loader's shortfalls, and the delivery (allocation ->
+# vehicle, driver, Dispatcher trip), loaded together so a list is a few queries, not one per order.
+STORE_ORDER_LOADS = (
+    selectinload(Order.items),
+    selectinload(Order.loader_issues),
+    selectinload(Order.allocation).selectinload(Allocation.vehicle),
+    selectinload(Order.allocation).selectinload(Allocation.driver).selectinload(DriverProfile.user),
+    selectinload(Order.allocation).selectinload(Allocation.dispatch_trips),
+)
 
 
 class OrderService:
@@ -127,6 +165,19 @@ class OrderService:
         if outlet is None:
             raise NotFoundError("Outlet not found", entity="Outlet", entity_id=request.outlet_id)
 
+        # Every line must be an item from the outlet's own chain. The catalogue decides the temperature zone
+        # and supplies the per-carton weight and volume the loader plans with.
+        specs = catalogue_service.items_by_sku(db, outlet, (item.sku for item in request.items))
+        unavailable = sorted({item.sku for item in request.items if item.sku not in specs})
+        if unavailable:
+            raise OrderRuleError(
+                f"{', '.join(unavailable)} {'is' if len(unavailable) == 1 else 'are'} not in {outlet.name}'s catalogue.",
+                code="ITEM_NOT_AVAILABLE",
+                details={"skus": unavailable},
+            )
+        zone_of = {item.sku: specs[item.sku].temperature_zone for item in request.items}
+        delivery_window = _requested_window(outlet, request)
+
         delivery_date = request.delivery_date
         if not calendar_service.is_operating_day(db, delivery_date):
             suggestion = calendar_service.get_next_operating_day(db, delivery_date)
@@ -151,7 +202,7 @@ class OrderService:
                 details={"earliest_date": earliest.isoformat()},
             )
 
-        zones = order_rules.split_by_temperature(item.temperature_zone for item in request.items)
+        zones = order_rules.split_by_temperature(zone_of[item.sku] for item in request.items)
         brand = outlet.brand.value if outlet.brand else None
         if brand != "fresh" and len(zones) > 1:
             raise OrderRuleError(
@@ -184,7 +235,7 @@ class OrderService:
         numbers = OrderService.next_order_numbers(db, len(zones))
         created: List[Order] = []
         for number, zone in zip(numbers, zones):
-            lines = [item for item in request.items if item.temperature_zone == zone]
+            lines = [item for item in request.items if zone_of[item.sku] == zone]
             order = Order(
                 order_number=number,
                 client_name=outlet.name,
@@ -196,8 +247,9 @@ class OrderService:
                 brand=brand.capitalize() if brand else None,
                 district=outlet.district,
                 temperature_zone=zone,
-                delivery_window=_window(outlet),
-                weight_kg=0.0,
+                delivery_window=delivery_window,
+                weight_kg=round(sum(item.quantity * specs[item.sku].unit_weight_kg for item in lines), 2),
+                volume_m3=round(sum(item.quantity * specs[item.sku].unit_volume_m3 for item in lines), 4),
                 is_priority=request.is_priority,
                 operating_date=delivery_date.isoformat(),
                 outlet_id=outlet.id,
@@ -207,7 +259,13 @@ class OrderService:
                 notes=request.notes,
                 placed_by=placed_by,
                 items=[
-                    OrderItem(sku=item.sku, item_name=item.item_name, quantity=item.quantity, unit_price=item.unit_price)
+                    # The name comes from the catalogue, not the browser.
+                    OrderItem(
+                        sku=item.sku,
+                        item_name=split_name(specs[item.sku].name)[0],
+                        quantity=item.quantity,
+                        unit_price=item.unit_price,
+                    )
                     for item in lines
                 ],
             )
@@ -239,7 +297,7 @@ class OrderService:
         """Order history for Goods Requests (Figma 02). Dates filter on when the request was submitted."""
         query = (
             db.query(Order)
-            .options(selectinload(Order.items), selectinload(Order.loader_issues))
+            .options(*STORE_ORDER_LOADS)
             .filter(Order.outlet_id == outlet_id)
         )
         if statuses:
@@ -264,7 +322,7 @@ class OrderService:
     def get_order_by_number(db: Session, order_number: str) -> Order:
         order = (
             db.query(Order)
-            .options(selectinload(Order.items), selectinload(Order.loader_issues))
+            .options(*STORE_ORDER_LOADS)
             .filter(Order.order_number == order_number.upper())
             .first()
         )
@@ -278,6 +336,11 @@ class OrderService:
         if order is None:
             raise NotFoundError("Order not found", entity="Order", entity_id=order_id)
         return order
+
+    @staticmethod
+    def outlet_id_of(db: Session, order_id: int) -> Optional[int]:
+        """The order's outlet, for access checks (raises NotFoundError for an unknown order)."""
+        return OrderService._get(db, order_id).outlet_id
 
     @staticmethod
     def cancel_order(db: Session, order_id: int, now: datetime) -> Order:
@@ -325,6 +388,50 @@ class OrderService:
             notification_service.send(db, order.outlet_id, notification_type, meta)
         return order
 
+    # ── Delivery progress from the Dispatcher's runs and the Driver app ──
+    # Each moves the orders on a trip forward through update_order_status, so the store is notified. Orders
+    # not at the expected step (e.g. still being loaded, or deferred) are left alone.
+
+    @staticmethod
+    def _advance(db: Session, orders: List[Order], target: OrderStatus, from_status: OrderStatus) -> List[Order]:
+        moved = []
+        for order in orders:
+            if order.status == from_status:
+                try:
+                    moved.append(OrderService.update_order_status(db, order.id, target))
+                except InvalidStateTransitionError:
+                    db.rollback()
+        return moved
+
+    @staticmethod
+    def _trip_orders(db: Session, allocation_id: Optional[int], outlet_id: Optional[int] = None) -> List[Order]:
+        if allocation_id is None:
+            return []
+        query = db.query(Order).filter(Order.allocation_id == allocation_id)
+        if outlet_id is not None:
+            query = query.filter(Order.outlet_id == outlet_id)
+        return query.all()
+
+    @staticmethod
+    def mark_trip_departed(db: Session, allocation_id: Optional[int]) -> List[Order]:
+        """The truck left the depot: loaded orders on the trip become DISPATCHED ("On the way")."""
+        orders = OrderService._trip_orders(db, allocation_id)
+        return OrderService._advance(db, orders, OrderStatus.DISPATCHED, OrderStatus.READY_FOR_DISPATCH)
+
+    @staticmethod
+    def mark_trip_delivered(db: Session, allocation_id: Optional[int], outlet_id: Optional[int] = None) -> List[Order]:
+        """The truck reached the store (one outlet's stop, or the whole trip): its orders become DELIVERED."""
+        orders = OrderService._trip_orders(db, allocation_id, outlet_id)
+        return OrderService._advance(db, orders, OrderStatus.DELIVERED, OrderStatus.DISPATCHED)
+
+    @staticmethod
+    def mark_order_delivered(db: Session, order_id: Optional[int]) -> List[Order]:
+        """One order delivered (the Driver app's stop is linked to it through a shipment)."""
+        if order_id is None:
+            return []
+        order = db.query(Order).filter(Order.id == order_id).first()
+        return OrderService._advance(db, [order] if order else [], OrderStatus.DELIVERED, OrderStatus.DISPATCHED)
+
     @staticmethod
     def defer_order(
         db: Session,
@@ -364,6 +471,9 @@ class OrderService:
             target_item.quantity_sent = quantity_sent
             target_item.dispatcher_note = reason
             order.deferral_reason = f"Partial fulfillment: {quantity_sent} of {target_item.quantity} assigned for {target_item.item_name} ({reason})"
+            db.flush()
+            queue_store_change(db, order, partial=True, reason=reason, item_name=target_item.item_name,
+                               assigned=quantity_sent, requested=target_item.quantity)
             db.commit()
             db.refresh(order)
 
@@ -401,6 +511,8 @@ class OrderService:
             order.operating_date = new_delivery_date.isoformat()
             order.cutoff_at = order_rules.cutoff_for(new_delivery_date)
 
+        db.flush()
+        queue_store_change(db, order, partial=False, reason=reason)
         db.commit()
         db.refresh(order)
         if order.outlet_id:
@@ -422,7 +534,7 @@ class OrderService:
         """Contract (§3): the loader builds its loading lists from this."""
         return (
             db.query(Order)
-            .options(selectinload(Order.items), selectinload(Order.loader_issues))
+            .options(*STORE_ORDER_LOADS)
             .join(Outlet, Order.outlet_id == Outlet.id)
             .filter(
                 Order.operating_date == day.isoformat(),

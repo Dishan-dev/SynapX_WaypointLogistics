@@ -44,6 +44,7 @@ export interface Order {
   is_late: boolean;
   operating_date?: string | null;
   deferral_reason?: string | null;
+  notes?: string | null;
   allocation_id?: number | null;
   created_at: string;
   updated_at: string;

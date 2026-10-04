@@ -10,6 +10,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { TableLoading } from "@/components/ui/table-loading";
 import {
   Package,
   Snowflake,
@@ -57,18 +58,6 @@ export function OrderDetailDrawer({
 
   // Sync or fetch items when order changes
   useEffect(() => {
-    if (!order || !isOpen) {
-      setItems([]);
-      setDeferSuccessMsg(null);
-      return;
-    }
-
-    if (order.items && order.items.length > 0) {
-      setItems(order.items);
-      return;
-    }
-
-    // Fallback: Fetch order by ID if items weren't present in the list payload
     let ignore = false;
     async function fetchFullOrder() {
       setIsLoadingItems(true);
@@ -86,11 +75,19 @@ export function OrderDetailDrawer({
         if (!ignore) setIsLoadingItems(false);
       }
     }
-
-    fetchFullOrder();
-
+    const initial = setTimeout(() => {
+      if (!order || !isOpen) {
+        setItems([]);
+        setDeferSuccessMsg(null);
+      } else if (order.items && order.items.length > 0) {
+        setItems(order.items);
+      } else {
+        void fetchFullOrder();
+      }
+    }, 0);
     return () => {
       ignore = true;
+      clearTimeout(initial);
     };
   }, [order, isOpen]);
 
@@ -385,6 +382,19 @@ export function OrderDetailDrawer({
               </div>
             </div>
 
+            {/* Store Manager Notes */}
+            {order.notes && (
+              <div className="p-3.5 rounded-xl bg-amber-50/50 border border-amber-200/50 text-xs mt-3">
+                <div className="flex items-center gap-1.5 text-amber-700 font-medium mb-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Store Manager Note</span>
+                </div>
+                <p className="text-amber-900 pl-5 leading-relaxed">
+                  {order.notes}
+                </p>
+              </div>
+            )}
+
             {/* Line Items Table without pricing */}
             <div>
               <div className="flex items-center justify-between mb-2.5">
@@ -402,8 +412,8 @@ export function OrderDetailDrawer({
                 </span>
               </div>
 
-              <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
-                <table className="w-full text-left text-xs border-collapse">
+              <div className="overflow-x-auto rounded-xl border border-border shadow-2xs">
+                <table className="dispatcher-table min-w-[600px] text-left">
                   <thead className="bg-slate-100/80 border-b border-slate-200 text-slate-600 font-semibold">
                     <tr>
                       <th className="py-2.5 px-3.5 w-10 text-center text-[11px]">#</th>
@@ -417,7 +427,7 @@ export function OrderDetailDrawer({
                     {isLoadingItems ? (
                       <tr>
                         <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
-                          Loading order line items...
+                          <TableLoading label="Loading order line items..." />
                         </td>
                       </tr>
                     ) : items.length === 0 ? (

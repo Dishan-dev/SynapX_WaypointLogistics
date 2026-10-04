@@ -18,6 +18,22 @@ export const TARGET_ROLE_KEY = "waypoint_target_role";
 // Legacy key for driver compatibility
 const LEGACY_DRIVER_KEY = "driver_token";
 
+// The access token is also kept in a cookie so server-rendered pages (the Store Manager screens) can
+// send it to the API. Same name as the localStorage key.
+export const ACCESS_TOKEN_COOKIE = ACCESS_TOKEN_KEY;
+
+export function setAuthCookie(accessToken: string): void {
+  if (typeof document === "undefined") return;
+  const exp = decodeJwt<KeycloakTokenPayload>(accessToken)?.exp;
+  const maxAge = exp ? Math.max(0, exp - Math.floor(Date.now() / 1000)) : 3600;
+  document.cookie = `${ACCESS_TOKEN_COOKIE}=${accessToken}; Path=/; Max-Age=${maxAge}; SameSite=Lax`;
+}
+
+function clearAuthCookie(): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${ACCESS_TOKEN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem(ACCESS_TOKEN_KEY) || localStorage.getItem(LEGACY_DRIVER_KEY);
@@ -77,6 +93,7 @@ export function saveAuthSession(tokens: {
 
   localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
   localStorage.setItem(LEGACY_DRIVER_KEY, tokens.access_token);
+  setAuthCookie(tokens.access_token);
 
   if (tokens.refresh_token) {
     localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
@@ -97,6 +114,7 @@ export function clearAuthSession(): void {
   localStorage.removeItem(ID_TOKEN_KEY);
   localStorage.removeItem(USER_INFO_KEY);
   localStorage.removeItem(LEGACY_DRIVER_KEY);
+  clearAuthCookie();
   sessionStorage.removeItem(PKCE_VERIFIER_KEY);
   sessionStorage.removeItem(PKCE_STATE_KEY);
   sessionStorage.removeItem(TARGET_ROLE_KEY);
