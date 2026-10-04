@@ -1,5 +1,6 @@
+import os
 from typing import List, Optional, Union
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import AnyHttpUrl, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,7 +11,7 @@ class Settings(BaseSettings):
 
     # Environment
     ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Database
     DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/waypoint_logistics"
@@ -44,13 +45,16 @@ class Settings(BaseSettings):
         return v
 
     # Keycloak Configuration
-    KEYCLOAK_URL: str = "http://localhost:8080"
-    KEYCLOAK_REALM: str = "waypointlogistics"
-    KEYCLOAK_CLIENT_ID: str = "waypoint-backend"
-    KEYCLOAK_CLIENT_SECRET: str = "your_keycloak_client_secret_here"
+    KEYCLOAK_URL: str = ""
+    KEYCLOAK_REALM: str = ""
+    KEYCLOAK_CLIENT_ID: str = ""
+    KEYCLOAK_CLIENT_SECRET: str = ""
     KEYCLOAK_ALGORITHM: str = "RS256"
-    KEYCLOAK_AUDIENCE: str = "account"
-    KEYCLOAK_DEV_MODE: bool = True  # Allows local / test bypass when Keycloak container is offline
+    KEYCLOAK_AUDIENCE: str = ""
+    KEYCLOAK_DEV_MODE: bool = False  # Explicit opt-in for local development only
+    # Loaders sign in with Keycloak. The old name + PIN sign-in is for tests and
+    # local demos only; keep it off anywhere real.
+    LOADER_PIN_SIGN_IN: bool = False
 
     # Temporary operational scope while Keycloak depot claims are being wired.
     # Requests without an explicit depot scope stay in Peliyagoda, never a
@@ -69,7 +73,7 @@ class Settings(BaseSettings):
     LOADER_DEV_ENDPOINTS: bool = True
 
     # JWT / Fallback Secret for Dev and Testing
-    SECRET_KEY: str = "change-this-in-production-super-secret-key-32chars"
+    SECRET_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     ALGORITHM: str = "HS256"
 
@@ -80,6 +84,25 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
+
+    @model_validator(mode="after")
+    def validate_deployment_security(self):
+        if self.ENVIRONMENT.lower() != "production" and os.getenv("VERCEL_ENV") not in {"production", "preview"}:
+            return self
+        if self.KEYCLOAK_DEV_MODE:
+            raise ValueError("KEYCLOAK_DEV_MODE must be false in a deployment")
+        if not self.KEYCLOAK_URL.startswith("https://"):
+            raise ValueError("KEYCLOAK_URL must be an HTTPS URL in a deployment")
+        for name in ("KEYCLOAK_REALM", "KEYCLOAK_CLIENT_ID", "KEYCLOAK_AUDIENCE"):
+            if not getattr(self, name).strip():
+                raise ValueError(f"{name} must be configured in a deployment")
+        if not self.KEYCLOAK_CLIENT_SECRET or self.KEYCLOAK_CLIENT_SECRET.lower().startswith(("your_", "change-")):
+            raise ValueError("KEYCLOAK_CLIENT_SECRET must be configured in a deployment")
+        if len(self.SECRET_KEY) < 32 or self.SECRET_KEY.lower().startswith(("your_", "change-")):
+            raise ValueError("SECRET_KEY must be a unique value of at least 32 characters in a deployment")
+        if not self.BACKEND_CORS_ORIGINS or any(not origin.startswith("https://") for origin in self.BACKEND_CORS_ORIGINS):
+            raise ValueError("BACKEND_CORS_ORIGINS must contain only HTTPS frontend origins in a deployment")
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

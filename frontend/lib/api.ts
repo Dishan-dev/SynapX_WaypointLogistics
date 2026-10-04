@@ -4,19 +4,16 @@
  */
 import { getToken } from "./auth";
 import { dispatcherDepotHeaders } from "./dispatcher-depot";
+import { apiBaseUrls } from "./api-urls";
 
-const CANDIDATE_API_URLS = [
-  process.env.NEXT_PUBLIC_API_URL,
-  "http://localhost:8000",
-  "http://localhost:5000",
-].filter(Boolean) as string[];
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL;
 
 let cachedApiUrl: string | null = null;
 
 export async function getActiveApiUrl(): Promise<string> {
   if (cachedApiUrl) return cachedApiUrl;
 
-  for (const url of Array.from(new Set(CANDIDATE_API_URLS))) {
+  for (const url of apiBaseUrls(configuredApiUrl)) {
     try {
       const res = await fetch(`${url}/api/v1/health`, {
         signal: AbortSignal.timeout(1200),
@@ -32,21 +29,14 @@ export async function getActiveApiUrl(): Promise<string> {
   }
 
   // Fallback to configured or default
-  return process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  return apiBaseUrls(configuredApiUrl)[0] ?? "";
 }
 
 export async function fetchWithFallback(
   endpoint: string,
   init?: RequestInit
 ): Promise<Response> {
-  const urlsToTry = Array.from(
-    new Set([
-      cachedApiUrl,
-      process.env.NEXT_PUBLIC_API_URL,
-      "http://localhost:8000",
-      "http://localhost:5000",
-    ].filter(Boolean) as string[])
-  );
+  const urlsToTry = Array.from(new Set([cachedApiUrl, ...apiBaseUrls(configuredApiUrl)].filter(Boolean) as string[]));
 
   const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
 
@@ -67,7 +57,7 @@ export async function fetchWithFallback(
     }
   }
 
-  throw lastError || new Error("Failed to connect to backend on either port 8000 or 5000");
+  throw lastError || new Error("NEXT_PUBLIC_API_URL is not configured");
 }
 
 export class ApiError extends Error {

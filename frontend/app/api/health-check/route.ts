@@ -3,9 +3,9 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const keycloakUrl = process.env.NEXT_PUBLIC_KEYCLOAK_URL || "https://auth.tenderease.me";
-  const keycloakRealm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "waypointlogistics";
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+  const keycloakUrl = process.env.NEXT_PUBLIC_KEYCLOAK_URL?.trim().replace(/\/$/, "") || "";
+  const keycloakRealm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM?.trim() || "";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/$/, "") || "";
 
   // Results payload
   const result = {
@@ -36,7 +36,9 @@ export async function GET() {
 
   // 1. Probe Keycloak OIDC
   const kcStart = Date.now();
-  try {
+  if (!keycloakUrl || !keycloakRealm) {
+    result.keycloak.error = "Keycloak environment variables are not configured";
+  } else try {
     const kcRes = await fetch(
       `${keycloakUrl}/realms/${keycloakRealm}/.well-known/openid-configuration`,
       {
@@ -57,23 +59,19 @@ export async function GET() {
     result.keycloak.error = err instanceof Error ? err.message : "Connection failed";
   }
 
-  // 2. Probe FastAPI Backend and Neon DB across candidate ports (8000 and 5000)
-  const candidateUrls = Array.from(
-    new Set([
-      apiUrl,
-      "http://localhost:8000",
-      "http://localhost:5000",
-    ].filter(Boolean))
-  );
+  // 2. Probe the configured FastAPI backend only.
+  const candidateUrls = apiUrl ? [apiUrl] : [];
 
   let backendConnected = false;
-  let lastBackendError = "Server offline";
+  let lastBackendError = apiUrl ? "Server offline" : "NEXT_PUBLIC_API_URL is not configured";
 
   for (const targetUrl of candidateUrls) {
     const beStart = Date.now();
     try {
       const beRes = await fetch(`${targetUrl}/api/v1/health`, {
-        signal: AbortSignal.timeout(2500),
+        // The health endpoint also checks the database, which can take a few
+        // seconds to establish a connection after an idle period.
+        signal: AbortSignal.timeout(8000),
         headers: { Accept: "application/json" },
         cache: "no-store",
       });
@@ -105,7 +103,7 @@ export async function GET() {
 
   if (!backendConnected) {
     result.backend.status = "offline";
-    result.backend.error = lastBackendError || `Connection refused at ${apiUrl} and fallback ports`;
+    result.backend.error = lastBackendError;
     result.database.status = "unknown";
     result.database.details = "Cannot inspect DB while backend is down";
     result.bridge.status = "disconnected";

@@ -1,5 +1,6 @@
 import { API_URL } from "@/components/store/api/config";
 import { ACCESS_TOKEN_COOKIE, getAccessToken } from "@/lib/auth";
+import { apiBaseUrls } from "@/lib/api-urls";
 
 /** The signed-in user's Keycloak token: from localStorage in the browser, from the cookie on the server. */
 async function sessionToken(): Promise<string | null> {
@@ -39,17 +40,11 @@ function messageFrom(detail: unknown, fallback: string) {
   return fallback;
 }
 
-const CANDIDATE_URLS = [
-  API_URL,
-  "http://localhost:8000",
-  "http://localhost:5000",
-].filter(Boolean);
-
 let activeBaseUrl: string = API_URL;
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response | null = null;
-  const urlsToTry = Array.from(new Set([activeBaseUrl, ...CANDIDATE_URLS]));
+  const urlsToTry = Array.from(new Set([activeBaseUrl, ...apiBaseUrls(API_URL)].filter(Boolean)));
   // The backend works out the store manager and their outlet from this token.
   const token = await sessionToken();
   const auth: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};

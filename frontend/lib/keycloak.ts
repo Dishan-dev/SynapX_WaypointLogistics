@@ -101,9 +101,13 @@ export interface AuthUser {
 }
 
 export function getKeycloakConfig() {
-  const url = (process.env.NEXT_PUBLIC_KEYCLOAK_URL || "https://auth.tenderease.me").replace(/\/$/, "");
-  const realm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "waypointlogistics";
-  const clientId = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || "waypoint-frontend";
+  const configuredUrl = process.env.NEXT_PUBLIC_KEYCLOAK_URL?.trim();
+  const realm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM?.trim();
+  const clientId = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID?.trim();
+  if (!configuredUrl || !realm || !clientId) {
+    throw new Error("Keycloak is not configured. Set NEXT_PUBLIC_KEYCLOAK_URL, NEXT_PUBLIC_KEYCLOAK_REALM, and NEXT_PUBLIC_KEYCLOAK_CLIENT_ID.");
+  }
+  const url = configuredUrl.replace(/\/$/, "");
 
   return {
     url,
@@ -185,28 +189,18 @@ export function getDefaultPortalForRoles(roles: KeycloakAppRole[]): string {
  */
 export async function buildAuthorizeUrl(redirectUri: string, targetRole?: string): Promise<{ url: string; state: string; verifier: string }> {
   const config = getKeycloakConfig();
-  const state = Math.random().toString(36).substring(2) + Date.now().toString(36);
-  
-  // Create PKCE Code Verifier
-  const array = new Uint8Array(32);
-  if (typeof window !== "undefined" && window.crypto) {
-    window.crypto.getRandomValues(array);
-  } else {
-    for (let i = 0; i < 32; i++) array[i] = Math.floor(Math.random() * 256);
+  if (!window.crypto?.getRandomValues || !window.crypto?.subtle) {
+    throw new Error("Secure browser crypto is required to sign in.");
   }
-  const verifier = Array.from(array, (dec) => ("0" + dec.toString(16)).slice(-2)).join("");
-
-  // Calculate Code Challenge
-  let codeChallenge = verifier;
-  if (typeof window !== "undefined" && window.crypto?.subtle) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(verifier);
-    const hash = await window.crypto.subtle.digest("SHA-256", data);
-    codeChallenge = btoa(String.fromCharCode(...new Uint8Array(hash)))
+  const toBase64Url = (bytes: Uint8Array) =>
+    btoa(String.fromCharCode(...bytes))
       .replace(/\+/g, "-")
       .replace(/\//g, "_")
       .replace(/=+$/, "");
-  }
+  const state = toBase64Url(window.crypto.getRandomValues(new Uint8Array(32)));
+  const verifier = toBase64Url(window.crypto.getRandomValues(new Uint8Array(32)));
+  const hash = await window.crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const codeChallenge = toBase64Url(new Uint8Array(hash));
 
   const params = new URLSearchParams({
     client_id: config.clientId,

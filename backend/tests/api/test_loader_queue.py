@@ -78,11 +78,11 @@ def test_cards_match_the_run_read_they_open(loader_client, db_session):
     assert (card["released_at"], card["released_by"], card["pre_stage_note"], card["alert"]) == (None, None, None, None)
 
 
-def test_groups_every_dock_of_the_depot_in_arrival_order(loader_client, db_session):
+def test_groups_the_depots_docks_with_a_truck_in_arrival_order(loader_client, db_session):
     run, _ = build_run_021(db_session)  # arrived 01:00
     dock = run.dock
     dock4 = make_dock(db_session, "DOCK4", "Dock 4")
-    make_dock(db_session, "DOCK5", "Dock 5")  # no truck in
+    make_dock(db_session, "DOCK5", "Dock 5")  # no truck in: left out
     other_run(db_session, dock, "RUN-031", "06:00", brand=Brand.STYLE, wave="day", arrived="00:40")
     other_run(db_session, dock, "RUN-029", "05:20", arrived="01:20")
     other_run(db_session, dock4, "RUN-040", "02:00")
@@ -96,11 +96,13 @@ def test_groups_every_dock_of_the_depot_in_arrival_order(loader_client, db_sessi
 
     assert body["depot"] == "peliyagoda"
     assert [(d["dock"], d["dock_code"]) for d in body["docks"]] == [
-        ("Dock 3", "DOCK3"), ("Dock 4", "DOCK4"), ("Dock 5", "DOCK5"),
+        ("Dock 3", "DOCK3"), ("Dock 4", "DOCK4"),
     ]
     assert [c["code"] for c in body["docks"][0]["runs"]] == ["RUN-031", "RUN-021", "RUN-029"]
     assert [c["code"] for c in body["docks"][1]["runs"]] == ["RUN-040"]
-    assert body["docks"][2]["runs"] == []
+    assert queue(loader_client, dock="DOCK5").json()["docks"] == [
+        {"dock": "Dock 5", "dock_code": "DOCK5", "runs": []},
+    ]  # asked for by name: listed, so the tablet can say so
     assert "RUN-020" not in cards(body)  # gated out: the driver's now
     assert "RUN-050" not in cards(body)  # awaiting its truck: hidden
     assert "RUN-060" not in cards(body)  # another depot

@@ -2,8 +2,9 @@
 
 Cloudflare R2 when backend/.env has the five R2_* settings; otherwise the local
 uploads folder, so teammates and judges without the keys still have a working
-app. If R2 can't be reached the photo is kept locally instead, so a driver's
-proof is never lost. Either way the caller gets the address for photo_url.
+app. If R2 can't be reached the photo is kept locally instead. On Vercel that
+fallback is temporary and may disappear between requests. Either way the caller
+gets the address for photo_url.
 """
 import logging
 import os
@@ -15,8 +16,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
-# app/static/uploads, served at /static/uploads (app/main.py)
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "uploads")
+# Served at /static/uploads by app/main.py. Vercel's deployed app is read-only.
+UPLOAD_DIR = (
+    "/tmp/uploads"
+    if os.getenv("VERCEL")
+    else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "uploads")
+)
 EXTENSIONS = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
 
 
