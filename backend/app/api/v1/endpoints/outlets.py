@@ -255,6 +255,8 @@ def detail_query(db: Session):
     )
 
 
+from app.core.cache import memory_cache
+
 @router.get("", response_model=List[OutletRead])
 @router.get("/", response_model=List[OutletRead])
 def list_outlets(
@@ -270,6 +272,12 @@ def list_outlets(
     current_user: Optional[User] = Depends(deps.get_optional_user),
     x_waypoint_depot: Optional[str] = Header(None, alias="X-Waypoint-Depot"),
 ):
+    user_id = current_user.id if current_user else "anon"
+    cache_key = f"outlets:list:{user_id}:{skip}:{limit}:{q}:{brand}:{depot}:{district}:{dock_type}:{van_only}:{x_waypoint_depot}"
+    cached = memory_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     if not profile_ready(db):
         return legacy_outlets(db, skip, limit)
 
@@ -330,6 +338,7 @@ def list_outlets(
     for o in outlets:
         s = settings_map.get(o.id)
         results.append(outlet_to_read(o, s, s.store_manager_user_id if s else None))
+    memory_cache.set(cache_key, results, ttl_seconds=60)
     return results
 
 

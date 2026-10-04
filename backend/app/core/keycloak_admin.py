@@ -230,6 +230,36 @@ def list_keycloak_users(search: Optional[str] = None, max_users: int = 200) -> L
         return []
 
 
+def get_all_user_role_mappings() -> Dict[str, List[str]]:
+    """
+    Fetch all users associated with each app role in only 5 calls instead of N sequential calls per user.
+    Returns mapping of { user_id: [role_names] }.
+    """
+    headers = _get_admin_headers()
+    if not headers:
+        return {}
+
+    user_roles: Dict[str, List[str]] = {}
+    base = _admin_base_url()
+
+    for role_name in KEYCLOAK_APP_ROLES:
+        url = f"{base}/roles/{role_name}/users?max=500"
+        try:
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                members = res.json()
+                for member in members:
+                    uid = member.get("id")
+                    if uid:
+                        if uid not in user_roles:
+                            user_roles[uid] = []
+                        user_roles[uid].append(role_name)
+        except Exception as exc:
+            logger.error(f"Failed to query role members for {role_name}: {exc}")
+
+    return user_roles
+
+
 def get_user_realm_roles(user_id: str) -> List[str]:
     """Retrieve realm roles assigned to a Keycloak user."""
     headers = _get_admin_headers()
