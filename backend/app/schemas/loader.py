@@ -5,7 +5,7 @@ The queue, sign-in and issue-list shapes (L2/L3/L5) are Sanduni's and are
 proposed in docs/loader/API_CONTRACT.md for her to review rather than coded here.
 """
 from datetime import date, datetime, time, timezone
-from typing import Annotated, Dict, List, Optional, Union
+from typing import Annotated, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
 from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field
@@ -145,6 +145,9 @@ class RunStopRead(BaseModel):
     handling_minutes: Optional[int] = None
     status: StopStatus
     outlet: OutletRead
+    # Arrival (ETA, or departure while it is pending) against the outlet's
+    # delivery window: ok, closing (last 30 min) or closed. None: no window.
+    window_status: Optional[Literal["ok", "closing", "closed"]] = None
     orders: List[RunOrderRead]
     # Against the plan before the latest change: "was Stop 4", or "new stop".
     note: Optional[str] = None
