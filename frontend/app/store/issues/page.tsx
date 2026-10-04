@@ -37,14 +37,17 @@ import {
 import { getStoreOrder, getStoreOrders } from "@/components/store/api/store-data";
 import type { StoreOrder } from "@/components/store/mock-data";
 
-import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useRef } from "react";
+import { toast } from "sonner";
 
 function ExceptionsAndIssuesContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialOrderParam = searchParams.get("order") || "";
   const initialSearchParam = searchParams.get("search") || "";
   const autoOpenReport = searchParams.get("report") === "true" || !!initialOrderParam;
+  const didInitialOpen = useRef(false);
 
   const [issues, setIssues] = useState<StoreIssue[]>([]);
   const [selectedTab, setSelectedTab] = useState<"all" | "open" | "under_review" | "resolved">("all");
@@ -60,7 +63,7 @@ function ExceptionsAndIssuesContent() {
   const [orderSearchStatus, setOrderSearchStatus] = useState<"idle" | "loading" | "found" | "not_found">("idle");
 
   // Report & Edit Modal State
-  const [showCreateModal, setShowCreateModal] = useState(autoOpenReport);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingIssue, setEditingIssue] = useState<StoreIssue | null>(null);
   const [newOrderId, setNewOrderId] = useState(initialOrderParam || "");
   const [newItemName, setNewItemName] = useState("");
@@ -105,10 +108,6 @@ function ExceptionsAndIssuesContent() {
   }, []);
 
   useEffect(() => {
-    if (initialOrderParam) {
-      setNewOrderId(initialOrderParam);
-      setShowCreateModal(true);
-    }
     if (initialSearchParam) {
       setSearchQuery(initialSearchParam);
       const found = issues.find(
@@ -120,7 +119,14 @@ function ExceptionsAndIssuesContent() {
         setSelectedIssue(found);
       }
     }
-  }, [initialOrderParam, initialSearchParam, issues]);
+  }, [initialSearchParam, issues]);
+
+  useEffect(() => {
+    if ((initialOrderParam || autoOpenReport) && !didInitialOpen.current) {
+      didInitialOpen.current = true;
+      void openCreateModal(initialOrderParam);
+    }
+  }, [initialOrderParam, autoOpenReport]);
 
   const openCount = issues.filter((i) => i.status === "open").length;
   const underReviewCount = issues.filter((i) => i.status === "under_review").length;
@@ -244,9 +250,9 @@ function ExceptionsAndIssuesContent() {
     }
   };
 
-  const openCreateModal = async () => {
+  const openCreateModal = async (overrideOrder?: string) => {
     setEditingIssue(null);
-    const targetOrder = initialOrderParam || (storeOrders[0]?.orderNumber ?? "");
+    const targetOrder = (typeof overrideOrder === "string" ? overrideOrder : "") || initialOrderParam || (storeOrders[0]?.orderNumber ?? "");
     setNewOrderId(targetOrder);
     setNewType("Damaged Goods");
     setNewDescription("");
@@ -387,6 +393,12 @@ function ExceptionsAndIssuesContent() {
       setEditingIssue(null);
       setNewDescription("");
       setNewPhoto(null);
+      router.replace("/store/issues", { scroll: false });
+      toast.success(editingIssue ? "Issue updated successfully" : "Issue reported successfully", {
+        description: editingIssue
+          ? `Changes saved for ${editingIssue.id}`
+          : `Discrepancy logged for ${newOrderId.trim()}`,
+      });
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Couldn't save the issue. Try again.");
     } finally {
@@ -438,7 +450,7 @@ function ExceptionsAndIssuesContent() {
 
         <Button
           type="button"
-          onClick={openCreateModal}
+          onClick={() => void openCreateModal()}
           className="bg-primary text-primary-foreground font-bold hover:bg-primary/90 gap-1.5 shadow-xs"
         >
           <Plus className="size-4" />
@@ -897,6 +909,7 @@ function ExceptionsAndIssuesContent() {
                 onClick={() => {
                   setShowCreateModal(false);
                   setEditingIssue(null);
+                  router.replace("/store/issues", { scroll: false });
                 }}
                 className="p-1 rounded-md text-muted-foreground hover:bg-muted"
               >
