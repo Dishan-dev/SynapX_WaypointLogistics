@@ -125,7 +125,11 @@ export default function SOSPage() {
         // photo_url is saved once sos_alerts has a photo_url column; ignored until then
         body: JSON.stringify({ ...alert, photo_url }),
       });
-      router.push("/driver/sos/success");
+      // The success screen shows what was actually sent
+      const sent = new URLSearchParams({ type: selectedType, gps: fix ? "1" : "0" });
+      if (activeTrip?.run_code) sent.set("run", activeTrip.run_code);
+      if (activeTrip?.vehicle_number) sent.set("truck", activeTrip.vehicle_number);
+      router.push(`/driver/sos/success?${sent}`);
     } catch (error) {
       if (error instanceof ApiError && error.isNetworkError) return saveForLater();
       toast.error(error instanceof Error ? error.message : "Couldn't send the SOS", {

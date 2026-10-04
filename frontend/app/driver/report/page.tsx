@@ -30,7 +30,7 @@ export default function ReportProblemPage() {
   const issues = [
     { label: "Outlet closed", icon: Store, backendType: "customer_unavailable" },
     { label: "Access denied", icon: DoorClosed, backendType: "customer_unavailable" },
-    { label: "Order mismatch", icon: PackageX, backendType: "damaged_goods" },
+    { label: "Order mismatch", icon: PackageX, backendType: "other" }, // not damage; the label goes in the description
     { label: "Other", icon: Ellipsis, backendType: "other" },
   ];
 
@@ -80,7 +80,7 @@ export default function ReportProblemPage() {
     const basePayload = {
       stop_id: currentStop ? currentStop.id : null,
       issue_type: issueConfig.backendType,
-      description: notes || selectedIssue,
+      description: notes.trim() ? `${selectedIssue}: ${notes.trim()}` : selectedIssue, // dispatch sees what the driver picked
     };
     const action = {
       action_type: "issue" as const,
@@ -145,7 +145,7 @@ export default function ReportProblemPage() {
               Report a problem
             </h1>
             <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              {loading ? "..." : activeTrip ? `Trip ${activeTrip.id} ${currentStop ? `· Stop ${currentStop.sequence}` : ''}` : "No Active Trip"}
+              {loading ? "..." : activeTrip ? `${activeTrip.run_code ?? `Trip ${activeTrip.id}`} ${currentStop ? `· Stop ${currentStop.sequence}` : ''}` : "No Active Trip"}
             </p>
           </div>
         </div>
@@ -205,6 +205,7 @@ export default function ReportProblemPage() {
           <textarea 
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
+            maxLength={1900} // issue_reports.description is 2000, with the issue label in front
             className="w-full h-[120px] p-4 rounded bg-white outline-none resize-none font-normal text-[16px]"
             style={{ border: "1px solid #E0E0E0", color: "#4F4F4F" }}
             placeholder="Add details for dispatch…"
