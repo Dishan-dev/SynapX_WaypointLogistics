@@ -44,6 +44,7 @@ export function DriverAuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Read storage itself: on the first render after a page load `loggedIn` and
     // `setupNeeded` are still the server's answers (false).
+    // In-app move: a page load here would cut off Log out's trip to Keycloak.
     if (getToken() === null) router.replace(LOGIN);
     else if (!onProfile && profileMissing()) router.replace(PROFILE);
   }, [onProfile, loggedIn, router]);
@@ -55,10 +56,11 @@ export function DriverAuthGuard({ children }: { children: React.ReactNode }) {
       if (cancelled) return;
       const lastRelogin = Number(sessionStorage.getItem(RELOGIN_KEY) ?? 0);
       if (reason === "expired" && Date.now() - lastRelogin > RELOGIN_WINDOW_MS) {
-        // Old login: sign in again once.
+        // Old login: sign in again once. A full page load, so the shared sign-in
+        // doesn't still see the login just removed (the auth context holds it).
         sessionStorage.setItem(RELOGIN_KEY, String(Date.now()));
         signOut();
-        router.replace(LOGIN);
+        window.location.replace(LOGIN);
       } else if (reason) {
         // Turned off, not a driver, or a fresh sign-in still refused.
         forgetScreens();
