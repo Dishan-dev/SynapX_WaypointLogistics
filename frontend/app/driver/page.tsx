@@ -5,22 +5,23 @@ import Link from "next/link";
 import {
   MapPin, Signal, BatteryFull, Map, Home, TriangleAlert, Layers, User
 } from "lucide-react";
-import { apiFetch } from "@/lib/api";
-import { cachedGet, keepPageOffline } from "@/lib/driverCache";
+import { apiFetch, ApiError } from "@/lib/api";
+import { cachedGet, keepPageOffline, writeCache } from "@/lib/driverCache";
 import { colomboNow, greeting, READY_CUTOFF_HOUR } from "@/lib/colomboTime";
 import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
 import SyncStatus from "@/components/driver/SyncStatus";
 
-function readyKey() {
-  return `driver-ready-for-tomorrow:${colomboNow().dateKey}`;
+// "I'm ready" for the next working day, saved on the server for the dispatcher.
+interface ReadyState {
+  for_date: string; // "2026-10-05"
+  confirmed: boolean;
+  open: boolean; // before the 4 PM cutoff
 }
 
-function readyConfirmedToday() {
-  try {
-    return localStorage.getItem(readyKey()) === "1";
-  } catch {
-    return false;
-  }
+/** "2026-10-05" → "Mon 5 Oct" */
+function dayLabel(isoDate: string) {
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })
+    .format(new Date(`${isoDate}T00:00:00Z`));
 }
 
 interface UserProfile {
@@ -44,8 +45,9 @@ export default function DriverDashboard() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [trips, setTrips] = useState<DriverTripSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [readyForTomorrow, setReadyForTomorrow] = useState(false);
+  const [ready, setReady] = useState<ReadyState | null>(null);
   const [submittingReady, setSubmittingReady] = useState(false);
+  const [readyError, setReadyError] = useState<string | null>(null);
   const [needsProfile, setNeedsProfile] = useState(false);
 
   useEffect(() => {
@@ -57,7 +59,6 @@ export default function DriverDashboard() {
         ]);
         setProfile(profileData);
         setTrips(tripsData);
-        setReadyForTomorrow(readyConfirmedToday());
         // Each trip's page opens offline too
         tripsData.forEach((t) => keepPageOffline(`/driver/trip/${t.id}`));
       } catch (error) {
@@ -71,27 +72,31 @@ export default function DriverDashboard() {
     cachedGet<{ complete: boolean }>("/driver/profile")
       .then((driver) => setNeedsProfile(!driver.complete))
       .catch(() => undefined);
+    cachedGet<ReadyState>("/driver/ready-tomorrow")
+      .then(setReady)
+      .catch(() => undefined);
   }, []);
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   // Dispatch plans tomorrow's trips at the 4 PM cutoff (Sri Lanka time), so
   // the driver confirms before then, once a day.
-  const showTomorrowButton = !loading && colomboNow().hour < READY_CUTOFF_HOUR && !readyForTomorrow;
+  const showTomorrowButton =
+    !loading && ready !== null && ready.open && !ready.confirmed && colomboNow().hour < READY_CUTOFF_HOUR;
 
   async function handleReadyForTomorrow() {
     setSubmittingReady(true);
+    setReadyError(null);
     try {
-      // Send readiness to dispatcher
-      await apiFetch("/driver/ready-tomorrow", { method: "POST" });
-    } catch (e) {
-      console.warn("Backend endpoint might not exist yet, but proceeding to update UI", e);
+      const saved = await apiFetch<ReadyState>("/driver/ready-tomorrow", { method: "POST" });
+      setReady(saved);
+      writeCache("/driver/ready-tomorrow", saved);
+    } catch (err) {
+      setReadyError(
+        err instanceof ApiError && !err.isNetworkError
+          ? err.message
+          : "Couldn't reach dispatch. Try again when you have signal."
+      );
     } finally {
-      try {
-        localStorage.setItem(readyKey(), "1");
-      } catch {
-        // storage blocked: the banner just shows again after a reload
-      }
-      setReadyForTomorrow(true);
       setSubmittingReady(false);
     }
   }
@@ -146,11 +151,11 @@ export default function DriverDashboard() {
         )}
 
         {/* Availability for Tomorrow Prompt */}
-        {showTomorrowButton && (
+        {showTomorrowButton && ready && (
           <div className="flex justify-between items-center p-4 rounded-xl" style={{ backgroundColor: "#E8F6EF", border: "1px solid #18794E", boxShadow: "0px 5px 16px 0px rgba(24, 121, 78, 0.08)" }}>
             <div className="flex flex-col gap-0.5">
-              <span className="font-bold text-[14px]" style={{ color: "#18794E" }}>Available Tomorrow?</span>
-              <span className="font-normal text-[11px]" style={{ color: "#18794E", maxWidth: "160px" }}>Let dispatch know you can take a run tomorrow. Closes at 4 PM, when dispatch plans trips.</span>
+              <span className="font-bold text-[14px]" style={{ color: "#18794E" }}>Available {dayLabel(ready.for_date)}?</span>
+              <span className="font-normal text-[11px]" style={{ color: "#18794E", maxWidth: "160px" }}>Let dispatch know you can take a run that day. Closes at 4 PM, when dispatch plans trips.</span>
             </div>
             <button
               onClick={handleReadyForTomorrow}
@@ -163,9 +168,13 @@ export default function DriverDashboard() {
           </div>
         )}
 
-        {readyForTomorrow && (
+        {readyError && (
+          <p role="alert" className="text-[12px] font-medium px-1" style={{ color: "#C9363E" }}>{readyError}</p>
+        )}
+
+        {ready?.confirmed && (
           <div className="flex items-center p-3 gap-2 rounded-xl" style={{ backgroundColor: "#EAF2FF", border: "1px solid #2167D5" }}>
-            <span className="font-bold text-[12px]" style={{ color: "#2167D5" }}>✓ You're confirmed for tomorrow's schedule</span>
+            <span className="font-bold text-[12px]" style={{ color: "#2167D5" }}>{`✓ You're down as available for ${dayLabel(ready.for_date)}`}</span>
           </div>
         )}
         {loading ? (

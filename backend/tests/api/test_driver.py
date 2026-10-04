@@ -5,6 +5,7 @@ Built on the loader's trip_setup (VEH014, three Fresh outlets, four orders):
 the dispatcher's trip names the driver, the loader builds and releases the run.
 """
 import time
+from datetime import date, datetime
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -16,7 +17,7 @@ from app.api import deps
 from app.core.config import settings
 from app.core.security import create_access_token, get_password_hash
 from app.models.delivery_run import RunOrderState, RunStatus, RunStop, RunStopOrder
-from app.models.driver import DeliveryStop, DriverTrip, SOSAlert
+from app.models.driver import DeliveryStop, DriverAvailability, DriverTrip, SOSAlert
 from app.models.allocation import AllocationStatus
 from app.models.fleet import DriverProfile, VehicleStatus
 from app.models.notification import Notification, NotificationType
@@ -626,3 +627,53 @@ def test_other_roles_cant_use_the_driver_app(loader_client, keycloak):
     res = loader_client.get(f"{API}/me", headers=headers)
 
     assert (res.status_code, res.json()["detail"]) == (403, "Driver access only")
+
+
+# ---- Ready for tomorrow -------------------------------------------------------------
+# 3 Oct 2026 is a Saturday: the next working day is Monday 5 Oct (Sunday is off when
+# the calendar has no row for it).
+
+def pin_clock(value: datetime):
+    """Sri Lanka time as the endpoints see it (deps.get_now)."""
+    from app.main import app
+    app.dependency_overrides[deps.get_now] = lambda: value
+
+
+def test_im_ready_is_saved_for_the_next_working_day(loader_client, db_session):
+    user = make_account(db_session)
+    pin_clock(datetime(2026, 10, 3, 10, 0))
+
+    first = loader_client.post(f"{API}/ready-tomorrow", headers=auth(user))
+
+    assert first.status_code == 200, first.text
+    assert (first.json()["for_date"], first.json()["confirmed"], first.json()["open"]) == ("2026-10-05", True, True)
+    again = loader_client.post(f"{API}/ready-tomorrow", headers=auth(user)).json()
+    assert again["confirmed_at"] == first.json()["confirmed_at"]
+    assert loader_client.get(f"{API}/ready-tomorrow", headers=auth(user)).json()["confirmed"] is True
+    assert db_session.query(DriverAvailability).filter(DriverAvailability.driver_id == user.id).count() == 1
+
+
+def test_im_ready_closes_at_4_pm(loader_client, db_session):
+    user = make_account(db_session)
+    pin_clock(datetime(2026, 10, 2, 16, 30))
+
+    res = loader_client.post(f"{API}/ready-tomorrow", headers=auth(user))
+
+    assert res.status_code == 409
+    state = loader_client.get(f"{API}/ready-tomorrow", headers=auth(user)).json()
+    assert (state["for_date"], state["confirmed"], state["open"]) == ("2026-10-03", False, False)
+
+
+def test_dispatcher_sees_who_is_ready(loader_client, trip_setup):
+    db, vehicle = trip_setup["db"], trip_setup["vehicle"]
+    driver, profile = make_driver(db, vehicle=vehicle)
+    pin_clock(datetime(2026, 10, 3, 10, 0))
+    loader_client.post(f"{API}/ready-tomorrow", headers=auth(driver))
+
+    ready = loader_client.get(f"{API}/availability", params={"date": "2026-10-05"}).json()
+
+    assert [(d["full_name"], d["phone"], d["vehicle_code"], d["driver_profile_id"]) for d in ready] == [
+        ("Tharindu Fernando", "0771234567", vehicle.code, profile.id),
+    ]
+    assert loader_client.get(f"{API}/availability").json()[0]["driver_id"] == driver.id  # default: next working day
+    assert loader_client.get(f"{API}/availability", params={"date": "2026-10-06"}).json() == []

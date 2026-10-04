@@ -1,5 +1,5 @@
 from typing import List, Optional, Annotated, Literal
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pydantic import BaseModel, ConfigDict, PlainSerializer, field_validator
 from app.models.driver import DriverTripStatus, DeliveryStopStatus, IssueType, IssueStatus, SOSStatus
 
@@ -201,3 +201,21 @@ class DriverProfileUpdate(BaseModel):
             raise ValueError("Enter a Sri Lankan phone number, like 0771234567.")
         return number
 
+
+# ---- Ready for tomorrow ------------------------------------------------------------
+
+class DriverReadyRead(BaseModel):
+    for_date: date  # the next working day the "I'm ready" is for
+    confirmed: bool
+    confirmed_at: Optional[UTCDateTime] = None
+    open: bool  # before the 4 PM cutoff, when dispatch plans the next day
+
+
+class DriverAvailabilityRead(BaseModel):
+    """One driver who said they can take a run that day (for the dispatcher)."""
+    driver_id: int  # users.id
+    driver_profile_id: Optional[int] = None  # driver_profiles.id, what allocations use
+    full_name: str
+    phone: Optional[str] = None
+    vehicle_code: Optional[str] = None  # the truck admin assigned, if any
+    confirmed_at: UTCDateTime

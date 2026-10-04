@@ -3,15 +3,16 @@ import logging
 import threading
 from collections import deque
 from typing import List, Optional, Tuple
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 from sqlalchemy import and_, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.core.exceptions import WaypointLogisticsError
 from app.models.delivery_run import DeliveryRun, RunOrderState, RunStatus, RunStop
-from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus
+from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus, DriverAvailability
 from app.models.allocation import AllocationStatus
 from app.models.fleet import DriverProfile, VehicleStatus
 from app.models.order import Order, OrderStatus
@@ -20,6 +21,7 @@ from app.models.user import User
 from app.schemas.driver import DeliveryStopRead, normalise_phone
 from app.schemas.loader import GateOutRequest
 from app.services import geo
+from app.services.calendar_service import CalendarService
 from app.services.loader_service import LoaderService
 from app.services.order_service import TRANSITIONS, order_service
 
@@ -681,6 +683,74 @@ def update_profile(db: Session, driver_id: int, phone: str, license_type: str) -
         profile.license_type = license_type
     db.commit()
     return get_profile(db, driver_id)
+
+
+# ---- Ready for tomorrow --------------------------------------------------------
+# Before the 4 PM cutoff the driver says they can take a run on the next working
+# day (calendar_days; a day not listed is a working day unless it is a Sunday),
+# so the dispatcher plans around who is available. One row per driver per day.
+
+READY_CUTOFF = time(16, 0)  # dispatch plans the next day's trips at 4 PM
+
+
+def ready_day(db: Session, now: datetime) -> date:
+    """The working day an "I'm ready" given now is for (now: Sri Lanka time)."""
+    return CalendarService.get_next_operating_day(db, now.date())
+
+
+def get_ready_tomorrow(db: Session, driver_id: int, now: datetime) -> dict:
+    day = ready_day(db, now)
+    row = db.query(DriverAvailability).filter(
+        DriverAvailability.driver_id == driver_id, DriverAvailability.for_date == day,
+    ).first()
+    return {
+        "for_date": day,
+        "confirmed": row is not None,
+        "confirmed_at": row.confirmed_at if row is not None else None,
+        "open": now.time() < READY_CUTOFF,
+    }
+
+
+def confirm_ready_tomorrow(db: Session, driver_id: int, now: datetime) -> dict:
+    """Saves the driver as available. Confirming again returns the first confirmation."""
+    state = get_ready_tomorrow(db, driver_id, now)
+    if state["confirmed"]:
+        return state
+    if not state["open"]:
+        raise HTTPException(
+            status_code=409,
+            detail="It's after 4 PM, so dispatch has already planned the next day. Call dispatch if you can still drive.",
+        )
+    db.add(DriverAvailability(driver_id=driver_id, for_date=state["for_date"]))
+    try:
+        db.commit()
+    except IntegrityError:  # a double tap saved it a moment ago
+        db.rollback()
+    return get_ready_tomorrow(db, driver_id, now)
+
+
+def list_available_drivers(db: Session, day: date) -> List[dict]:
+    """Drivers who said they can take a run on `day`, for the dispatcher."""
+    rows = db.query(DriverAvailability, User).join(User, User.id == DriverAvailability.driver_id).filter(
+        DriverAvailability.for_date == day,
+    ).order_by(User.full_name).all()
+    user_ids = [user.id for _, user in rows]
+    profiles = {
+        profile.user_id: profile
+        for profile in db.query(DriverProfile).filter(DriverProfile.user_id.in_(user_ids)).all()
+    } if user_ids else {}
+    result = []
+    for row, user in rows:
+        profile = profiles.get(user.id)
+        result.append({
+            "driver_id": user.id,
+            "driver_profile_id": profile.id if profile is not None else None,
+            "full_name": user.full_name,
+            "phone": profile.phone if profile is not None else None,
+            "vehicle_code": profile.vehicle.code if profile is not None and profile.vehicle is not None else None,
+            "confirmed_at": row.confirmed_at,
+        })
+    return result
 
 
 def process_sync_batch(db: Session, actions: list, driver_id: int) -> dict:

@@ -1,14 +1,15 @@
 import os
 import uuid
-from typing import List
-from fastapi import APIRouter, Depends, status, UploadFile, File, HTTPException
+from datetime import date, datetime
+from typing import List, Optional
+from fastapi import APIRouter, Depends, status, UploadFile, File, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.api import deps
 from app.models.user import User
 from app.schemas.auth import UserRead
 from app.schemas.driver import (
     DriverTripSummary, DriverTripDetail, DeliveryStopRead, DeliveryStopDetail, ProofOfDeliveryCreate, ProofOfDeliveryRead,
-    DriverProfileRead, DriverProfileUpdate,
+    DriverProfileRead, DriverProfileUpdate, DriverReadyRead, DriverAvailabilityRead,
 )
 from app.services import driver_service
 from app.models.driver import DeliveryStopStatus
@@ -40,6 +41,35 @@ def update_driver_profile(
 ):
     """Saves the driver's phone and licence type. The vehicle is set by the depot."""
     return driver_service.update_profile(db, current_user.id, profile_in.phone, profile_in.license_type)
+
+@router.get("/ready-tomorrow", response_model=DriverReadyRead)
+def read_ready_tomorrow(
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_driver),
+    now: datetime = Depends(deps.get_now),
+):
+    """Whether the driver said they can take a run on the next working day."""
+    return driver_service.get_ready_tomorrow(db, current_user.id, now)
+
+@router.post("/ready-tomorrow", response_model=DriverReadyRead)
+def confirm_ready_tomorrow(
+    db: Session = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_driver),
+    now: datetime = Depends(deps.get_now),
+):
+    """The driver taps I'm ready: available for a run on the next working day.
+    Closes at 4 PM; tapping again changes nothing."""
+    return driver_service.confirm_ready_tomorrow(db, current_user.id, now)
+
+@router.get("/availability", response_model=List[DriverAvailabilityRead])
+def list_driver_availability(
+    day: Optional[date] = Query(None, alias="date", description="YYYY-MM-DD; default the next working day"),
+    db: Session = Depends(deps.get_db),
+    _user: User = Depends(deps.require_dispatcher_or_admin),
+    now: datetime = Depends(deps.get_now),
+):
+    """For the dispatcher: drivers who said they're ready for a day."""
+    return driver_service.list_available_drivers(db, day or driver_service.ready_day(db, now))
 
 @router.get("/trips/today", response_model=List[DriverTripSummary])
 def get_today_trips(
