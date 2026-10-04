@@ -108,6 +108,8 @@ def _compute_sync_status(run: DispatchTrip) -> dict:
     }
 
 
+from app.core.cache import memory_cache
+
 @router.get("/", response_model=List[DeliveryRunResponse])
 def list_delivery_runs(
     status: Optional[str] = None,
@@ -117,6 +119,11 @@ def list_delivery_runs(
     db: Session = Depends(deps.get_db),
     depot_scope: Depot = Depends(deps.get_dispatcher_depot),
 ):
+    cache_key = f"dispatch:runs:{depot_scope.value}:{status}:{depot}:{skip}:{limit}"
+    cached = memory_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     query = db.query(DispatchTrip).filter(DispatchTrip.depot_name == depot_scope.value)
     if status:
         query = query.filter(DispatchTrip.status == status)
@@ -124,7 +131,9 @@ def list_delivery_runs(
         query = query.filter(DispatchTrip.depot_name == depot)
     
     trips = query.offset(skip).limit(limit).all()
-    return _with_loader(db, trips)
+    results = _with_loader(db, trips)
+    memory_cache.set(cache_key, results, ttl_seconds=15)
+    return results
 
 
 @router.get("/live")

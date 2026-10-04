@@ -7,6 +7,7 @@ from sqlalchemy import func, or_
 
 from app.api import deps
 from app.core import security, keycloak_admin
+from app.core.cache import memory_cache
 from app.core.config import settings
 from app.models.user import User, UserRole
 from app.models.depot_dispatcher import DepotDispatcherAssignment
@@ -186,6 +187,11 @@ def role_to_display(role_val: str) -> str:
 
 @router.get("/overview", response_model=AdminOverviewStats)
 def get_admin_overview(db: Session = Depends(deps.get_db)) -> Any:
+    cache_key = "admin:overview"
+    cached = memory_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     # Users
     users = db.query(User).all()
     loaders = db.query(LoaderUser).all()
@@ -292,7 +298,7 @@ def get_admin_overview(db: Session = Depends(deps.get_db)) -> Any:
         "maintenance_mode": _system_settings.maintenance.maintenance_mode,
     }
 
-    return AdminOverviewStats(
+    result = AdminOverviewStats(
         total_users=total_users,
         active_users=active_users,
         users_by_role=users_by_role,
@@ -310,6 +316,8 @@ def get_admin_overview(db: Session = Depends(deps.get_db)) -> Any:
         system_status=system_status,
         recent_audits=_audit_logs[:6],
     )
+    memory_cache.set(cache_key, result, ttl_seconds=30)
+    return result
 
 
 # ── 2. Users Management Endpoints (Keycloak IAM Direct) ──────────
@@ -322,6 +330,11 @@ def list_admin_users(
     include_loaders: bool = True,
     db: Session = Depends(deps.get_db),
 ) -> Any:
+    cache_key = f"admin:users:{q}:{role}:{is_active}:{include_loaders}"
+    cached = memory_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     # Pre-fetch all active depot dispatcher assignments for quick lookup
     depot_assignments = {
         a.user_id: a.depot.value if hasattr(a.depot, "value") else str(a.depot).lower()
@@ -331,6 +344,8 @@ def list_admin_users(
     # When Keycloak Admin is configured, Keycloak is the authoritative single source of truth!
     if keycloak_admin.is_keycloak_admin_configured():
         kc_users = keycloak_admin.list_keycloak_users(max_users=500)
+        # Fetch all user roles in a single batch of 5 calls instead of N sequential calls
+        all_user_roles = keycloak_admin.get_all_user_role_mappings()
         result = []
         for ku in kc_users:
             kc_id = ku.get("id")
@@ -348,8 +363,8 @@ def list_admin_users(
                 else None
             )
 
-            # Get user realm roles
-            roles = keycloak_admin.get_user_realm_roles(kc_id) if kc_id else []
+            # Get user realm roles from bulk map
+            roles = all_user_roles.get(kc_id, [])
             mapped_role = "DISPATCHER"
             for r in roles:
                 r_lower = r.lower()
@@ -441,6 +456,7 @@ def list_admin_users(
                     )
                 )
 
+        memory_cache.set(cache_key, result, ttl_seconds=30)
         return result
 
 
