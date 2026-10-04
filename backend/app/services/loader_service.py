@@ -2663,6 +2663,9 @@ class LoaderService:
                 db.flush()
                 LoaderService.recalculate_capacity(db, run)
 
+                if trip.route_plan:
+                    LoaderService.apply_route_timing(db, run, trip.route_plan)
+
                 db.add(
                     PlanRevision(
                         run_id=run.id,
@@ -2688,6 +2691,22 @@ class LoaderService:
                 return existing
             raise
         return run
+
+    @staticmethod
+    def apply_route_timing(db: Session, run: DeliveryRun, route: dict) -> None:
+        """Consume planner evidence without changing Loader order or version rules."""
+        timing = {stop["outlet_code"]: stop for stop in route.get("arrivals", [])}
+        for stop in LoaderService.current_stops(db, run):
+            evidence = timing.get(stop.outlet.code)
+            if evidence is None:
+                stop.eta = None
+                stop.handling_minutes = None
+                continue
+            arrival = evidence.get("arrival_at")
+            stop.eta = _naive_utc(datetime.fromisoformat(arrival)) if arrival else None
+            service = evidence.get("service_minutes")
+            stop.handling_minutes = round(service + evidence.get("handling_minutes", 0)) if service is not None else None
+        db.flush()
 
     @staticmethod
     def _order_brand(order: Order, outlet: Optional[Outlet]) -> Optional[Brand]:
@@ -2822,7 +2841,9 @@ class LoaderService:
         door than an order coming off are put to re_check (they are moved to
         reach it); a new stop order re-checks everything aboard.
         """
+        db.flush()
         db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+        db.refresh(run)  # Re-read the version after a competing writer releases the lock.
         if run.status == RunStatus.GATED_OUT:
             raise PlanLockedError(run)
 
@@ -3332,6 +3353,22 @@ class LoaderService:
         )
         db.flush()
         LoaderService.finalize_release(db, run, force=True)
+        
+        if run.dispatch_trip_id:
+            from app.models.allocation import Allocation, AllocationStatus
+            trip = db.query(DispatchTrip).filter(DispatchTrip.id == run.dispatch_trip_id).first()
+            if trip:
+                trip.status = "en_route"
+                if not trip.estimated_arrival and trip.departure_time:
+                    minutes_per_stop = 30
+                    eta_delta = timedelta(minutes=minutes_per_stop * max(trip.stop_count or 1, 1))
+                    trip.estimated_arrival = trip.departure_time + eta_delta
+                
+                if trip.allocation_id:
+                    allocation = db.query(Allocation).filter(Allocation.id == trip.allocation_id).first()
+                    if allocation:
+                        allocation.status = AllocationStatus.DISPATCHED
+                            
         return run, False
 
     # --- order status (order_service) --------------------------------------
