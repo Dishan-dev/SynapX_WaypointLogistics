@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/inter";
 import "./globals.css";
+import "maplibre-gl/dist/maplibre-gl.css";
 import { OfflineSyncBanner } from "@/components/OfflineSyncBanner";
 import { Toaster } from "sonner";
 

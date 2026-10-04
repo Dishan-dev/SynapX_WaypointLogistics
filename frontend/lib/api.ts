@@ -2,6 +2,7 @@
  * Resilient API client for Waypoint Logistics
  * Automatically resolves between port 8000 (uvicorn default) and port 5000 (custom port)
  */
+import { getToken } from "./auth";
 import { dispatcherDepotHeaders } from "./dispatcher-depot";
 
 const CANDIDATE_API_URLS = [
@@ -85,6 +86,37 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Upload a file (multipart/form-data). Do NOT set Content-Type manually —
+ * the browser must set it so the boundary is included correctly.
+ */
+export async function apiFetchUpload<T>(path: string, formData: FormData): Promise<T> {
+  const token = getToken();
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const endpoint = `api/v1${normalizedPath}`;
+
+  const res = await fetchWithFallback(endpoint, {
+    method: "POST",
+    body: formData,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  if (!res.ok) {
+    let errorMsg = `HTTP Error ${res.status}`;
+    try {
+      const errorData = await res.json();
+      errorMsg = errorData.detail || JSON.stringify(errorData);
+    } catch {
+      errorMsg = (await res.text()) || errorMsg;
+    }
+    throw new ApiError(errorMsg, res.status);
+  }
+
+  return res.json();
+}
+
 function messageFrom(detail: unknown, fallback: string) {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -100,11 +132,15 @@ function messageFrom(detail: unknown, fallback: string) {
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
   const fullEndpoint = cleanPath.startsWith("/api/v1") ? cleanPath : `/api/v1${cleanPath}`;
-
-  const token = typeof window !== "undefined" ? localStorage.getItem("waypoint_access_token") || localStorage.getItem("driver_token") : null;
+  const token = getToken();
   const headers = dispatcherDepotHeaders(init.headers);
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
+  }
+  // A string body is JSON here; without the type the server can't read it.
+  // (FormData bodies get their own type from the browser.)
+  if (typeof init.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
 
   let response: Response;
