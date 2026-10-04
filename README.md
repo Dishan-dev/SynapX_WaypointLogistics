@@ -145,12 +145,10 @@ keycloak-theme/    Custom Keycloak login theme
 
 ## Documentation
 
-- [How the complete system works](docs/HOW_THIS_PROJECT_WORKS.md)
+- [How the complete system works](docs/reference/HOW_THIS_PROJECT_WORKS.md)
 - [Backend API and local development](backend/README.md)
-- [Database migration process](docs/database-migrations.md)
-- [Data model notes](docs/data-model.md)
-- [Store Manager contract](docs/store-manager-contract.md)
-- [Loader documentation](docs/loader/)
+- [Store Manager contract](docs/reference/store-manager-contract.md)
+- [Loader documentation](docs/reference/loader/)
 
 ## Production checklist
 
