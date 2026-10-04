@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 import { FlagIssueHost } from "./flag-issue-sheet";
 import { WaitingFlagsProvider } from "./flag-status";
 import { LoaderBottomNav, type LoaderTab } from "./loader-bottom-nav";
-import { listOutbox } from "@/lib/loader/offline/db";
+import { markArrivalsSeen, newArrivalCount } from "@/lib/loader/new-arrivals";
+import { listOutbox, type CachedQueue } from "@/lib/loader/offline/db";
 import { loadIssues } from "@/lib/loader/offline/issues-cache";
+import { cachedQueue, loadQueue, QUEUE_EVENT } from "@/lib/loader/offline/queue-cache";
 import { warmRunPages } from "@/lib/loader/offline/run-pages";
 import { LoaderSyncProvider, useLoaderSync } from "./loader-sync-provider";
 
@@ -19,8 +21,8 @@ export interface LoaderShellUser {
 
 interface LoaderShellContextValue {
   user: LoaderShellUser;
-  /** "Peliyagoda DC · Dock 3" */
-  dockLabel: string;
+  /** "Peliyagoda DC": a loader works every dock of their depot. */
+  depotLabel: string;
   /** Sent as loader_session_id on every write; null until L2 sign-in. */
   sessionId: number | null;
   /** The run opened last in this session, if any: where Loading and Log go. */
@@ -65,8 +67,47 @@ async function pendingFlagCount(): Promise<number> {
   }
 }
 
+/** How often the queue is checked for new arrivals while it is not open. */
+const ARRIVALS_REFRESH_MS = 30_000;
+
 /**
- * Bottom nav with the Issues badge: the dock's open issues from the server,
+ * Runs that reached a dock since this session last had the queue open, for
+ * the Queue tab badge. On the queue every copy it loads counts as seen, so
+ * opening it clears the badge; elsewhere the queue is reloaded every 30 s
+ * while online (no server push) and each copy is counted.
+ */
+function useNewArrivals(depot: string | undefined, sessionId: number | null, onQueue: boolean): number {
+  const { transport, sync } = useLoaderSync();
+  const [count, setCount] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!depot || sessionId === null) return;
+    let cancelled = false;
+    const take = (loaded: CachedQueue) => {
+      if (cancelled || loaded.depot !== depot) return;
+      if (onQueue) markArrivalsSeen(sessionId, loaded.queue);
+      setCount(onQueue ? 0 : newArrivalCount(sessionId, loaded.queue));
+    };
+    void cachedQueue(depot).then((cached) => cached && take(cached));
+    const onLoaded = (e: Event) => take((e as CustomEvent<CachedQueue>).detail);
+    window.addEventListener(QUEUE_EVENT, onLoaded);
+    // The queue page loads it itself; elsewhere, look for trucks pulling in.
+    const id = onQueue || !sync.online
+      ? undefined
+      : window.setInterval(() => void loadQueue(transport, depot).catch(() => {}), ARRIVALS_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(QUEUE_EVENT, onLoaded);
+      if (id !== undefined) window.clearInterval(id);
+    };
+  }, [depot, sessionId, onQueue, sync.online, transport]);
+
+  return count;
+}
+
+/**
+ * Bottom nav with the Queue tab's new-arrivals badge and the Issues badge:
+ * the depot's open issues from the server,
  * plus flags queued on this tablet, so the badge rises as soon as a flag is
  * queued offline. When queued flags go out, the list is reloaded so the
  * server's count takes them over.
@@ -75,16 +116,19 @@ function ShellBottomNav({
   active,
   loadingHref,
   logHref,
-  dock,
+  depot,
+  sessionId,
   issueCount,
 }: {
   active?: LoaderTab;
   loadingHref: string;
   logHref: string;
-  dock?: string;
+  depot?: string;
+  sessionId: number | null;
   issueCount?: number;
 }) {
   const { sync, transport } = useLoaderSync();
+  const arrivals = useNewArrivals(depot, sessionId, active === "queue");
   const [pendingFlags, setPendingFlags] = React.useState(0);
   const lastPending = React.useRef(0);
 
@@ -95,12 +139,12 @@ function ShellBottomNav({
       const sent = count < lastPending.current;
       lastPending.current = count;
       setPendingFlags(count);
-      if (sent && sync.online && dock) void loadIssues(transport, dock).catch(() => {});
+      if (sent && sync.online && depot) void loadIssues(transport, depot).catch(() => {});
     });
     return () => {
       cancelled = true;
     };
-  }, [sync.pending, sync.lastSyncedAt, sync.online, dock, transport]);
+  }, [sync.pending, sync.lastSyncedAt, sync.online, depot, transport]);
 
   const total = (issueCount ?? 0) + pendingFlags;
   return (
@@ -110,6 +154,7 @@ function ShellBottomNav({
       loadingHref={loadingHref}
       logHref={logHref}
       issueCount={total}
+      newArrivals={arrivals}
     />
   );
 }
@@ -134,16 +179,16 @@ function RunPageWarmer({ checklistCode }: { checklistCode?: string }) {
 
 interface LoaderShellProps {
   user: LoaderShellUser;
-  dockLabel: string;
-  /** The session's dock ("Dock 3"), to reload its issues after queued flags go out. */
-  dock?: string;
+  depotLabel: string;
+  /** The session's depot ("peliyagoda"), to reload its issues after queued flags go out. */
+  depot?: string;
   sessionId: number | null;
   issueCount?: number;
   children: React.ReactNode;
 }
 
 /** Frame for signed-in loader screens: page content plus the bottom nav. */
-export function LoaderShell({ user, dockLabel, dock, sessionId, issueCount, children }: LoaderShellProps) {
+export function LoaderShell({ user, depotLabel, depot, sessionId, issueCount, children }: LoaderShellProps) {
   const pathname = usePathname();
 
   // Loading tab returns to the run opened last in this session.
@@ -152,22 +197,23 @@ export function LoaderShell({ user, dockLabel, dock, sessionId, issueCount, chil
   if (currentRunCode && currentRunCode !== lastRunCode) setLastRunCode(currentRunCode);
 
   const ctx = React.useMemo<LoaderShellContextValue>(
-    () => ({ user, dockLabel, sessionId, lastRunCode }),
-    [user, dockLabel, sessionId, lastRunCode],
+    () => ({ user, depotLabel, sessionId, lastRunCode }),
+    [user, depotLabel, sessionId, lastRunCode],
   );
 
   return (
     <LoaderShellContext.Provider value={ctx}>
       <LoaderSyncProvider sessionId={sessionId}>
         <div className="flex min-h-dvh flex-col bg-background">
-          <WaitingFlagsProvider dock={dock} onRunPage={pathname.startsWith("/loader/runs/")}>
+          <WaitingFlagsProvider depot={depot} onRunPage={pathname.startsWith("/loader/runs/")}>
             <div className="flex flex-1 flex-col">{children}</div>
           </WaitingFlagsProvider>
           <ShellBottomNav
             active={activeTab(pathname)}
             loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
             logHref={lastRunCode ? `/loader/runs/${lastRunCode}/log` : "/loader/log"}
-            dock={dock}
+            depot={depot}
+            sessionId={sessionId}
             issueCount={issueCount}
           />
         </div>

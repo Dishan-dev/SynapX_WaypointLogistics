@@ -193,6 +193,18 @@ def get_current_user(
     return user
 
 
+def get_optional_user(
+    db: Session = Depends(get_db),
+    token: Optional[str] = Depends(reusable_oauth2),
+) -> Optional[User]:
+    if not token:
+        return None
+    try:
+        return get_current_user(db=db, token=token)
+    except HTTPException:
+        return None
+
+
 def get_dispatcher_depot(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -200,10 +212,8 @@ def get_dispatcher_depot(
 ) -> Depot:
     """Return the operational depot allowed for a dispatcher request.
 
-    A signed-in dispatcher is locked to their admin-assigned depot. Only an
-    administrator can choose a header scope. Development mode keeps the
-    temporary header/default so local work can continue before identities are
-    provisioned in Keycloak.
+    A signed-in dispatcher is strictly locked to their admin-assigned depot. Only an
+    administrator can choose or switch depot scopes.
     """
     raw = (x_waypoint_depot or settings.DISPATCHER_DEFAULT_DEPOT).strip().lower()
     try:
@@ -217,21 +227,31 @@ def get_dispatcher_depot(
     if current_user.role == UserRole.ADMIN:
         return requested
 
-    if settings.KEYCLOAK_DEV_MODE:
-        return requested
+    # Check dispatcher assignment
+    if current_user.role == UserRole.DISPATCHER:
+        try:
+            assignment = db.query(DepotDispatcherAssignment).filter(
+                DepotDispatcherAssignment.user_id == current_user.id
+            ).first()
+            if assignment:
+                return assignment.depot
+        except Exception:
+            db.rollback()
 
-    try:
-        assignment = db.query(DepotDispatcherAssignment).filter(
-            DepotDispatcherAssignment.user_id == current_user.id
-        ).first()
-        if assignment:
-            return assignment.depot
-    except Exception:
-        db.rollback()
+        # If a real dispatcher user exists but is not assigned to any depot
+        if current_user.id and current_user.id != 0:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your dispatcher account has not been assigned to an operational depot. Please contact your administrator.",
+            )
+
+    # In dev mode when running unauthenticated stub
+    if settings.KEYCLOAK_DEV_MODE and (not current_user or current_user.id == 0):
+        return requested
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Your Keycloak dispatcher account has not been assigned to a depot. Please contact your administrator.",
+        detail="Your dispatcher account has not been assigned to a depot. Please contact your administrator.",
     )
 
 
@@ -261,15 +281,15 @@ def require_dispatcher_or_admin(
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """Require the Keycloak-mapped administrator role outside development."""
-    if settings.KEYCLOAK_DEV_MODE:
+    """Require the Keycloak-mapped administrator role."""
+    if current_user.role == UserRole.ADMIN:
         return current_user
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="System administrator access is required.",
-        )
-    return current_user
+    if settings.KEYCLOAK_DEV_MODE and current_user.id == 0:
+        return current_user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="System administrator access is required.",
+    )
 
 
 def require_driver(current_user: User = Depends(get_current_user)) -> User:

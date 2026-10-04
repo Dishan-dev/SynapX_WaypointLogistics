@@ -5,9 +5,11 @@ import { useSearchParams, useRouter } from "next/navigation";
 import {
   RefreshCw,
   ChevronRight,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/lib/auth-context";
 import { UserNotificationBell } from "@/components/notifications/user-notification-bell";
 
 import { AdminSidebar, AdminTab } from "@/components/admin/admin-sidebar";
@@ -38,6 +40,7 @@ import {
 function AdminDashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { user, logout, isLoggingOut } = useAuth();
 
   // Read initial tab from URL or default to overview
   const initialTab = (searchParams.get("tab") as AdminTab) || "overview";
@@ -209,6 +212,18 @@ function AdminDashboardContent() {
               <RefreshCw className={`size-3.5 text-muted-foreground ${isRefreshing ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh Data</span>
             </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void logout(true)}
+              disabled={isLoggingOut}
+              title="Sign out of Keycloak SSO session"
+              className="gap-1.5 text-xs font-medium border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300"
+            >
+              <LogOut className="size-3.5 text-red-500" />
+              <span>{isLoggingOut ? "Signing out..." : "Sign Out"}</span>
+            </Button>
           </div>
         </header>
 
@@ -267,6 +282,14 @@ function AdminDashboardContent() {
                 onRefresh={loadAllData}
                 onAssignDispatcher={async (depot, userId) => {
                   await adminService.assignDepotDispatcher(depot, userId);
+                  await loadAllData();
+                }}
+                onAssignLoader={async (depot, loaderId, dockId) => {
+                  await adminService.assignDepotLoader(depot, { loader_id: loaderId, dock_id: dockId, action: "assign" });
+                  await loadAllData();
+                }}
+                onUnassignLoader={async (depot, loaderId) => {
+                  await adminService.unassignDepotLoader(depot, loaderId);
                   await loadAllData();
                 }}
               />

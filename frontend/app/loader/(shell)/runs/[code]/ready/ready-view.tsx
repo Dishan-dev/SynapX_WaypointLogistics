@@ -43,7 +43,7 @@ export function ReadyView({ code }: { code: string }) {
  */
 function Ready({ initial }: { initial: Run }) {
   const router = useRouter();
-  const { user, dockLabel } = useLoaderShell();
+  const { user } = useLoaderShell();
   const { sync, checkConnection } = useLoaderSync();
   const { run, act, rejected, dismissRejected } = useOfflineRun(initial, user.shortName);
   const [now, setNow] = React.useState(() => Date.now());
@@ -54,7 +54,7 @@ function Ready({ initial }: { initial: Run }) {
   const canUndo = ready && secondsLeft > 0;
   const undoRefused = rejected.find((a) => a.action_type === "release_undo");
   const refusal = undoRefusal(undoRefused?.conflict_code);
-  const dockName = dockLabel.split(" · ").pop() ?? dockLabel;
+  const dockName = run.dock;
   const stopCount = run.stops.length;
 
   // Tick while the undo window is open.

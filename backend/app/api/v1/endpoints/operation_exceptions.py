@@ -29,7 +29,10 @@ def list_operation_exceptions(db: Session = Depends(get_db), _user: User = Depen
     entries = []
     loader = db.query(LoaderIssue).options(joinedload(LoaderIssue.run), joinedload(LoaderIssue.order)).filter(LoaderIssue.status.in_([LoaderIssueStatus.SENT, LoaderIssueStatus.SEEN])).all()
     for issue in loader:
-        entries.append(_entry("loader", "shortfall", issue.id, f"Loading {issue.issue_type.value.replace('_', ' ')}", issue.note or issue.quick_note_tag or "Loader reported an issue; dispatcher decision pending.", issue.status.value, issue.reported_at, issue.run.code if issue.run else None, reference=issue.order.order_number if issue.order else None, severity="critical"))
+        entry = _entry("loader", "shortfall", issue.id, f"Loading {issue.issue_type.value.replace('_', ' ')}", issue.note or issue.quick_note_tag or "Loader reported an issue; dispatcher decision pending.", issue.status.value, issue.reported_at, issue.run.code if issue.run else None, reference=issue.order.order_number if issue.order else None, severity="critical")
+        if issue.photo_path:
+            entry["photo_url"] = issue.photo_path
+        entries.append(entry)
 
     store_issues = db.query(DeliveryIssue).options(joinedload(DeliveryIssue.outlet)).filter(DeliveryIssue.status.in_(["open", "under_review"])).all()
     for issue in store_issues:

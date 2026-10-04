@@ -49,6 +49,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { adminService, OutletRecord } from "@/services/admin-service";
+import { DEPOT_CHANGE_EVENT } from "@/lib/dispatcher-depot";
 
 export default function DispatcherOutletsPage() {
   const [outlets, setOutlets] = useState<OutletRecord[]>([]);
@@ -87,7 +88,12 @@ export default function DispatcherOutletsPage() {
 
   useEffect(() => {
     const initial = setTimeout(() => { void loadOutlets(); }, 0);
-    return () => clearTimeout(initial);
+    const onDepotChange = () => { void loadOutlets(); };
+    window.addEventListener(DEPOT_CHANGE_EVENT, onDepotChange);
+    return () => {
+      clearTimeout(initial);
+      window.removeEventListener(DEPOT_CHANGE_EVENT, onDepotChange);
+    };
   }, [loadOutlets]);
 
   // Handle Export CSV

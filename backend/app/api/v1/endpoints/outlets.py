@@ -2,7 +2,7 @@ import csv
 import io
 from datetime import datetime, time, timezone
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import inspect, or_, text
@@ -14,7 +14,7 @@ from app.api.deps import get_db, require_dispatcher_or_admin
 from app.models.reference import Outlet, Brand, Depot, DockType
 from app.models.outlet import OutletContact, OutletReceivingWindow
 from app.models.outlet_settings import OutletSettings
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.store_manager import StoreManagerAssignment
 from app.schemas.outlet import (
     ContactRead,
@@ -267,11 +267,32 @@ def list_outlets(
     dock_type: Optional[str] = Query(None, description="Filter by dock type"),
     van_only: Optional[bool] = Query(None, description="Filter by van only"),
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(deps.get_optional_user),
+    x_waypoint_depot: Optional[str] = Header(None, alias="X-Waypoint-Depot"),
 ):
     if not profile_ready(db):
         return legacy_outlets(db, skip, limit)
 
     query = detail_query(db)
+
+    # Dispatcher depot scoping
+    scoped_depot = None
+    if current_user and current_user.role == UserRole.DISPATCHER:
+        try:
+            d = deps.get_dispatcher_depot(db=db, current_user=current_user, x_waypoint_depot=x_waypoint_depot)
+            scoped_depot = d.value
+        except Exception:
+            pass
+    elif depot and depot.lower() != "all":
+        scoped_depot = depot.lower()
+    elif x_waypoint_depot and x_waypoint_depot.lower() != "all":
+        scoped_depot = x_waypoint_depot.strip().lower()
+
+    if scoped_depot:
+        if scoped_depot in Depot.__members__:
+            query = query.filter(Outlet.depot == Depot[scoped_depot])
+        else:
+            query = query.filter(Outlet.depot == scoped_depot)
 
     if brand:
         brand_clean = brand.lower()
@@ -279,13 +300,6 @@ def list_outlets(
             query = query.filter(Outlet.brand == Brand[brand_clean])
         else:
             query = query.filter(Outlet.brand == brand_clean)
-
-    if depot:
-        depot_clean = depot.lower()
-        if depot_clean in Depot.__members__:
-            query = query.filter(Outlet.depot == Depot[depot_clean])
-        else:
-            query = query.filter(Outlet.depot == depot_clean)
 
     if dock_type:
         dock_clean = dock_type.lower()

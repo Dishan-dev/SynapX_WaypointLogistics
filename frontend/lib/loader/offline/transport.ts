@@ -5,6 +5,7 @@
 
 import { FLAGGABLE_STATES, ISSUE_TYPE_LABELS, planChangeAlert, UNDO_WINDOW_MS, withRecomputedCounts } from "../format";
 import { findMockRun, mockActivity, mockIssues, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
+import { currentSessionId } from "../session";
 import type {
   ActivityEntry,
   FlagActionPayload,
@@ -18,7 +19,9 @@ import type {
   QueuedActionType,
   Run,
   RunQueue,
+  RunStage,
   RunStatus,
+  RunSummary,
   SessionEndReason,
   SessionRequest,
 } from "../types";
@@ -33,24 +36,36 @@ export interface Transport {
   /** Throws NetworkError when the server cannot be reached. */
   send(request: ActionRequest): Promise<TransportResponse>;
   /**
-   * GET /loader/runs/{code}. Undefined when the run does not exist; throws
-   * NetworkError when the server cannot be reached.
+   * GET /loader/runs/{code}. Undefined when the run does not exist (or is at
+   * another depot, or its truck has not arrived); throws RunPickedError while
+   * another loader holds it, NetworkError when the server cannot be reached.
    */
   fetchRun(code: string): Promise<Run | undefined>;
+  /**
+   * POST /loader/runs/{code}/pick: take the run, so only this loader can work
+   * it. "taken" when another loader holds it. Needs a connection: throws
+   * NetworkError when the server cannot be reached.
+   */
+  pickRun(code: string, sessionId: number): Promise<PickResult>;
+  /** POST /loader/runs/{code}/unpick: put the run back for anyone to pick. */
+  unpickRun(code: string, sessionId: number): Promise<PickResult>;
   /**
    * GET /loader/runs/{code}/activity, newest first. Undefined when the run does
    * not exist; throws NetworkError when the server cannot be reached.
    */
   fetchActivity(code: string): Promise<ActivityEntry[] | undefined>;
-  /** GET /loader/runs?dock=: the dock's runs, grouped by brand and wave. Throws NetworkError when unreachable. */
-  fetchQueue(dock: string): Promise<RunQueue>;
-  /** GET /loader/summary?dock=: the queue's metric cards. Throws NetworkError when unreachable. */
-  fetchSummary(dock: string): Promise<QueueSummary>;
   /**
-   * GET /loader/issues?dock=&run=: flagged issues, newest first. Throws
+   * GET /loader/runs: every dock of the signed-in loader's depot, each with the
+   * runs whose truck has arrived. Throws NetworkError when unreachable.
+   */
+  fetchQueue(): Promise<RunQueue>;
+  /** GET /loader/summary: the depot's metric cards. Throws NetworkError when unreachable. */
+  fetchSummary(): Promise<QueueSummary>;
+  /**
+   * GET /loader/issues?run=: the depot's flagged issues, newest first. Throws
    * NetworkError when unreachable.
    */
-  fetchIssues(query: { dock: string; run?: string }): Promise<LoaderIssue[]>;
+  fetchIssues(query: { run?: string }): Promise<LoaderIssue[]>;
   /**
    * GET /loader/issues/{id}: one issue, for the L8 waiting / decision screen.
    * Undefined when it does not exist; throws NetworkError when unreachable.
@@ -62,9 +77,13 @@ export interface Transport {
    * next sync); "rejected" for a 413 / 415. Throws NetworkError when unreachable.
    */
   uploadIssuePhoto(clientActionId: string, photo: Blob): Promise<"ok" | "not_found" | "rejected">;
-  /** GET /loader/users: the loaders registered at this tablet's depot. */
-  fetchUsers(): Promise<LoaderUser[]>;
-  /** POST /loader/session. Undefined for a wrong PIN (401); throws NetworkError when unreachable. */
+  /** GET /loader/users?depot=: the loaders of the depot this tablet signs into. */
+  fetchUsers(depot: string): Promise<LoaderUser[]>;
+  /**
+   * POST /loader/session. Undefined for a wrong PIN (401); throws
+   * SignInRefusedError for a loader with no depot or another depot's (403),
+   * NetworkError when unreachable.
+   */
   startSession(body: SessionRequest): Promise<LoaderSession | undefined>;
   /** DELETE /loader/session/{id}. Throws NetworkError when it has to be sent again later. */
   endSession(sessionId: number, reason: SessionEndReason): Promise<void>;
@@ -75,6 +94,43 @@ export class NetworkError extends Error {
     super(message);
     this.name = "NetworkError";
   }
+}
+
+/** GET /loader/runs/{code} refused: another loader holds the run (409 RUN_PICKED_BY_OTHER). */
+export class RunPickedError extends Error {
+  constructor(
+    readonly pickedBy: string,
+    message = `${pickedBy} is loading this run.`,
+  ) {
+    super(message);
+    this.name = "RunPickedError";
+  }
+}
+
+/** Sign-in refused for this loader (403): no depot yet, or another depot's loader. */
+export class SignInRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SignInRefusedError";
+  }
+}
+
+/** What a pick or unpick came to. run is unset for a run the mock server has no detail for. */
+export type PickResult =
+  | { kind: "picked"; run?: Run }
+  | { kind: "taken"; pickedBy: string }
+  | { kind: "gone" };
+
+/** Tablet reads carry the signed-in session: the server scopes them to the loader's depot. */
+function tabletRead(): RequestInit {
+  const id = currentSessionId();
+  return { cache: "no-store", headers: id === undefined ? {} : { "X-Loader-Session": String(id) } };
+}
+
+/** The error envelope's detail ({ detail: { code, message, ... } }). */
+function errorBody(body: unknown): Record<string, unknown> {
+  const detail = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : undefined;
+  return detail && typeof detail === "object" ? (detail as Record<string, unknown>) : {};
 }
 
 const PROBE_TIMEOUT_MS = 4000;
@@ -114,41 +170,42 @@ export function apiTransport(baseUrl: string): Transport {
       return { status: res.status, body: text ? safeJson(text) : undefined };
     },
     async fetchRun(code) {
-      let res: Response;
-      try {
-        res = await fetch(`${api}/loader/runs/${encodeURIComponent(code)}`, { cache: "no-store" });
-      } catch {
-        throw new NetworkError();
-      }
+      const res = await request(`${api}/loader/runs/${encodeURIComponent(code)}`, tabletRead());
       if (res.status === 404) return undefined;
+      if (res.status === 409) {
+        const d = errorBody(await res.json().catch(() => undefined));
+        if (d.code === "RUN_PICKED_BY_OTHER") throw new RunPickedError(String(d.picked_by), String(d.message));
+      }
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as Run;
     },
+    pickRun: (code, sessionId) => pickRequest(`${api}/loader/runs/${encodeURIComponent(code)}/pick`, sessionId),
+    unpickRun: (code, sessionId) => pickRequest(`${api}/loader/runs/${encodeURIComponent(code)}/unpick`, sessionId),
     async fetchActivity(code) {
-      const res = await request(`${api}/loader/runs/${encodeURIComponent(code)}/activity`, { cache: "no-store" });
+      const res = await request(`${api}/loader/runs/${encodeURIComponent(code)}/activity`, tabletRead());
       if (res.status === 404) return undefined;
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as ActivityEntry[];
     },
-    async fetchQueue(dock) {
-      const res = await request(`${api}/loader/runs?dock=${encodeURIComponent(dock)}`, { cache: "no-store" });
+    async fetchQueue() {
+      const res = await request(`${api}/loader/runs`, tabletRead());
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as RunQueue;
     },
-    async fetchSummary(dock) {
-      const res = await request(`${api}/loader/summary?dock=${encodeURIComponent(dock)}`, { cache: "no-store" });
+    async fetchSummary() {
+      const res = await request(`${api}/loader/summary`, tabletRead());
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as QueueSummary;
     },
-    async fetchIssues({ dock, run }) {
-      const params = new URLSearchParams({ dock });
+    async fetchIssues({ run }) {
+      const params = new URLSearchParams();
       if (run) params.set("run", run);
-      const res = await request(`${api}/loader/issues?${params}`, { cache: "no-store" });
+      const res = await request(`${api}/loader/issues?${params}`, tabletRead());
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as LoaderIssue[];
     },
     async fetchIssue(id) {
-      const res = await request(`${api}/loader/issues/${id}`, { cache: "no-store" });
+      const res = await request(`${api}/loader/issues/${id}`, tabletRead());
       if (res.status === 404) return undefined;
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as LoaderIssue;
@@ -165,8 +222,8 @@ export function apiTransport(baseUrl: string): Transport {
       if (res.status === 413 || res.status === 415) return "rejected";
       throw new NetworkError(`HTTP ${res.status}`);
     },
-    async fetchUsers() {
-      const res = await request(`${api}/loader/users`, { cache: "no-store" });
+    async fetchUsers(depot) {
+      const res = await request(`${api}/loader/users?depot=${encodeURIComponent(depot)}`, { cache: "no-store" });
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as LoaderUser[];
     },
@@ -177,6 +234,9 @@ export function apiTransport(baseUrl: string): Transport {
         body: JSON.stringify(body),
       });
       if (res.status === 401) return undefined;
+      if (res.status === 403) {
+        throw new SignInRefusedError(String(errorBody(await res.json().catch(() => undefined)).message ?? "Sign-in refused."));
+      }
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as LoaderSession;
     },
@@ -191,6 +251,21 @@ export function apiTransport(baseUrl: string): Transport {
       if (res.status >= 500) throw new NetworkError(`HTTP ${res.status}`);
     },
   };
+}
+
+async function pickRequest(url: string, sessionId: number): Promise<PickResult> {
+  const res = await request(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ loader_session_id: sessionId }),
+  });
+  if (res.ok) return { kind: "picked", run: (await res.json()) as Run };
+  if (res.status === 409) {
+    const d = errorBody(await res.json().catch(() => undefined));
+    if (d.code === "RUN_PICKED_BY_OTHER") return { kind: "taken", pickedBy: String(d.picked_by) };
+  }
+  if (res.status >= 500) throw new NetworkError(`HTTP ${res.status}`);
+  return { kind: "gone" };
 }
 
 async function request(url: string, init: RequestInit): Promise<Response> {
@@ -258,6 +333,95 @@ function mockSessionUser(sessionId: number): LoaderUser | undefined {
 }
 
 const mockServerRun = (state: Record<string, Run>, code: string) => state[code] ?? findMockRun(code);
+
+const MOCK_PICKS_KEY = "waypoint-loader-mock-server-v2-picks";
+
+/** Who picked a run on the mock server; live until they put it back or sign out. */
+interface MockPick {
+  loader_user_id: number;
+  short_name: string;
+  picked_at: string;
+  live: boolean;
+}
+
+/** The seeded picks: the cards in the mock queue that say who is loading. */
+function seededPicks(): Record<string, MockPick> {
+  const picks: Record<string, MockPick> = {};
+  for (const card of mockQueue.docks.flatMap((d) => d.runs)) {
+    const user = mockUsers.find((u) => u.short_name === card.picked_by);
+    if (user) picks[card.code] = { loader_user_id: user.id, short_name: user.short_name, picked_at: card.picked_at ?? mockSession.started_at, live: true };
+  }
+  return picks;
+}
+
+const loadMockPicks = () => readJson<Record<string, MockPick>>(MOCK_PICKS_KEY) ?? seededPicks();
+const saveMockPicks = (picks: Record<string, MockPick>) => writeJson(MOCK_PICKS_KEY, picks);
+
+/** The signed-in loader on this tablet, as the mock server sees it. */
+function mockViewer(): LoaderUser | undefined {
+  const id = currentSessionId();
+  return id === undefined ? undefined : mockSessionUser(id);
+}
+
+/** A run's stage on the mock server: every run it lists has its truck in. */
+function mockStage(status: RunStatus, pick: MockPick | undefined): RunStage {
+  if (status === "gated_out") return "gated_out";
+  if (status === "ready_to_depart") return "ready";
+  return status === "not_started" && !pick?.live ? "at_dock" : "loading";
+}
+
+/** The pick fields a card or run read carries, for `viewer`. */
+function mockPickFields(code: string, status: RunStatus, viewer?: LoaderUser) {
+  const pick = loadMockPicks()[code];
+  const live = pick?.live ? pick : undefined;
+  return {
+    stage: mockStage(status, pick),
+    picked_by: live?.short_name ?? null,
+    picked_at: live?.picked_at ?? null,
+    picked_by_me: live !== undefined && live.loader_user_id === viewer?.id,
+  };
+}
+
+/**
+ * The mock server's pick lock on a write, as on the API: another loader's live
+ * pick is 409 RUN_PICKED_BY_OTHER; a run this loader has not picked (or put
+ * back) is 409 RUN_NOT_PICKED. The last picker's taps still land after they
+ * signed out, while nobody else has picked it.
+ */
+function mockPickRefusal(run: Run, user: LoaderUser): TransportResponse | undefined {
+  const pick = loadMockPicks()[run.code];
+  const extra = { entity: "DeliveryRun", entity_id: run.code };
+  if (pick?.live && pick.loader_user_id !== user.id) {
+    return errorResponse(409, "RUN_PICKED_BY_OTHER", `${pick.short_name} is loading ${run.code}.`, {
+      ...extra,
+      picked_by: pick.short_name,
+      picked_at: pick.picked_at,
+    });
+  }
+  if (!pick || pick.loader_user_id !== user.id) {
+    return errorResponse(409, "RUN_NOT_PICKED", `Pick ${run.code} before working on it.`, extra);
+  }
+  return undefined;
+}
+
+function mockPick(code: string, sessionId: number, take: boolean): PickResult {
+  const user = mockSessionUser(sessionId);
+  const known = mockQueue.docks.some((d) => d.runs.some((r) => r.code === code));
+  if (!user || !known) return { kind: "gone" };
+  const picks = loadMockPicks();
+  const holder = picks[code];
+  if (holder?.live && holder.loader_user_id !== user.id) return { kind: "taken", pickedBy: holder.short_name };
+  if (take) {
+    if (!holder?.live) {
+      picks[code] = { loader_user_id: user.id, short_name: user.short_name, picked_at: new Date().toISOString(), live: true };
+    }
+  } else {
+    delete picks[code];
+  }
+  saveMockPicks(picks);
+  const run = mockServerRun(loadMockState(), code);
+  return { kind: "picked", run: run && { ...run, ...mockPickFields(code, run.status, user) } };
+}
 
 const MOCK_ACTIVITY_KEY = "waypoint-loader-mock-server-v2-activity";
 
@@ -480,6 +644,21 @@ export function mockTransport(latencyMs = 300): Transport {
         return errorResponse(404, "NOT_FOUND", `Run '${code}' not found.`, { entity: "DeliveryRun", entity_id: code });
       }
 
+      // Every write needs a signed-in loader who holds the run (a replay already answered above).
+      const sessionId = request.body.loader_session_id ?? null;
+      if (sessionId === null) {
+        return errorResponse(422, "VALIDATION_ERROR", "loader_session_id is required.");
+      }
+      const sessionUser = mockSessionUser(Number(sessionId));
+      if (!sessionUser) {
+        return errorResponse(404, "NOT_FOUND", `Loader session ${String(sessionId)} not found.`, {
+          entity: "LoaderSession",
+          entity_id: sessionId,
+        });
+      }
+      const refusal = mockPickRefusal(run, sessionUser);
+      if (refusal) return refusal;
+
       const sent = Number(request.body.plan_version);
       if (sent !== run.current_plan_version) {
         return errorResponse(
@@ -509,18 +688,9 @@ export function mockTransport(latencyMs = 300): Transport {
       if (outcome === "noop") return ok(run);
       if (outcome) return outcome;
 
-      // The server records who checked from the session. Null leaves
-      // checked_by empty; an ended session is still accepted (offline taps
-      // replay after sign-out); an id it never issued is a 404, as on the API.
-      const sessionId = request.body.loader_session_id ?? null;
-      const sessionUser = sessionId === null ? undefined : mockSessionUser(Number(sessionId));
-      if (sessionId !== null && !sessionUser) {
-        return errorResponse(404, "NOT_FOUND", `Loader session ${String(sessionId)} not found.`, {
-          entity: "LoaderSession",
-          entity_id: sessionId,
-        });
-      }
-      const by = sessionUser?.short_name;
+      // The server records who checked from the session (an ended one is still
+      // accepted: offline taps replay after sign-out).
+      const by = sessionUser.short_name;
       state[run.code] = applyAction(run, action, by, sessionUser?.id);
       if (isFlag) {
         const issues = [...loadMockIssues(), newMockIssue(run, request.body as unknown as FlagActionPayload, id, by)];
@@ -538,7 +708,22 @@ export function mockTransport(latencyMs = 300): Transport {
     async fetchRun(code) {
       if (!(await probeConnectivity())) throw new NetworkError();
       await new Promise((r) => setTimeout(r, latencyMs));
-      return mockServerRun(loadMockState(), code);
+      const run = mockServerRun(loadMockState(), code);
+      if (!run) return undefined;
+      const viewer = mockViewer();
+      const pick = mockPickFields(code, run.status, viewer);
+      if (pick.picked_by && !pick.picked_by_me) throw new RunPickedError(pick.picked_by);
+      return { ...run, stage: pick.stage, picked_by: pick.picked_by, picked_at: pick.picked_at };
+    },
+    async pickRun(code, sessionId) {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      return mockPick(code, sessionId, true);
+    },
+    async unpickRun(code, sessionId) {
+      if (!(await probeConnectivity())) throw new NetworkError();
+      await new Promise((r) => setTimeout(r, latencyMs));
+      return mockPick(code, sessionId, false);
     },
     async fetchActivity(code) {
       if (!(await probeConnectivity())) throw new NetworkError();
@@ -590,11 +775,13 @@ export function mockTransport(latencyMs = 300): Transport {
       await new Promise((r) => setTimeout(r, latencyMs));
       return mockUsers;
     },
-    async startSession({ loader_user_id, pin }) {
+    async startSession({ loader_user_id, pin, depot }) {
       if (!(await probeConnectivity())) throw new NetworkError();
       await new Promise((r) => setTimeout(r, latencyMs));
       const user = mockUsers.find((u) => u.id === loader_user_id);
       if (!user || mockUserPins[user.id] !== pin) return undefined;
+      // Every mock loader works at the mock session's depot.
+      if (depot !== mockSession.depot) throw new SignInRefusedError(`${user.short_name} works at another depot.`);
 
       const rows = loadMockSessions();
       const id = Math.max(mockSession.session_id, ...Object.keys(rows).map(Number)) + 1;
@@ -603,7 +790,7 @@ export function mockTransport(latencyMs = 300): Transport {
       return {
         session_id: id,
         loader: { id: user.id, short_name: user.short_name },
-        dock: mockSession.dock,
+        dock: null,
         depot: mockSession.depot,
         started_at: new Date().toISOString(),
       };
@@ -616,6 +803,11 @@ export function mockTransport(latencyMs = 300): Transport {
         rows[sessionId] = { ...rows[sessionId], ended_reason: reason };
         saveMockSessions(rows);
       }
+      // The lock lifts with the session; the loader stays the last picker.
+      const user = mockSessionUser(sessionId);
+      const picks = loadMockPicks();
+      for (const pick of Object.values(picks)) if (pick.loader_user_id === user?.id) pick.live = false;
+      saveMockPicks(picks);
     },
   };
 }
@@ -760,17 +952,21 @@ export function decideMockIssue(id: number, optionLabel?: string): LoaderIssue |
  */
 function mockServerQueue(): RunQueue {
   const state = loadMockState();
+  const viewer = mockViewer();
   return {
-    groups: mockQueue.groups.map((group) => ({
+    ...mockQueue,
+    docks: mockQueue.docks.map((group) => ({
       ...group,
       runs: group.runs
-        .map((card) => {
+        .map((plain): RunSummary => {
+          const card = { ...plain, ...mockPickFields(plain.code, plain.status, viewer) };
           const run = mockServerRun(state, card.code);
           // Queue-only runs have no detail on the mock server: keep the alert
           // text but drop its Open action, which would only reach a dead end.
           if (!run) return card.alert ? { ...card, alert: { ...card.alert, action: "", href: "" } } : card;
           return {
             ...card,
+            ...mockPickFields(card.code, run.status, viewer),
             status: run.status,
             stop_count: run.stops.length,
             orders_loaded: run.orders_loaded,
@@ -779,7 +975,7 @@ function mockServerQueue(): RunQueue {
             alert: planChangeAlert(run) ?? (card.alert?.tone === "warning" ? null : card.alert),
           };
         })
-        // Through the gate, a run drops off the dock's queue.
+        // Through the gate, a run drops off the queue.
         .filter((card) => card.status !== "gated_out"),
     })),
   };
@@ -789,15 +985,18 @@ const LOADING: RunStatus[] = ["loading", "issue_flagged", "loaded"];
 
 /** The mock summary, counted from the mock queue so the two agree. */
 function mockServerSummary(queue: RunQueue): QueueSummary {
-  const runs = queue.groups.flatMap((g) => g.runs);
-  const loading = runs.filter((r) => LOADING.includes(r.status));
+  const runs = queue.docks.flatMap((d) => d.runs);
+  const loading = runs.filter((r) => r.stage === "loading" || LOADING.includes(r.status));
   const ready = runs.filter((r) => r.status === "ready_to_depart");
   return {
     ...mockSummary,
     runs: runs.length,
     loading: {
       count: loading.length,
-      loaders: [...new Set(loading.flatMap((r) => (r.loader ? [r.loader.split(" ")[0]] : [])))],
+      loaders: [...new Set(loading.flatMap((r) => {
+        const name = r.picked_by ?? r.loader;
+        return name ? [name.split(" ")[0]] : [];
+      }))],
     },
     ready: { count: ready.length, run_codes: ready.map((r) => r.code) },
     // Open flags on the mock server, so a new flag shows on the Issues badge.

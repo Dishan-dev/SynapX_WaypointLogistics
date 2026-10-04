@@ -229,26 +229,16 @@ def update_delivery_run(
 
     # Store Manager integration: When run goes en_route
     if update_data.get("status") == "en_route":
-        # 1. Set ETA if not already set
-        if not run.estimated_arrival and run.departure_time:
-            minutes_per_stop = 30
-            eta_delta = timedelta(minutes=minutes_per_stop * max(run.stop_count or 1, 1))
-            run.estimated_arrival = run.departure_time + eta_delta
-
-        # 2. Update all orders for this allocation to DISPATCHED
-        if run.allocation_id:
-            orders = db.query(Order).filter(
-                Order.allocation_id == run.allocation_id,
-                Order.status.in_([OrderStatus.ALLOCATED, OrderStatus.PROCESSING, OrderStatus.READY_FOR_DISPATCH])
-            ).all()
-            for order in orders:
-                # Fast-forward through missing physical states to satisfy the state machine
-                if order.status == OrderStatus.ALLOCATED:
-                    order_service.update_order_status(db, order.id, OrderStatus.PROCESSING, commit=False)
-                if order.status == OrderStatus.PROCESSING:
-                    order_service.update_order_status(db, order.id, OrderStatus.READY_FOR_DISPATCH, commit=False)
-                if order.status == OrderStatus.READY_FOR_DISPATCH:
-                    order_service.update_order_status(db, order.id, OrderStatus.DISPATCHED, commit=False)
+        loader_run = loader_service.run_for_dispatch_trip(db, run.id)
+        if loader_run:
+            from uuid import uuid4
+            from app.schemas.loader import GateOutRequest
+            # Route this through the loader service to correctly handle shortfalls
+            # instead of blindly setting all orders to DISPATCHED.
+            # gate_out will set the trip status and allocation status.
+            loader_service.gate_out(db, loader_run, GateOutRequest(client_action_id=uuid4(), by="Dispatcher (Manual Publish)"))
+            # Skip the manual state updates below since gate_out handled them
+            update_data.pop("status", None)
 
     # Explicitly touch updated_at — onupdate lambda only fires on DB-level flush
     run.updated_at = datetime.now(timezone.utc)

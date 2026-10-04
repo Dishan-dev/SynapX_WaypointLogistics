@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundError
 from app.models.notification import Notification, NotificationCategory, NotificationType
+from app.models.reference import Depot
 
 CATEGORY: Dict[NotificationType, NotificationCategory] = {
     NotificationType.ORDER_SUBMITTED: NotificationCategory.REQUEST,
@@ -14,6 +15,7 @@ CATEGORY: Dict[NotificationType, NotificationCategory] = {
     NotificationType.ETA_UPDATED: NotificationCategory.DELIVERY,
     NotificationType.DELIVERED: NotificationCategory.DELIVERY,
     NotificationType.ISSUE_LOGGED: NotificationCategory.ISSUE,
+    NotificationType.RUN_RELEASED: NotificationCategory.DELIVERY,
 }
 
 
@@ -47,6 +49,10 @@ def _default_text(type_: NotificationType, meta: Dict[str, Any]) -> tuple[str, s
             meta.get("note", f"An issue was reported on {order}."),
         ),
         NotificationType.ORDER_CLOSED: (f"{order} closed", "The order is complete."),
+        NotificationType.RUN_RELEASED: (
+            f"{meta.get('run_code', 'A run')} is ready to depart",
+            "The loader has released it.",
+        ),
     }
     return templates[type_]
 
@@ -72,6 +78,56 @@ class NotificationService:
         db.commit()
         db.refresh(notification)
         return notification
+
+    @staticmethod
+    def _build(type: NotificationType, meta: Optional[Dict[str, Any]], **recipient) -> Notification:
+        meta = meta or {}
+        default_title, default_message = _default_text(type, meta)
+        return Notification(
+            **recipient,
+            order_id=meta.get("order_id"),
+            dispatch_trip_id=meta.get("dispatch_trip_id"),
+            type=type,
+            category=CATEGORY[type],
+            title=meta.get("title", default_title)[:200],
+            message=meta.get("message", default_message),
+        )
+
+    @staticmethod
+    def send_to_driver(
+        db: Session, user_id: int, type: NotificationType, meta: Optional[Dict[str, Any]] = None
+    ) -> Notification:
+        """A driver's in-app notification (users.id). Added to the caller's
+        transaction, not committed: the loader sends it inside its own write."""
+        notification = NotificationService._build(type, meta, recipient_user_id=user_id)
+        db.add(notification)
+        return notification
+
+    @staticmethod
+    def send_to_depot_dispatcher(
+        db: Session, depot: Depot, type: NotificationType, meta: Optional[Dict[str, Any]] = None
+    ) -> Notification:
+        """The depot dispatcher's in-app notification. Addressed to the depot,
+        since a dispatcher is scoped by depot. Not committed, as send_to_driver."""
+        notification = NotificationService._build(type, meta, recipient_depot=depot)
+        db.add(notification)
+        return notification
+
+    @staticmethod
+    def list_for_driver(db: Session, user_id: int, unread_only: bool = False, limit: int = 100) -> List[Notification]:
+        query = db.query(Notification).filter(Notification.recipient_user_id == user_id)
+        if unread_only:
+            query = query.filter(Notification.is_read.is_(False))
+        return query.order_by(Notification.created_at.desc(), Notification.id.desc()).limit(limit).all()
+
+    @staticmethod
+    def list_for_depot_dispatcher(
+        db: Session, depot: Depot, unread_only: bool = False, limit: int = 100
+    ) -> List[Notification]:
+        query = db.query(Notification).filter(Notification.recipient_depot == depot)
+        if unread_only:
+            query = query.filter(Notification.is_read.is_(False))
+        return query.order_by(Notification.created_at.desc(), Notification.id.desc()).limit(limit).all()
 
     @staticmethod
     def list_for_outlet(

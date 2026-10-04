@@ -272,7 +272,7 @@ export default function DriverDashboard() {
                   {atDock && (
                     <DockArrival
                       trip={trip}
-                      onArrived={(updated) => setTrips((list) => list.map((t) => (t.id === updated.id ? updated : t)))}
+                      onArrived={(updated: any) => setTrips((list) => list.map((t) => (t.id === updated.id ? updated : t)))}
                     />
                   )}
 

@@ -14,6 +14,7 @@ from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     build_run_021,
     loader_client,
     make_loader,
+    strict_loader_client,
 )
 
 BASE = "/api/v1/loader"
@@ -146,36 +147,34 @@ def test_check_accepts_an_ended_session(loader_client, db_session):
     assert response.status_code == 200, response.text
 
 
-def test_check_without_a_session_leaves_checked_by_empty(loader_client, db_session):
+def test_a_check_is_stamped_with_the_loader_holding_the_run(loader_client, db_session):
     build_run_021(db_session)
     db_session.flush()
 
     response = check(loader_client, "ORD0092302")
 
-    assert order_state(response, "ORD0092302")["checked_by"] is None
+    assert order_state(response, "ORD0092302")["checked_by"] == "Saman J."
 
 
-def test_session_is_optional_until_sign_in_missing_or_null(loader_client, db_session):
-    """loader_session_id is optional until L2: absent or null both write, unstamped."""
+def test_every_write_needs_a_session(strict_loader_client, db_session):
+    """No loader_session_id (missing or null) is a 422: the tablet's outbox
+    treats it as a final refusal."""
     run, _ = build_run_021(db_session)
     publish_v3(db_session, run, unload_order_numbers=["ORD0092308"])
 
-    missing = loader_client.post(order_url("ORD0092302"), json=body(plan_version=3))
-    null_check = loader_client.post(
+    missing = strict_loader_client.post(order_url("ORD0092302"), json=body(plan_version=3))
+    null_check = strict_loader_client.post(
         order_url("ORD0092304"), json=body(plan_version=3, loader_session_id=None)
     )
-    null_uncheck = loader_client.request(
+    null_uncheck = strict_loader_client.request(
         "DELETE", order_url("ORD0092304"), json=body(plan_version=3, loader_session_id=None)
     )
-    null_recheck = loader_client.post(
+    null_recheck = strict_loader_client.post(
         order_url("ORD0092301", "recheck"), json=body(plan_version=3, loader_session_id=None)
     )
 
     for response in (missing, null_check, null_uncheck, null_recheck):
-        assert response.status_code == 200, response.text
-    assert order_state(missing, "ORD0092302")["checked_by"] is None
-    assert order_state(null_uncheck, "ORD0092304")["state"] == "to_load"
-    assert order_state(null_recheck, "ORD0092301")["checked_by"] is None
+        assert response.status_code == 422, response.text
 
 
 def test_first_check_moves_a_run_from_not_started_to_loading(loader_client, db_session):

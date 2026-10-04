@@ -13,8 +13,7 @@ from fastapi import HTTPException, status
 from app.core.exceptions import WaypointLogisticsError
 from app.models.delivery_run import DeliveryRun, RunOrderState, RunStatus, RunStop, RunStopOrder
 from app.models.loader_issue import LoaderIssue
-from app.models.driver import DRIVER_AT_DOCK, DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus, DriverAvailability
-from app.models.loader_activity import ActorKind
+from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus, DriverAvailability
 from app.models.allocation import AllocationStatus
 from app.models.fleet import DriverProfile, VehicleStatus
 from app.models.notification import NotificationType
@@ -414,9 +413,9 @@ def get_trip_view(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
 
 
 def report_at_dock(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
-    """The driver is at the dock. The loader's tablet shows it in the run's log
-    (the same log the gate-out writes to) and the dispatcher sees it in theirs.
-    Saying it again changes nothing."""
+    """The driver is at the dock: the loader's mark_arrived puts the run in their
+    queue ("Driver waiting at Dock 3") and writes one line to the loader's and the
+    dispatcher's run logs. Saying it again changes nothing."""
     trip = get_trip_detail(db, trip_id, driver_id)
     if trip.status != DriverTripStatus.ASSIGNED:
         raise HTTPException(status_code=400, detail="This trip has already left the depot.")
@@ -424,14 +423,7 @@ def report_at_dock(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
     if run is None:
         raise HTTPException(status_code=409, detail="This trip isn't loaded at a dock.")
     if trip.at_dock_at is None:
-        driver = db.get(User, driver_id)
-        dock = run.dock.name if run.dock else "the dock"
-        LoaderService.log(
-            db, run, at=datetime.now(timezone.utc).replace(tzinfo=None), actor_kind=ActorKind.SYSTEM,
-            event_type=DRIVER_AT_DOCK, actor_label=driver.full_name,
-            message=f"Driver at {dock} · {driver.full_name}",
-        )
-        _log(trip, "Driver at dock", f"{driver.full_name} is at {dock}")
+        LoaderService.mark_arrived(db, trip.dispatch_trip, db.get(User, driver_id), run.dock.code)
         db.commit()
     db.refresh(trip)
     return trip

@@ -3,7 +3,7 @@ import { cn } from "cn";
 
 interface LoaderAppBarProps {
   title: string;
-  /** e.g. "Loader · Peliyagoda DC · Dock 3" or "RUN-021 · Dock tablet 3 · Saman J." */
+  /** e.g. "Loader · Peliyagoda DC" or "RUN-021 · Dock 2 · Saman J." */
   subtitle?: string;
   onMenu?: () => void;
   onBell?: () => void;
