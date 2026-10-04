@@ -110,8 +110,8 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
       headers,
       cache: "no-store",
     });
-  } catch (err: any) {
-    throw new ApiError(err?.message || "Couldn't reach the Waypoint server.", 0);
+  } catch (err: unknown) {
+    throw new ApiError(err instanceof Error ? err.message : "Couldn't reach the Waypoint server.", 0);
   }
 
   if (!response.ok) {

@@ -43,30 +43,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setTokenState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Initialize session on mount
-  useEffect(() => {
-    try {
-      const storedToken = getAccessToken();
-      const storedUser = getStoredUser();
-
-      if (storedToken && storedUser) {
-        const payload = decodeJwt<KeycloakTokenPayload>(storedToken);
-        const nowSec = Math.floor(Date.now() / 1000);
-
-        if (payload?.exp && payload.exp < nowSec) {
-          void refreshSession();
-        } else {
-          setTokenState(storedToken);
-          setUser(storedUser);
-        }
-      }
-    } catch {
-      clearAuthSession();
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
   /**
    * Refreshes access token using refresh_token against Keycloak
    */
@@ -113,6 +89,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   }, []);
+
+  // Initialize session after hydration, with the refresh callback defined.
+  useEffect(() => {
+    const initial = setTimeout(() => {
+      try {
+        const storedToken = getAccessToken();
+        const storedUser = getStoredUser();
+        if (storedToken && storedUser) {
+          const payload = decodeJwt<KeycloakTokenPayload>(storedToken);
+          if (payload?.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+            void refreshSession();
+          } else {
+            setTokenState(storedToken);
+            setUser(storedUser);
+          }
+        }
+      } catch {
+        clearAuthSession();
+      } finally {
+        setIsLoading(false);
+      }
+    }, 0);
+    return () => clearTimeout(initial);
+  }, [refreshSession]);
 
   /**
    * Initiates OIDC PKCE redirect to Keycloak login screen

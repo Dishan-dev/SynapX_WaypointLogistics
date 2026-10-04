@@ -145,12 +145,12 @@ export default function DispatcherDashboard() {
   }, []);
 
   useEffect(() => {
-    void loadData();
+    const initial = setTimeout(() => { void loadData(); }, 0);
     // Auto-refresh pulse every 45s
     const timer = setInterval(() => {
       void loadData();
     }, 45000);
-    return () => clearInterval(timer);
+    return () => { clearTimeout(initial); clearInterval(timer); };
   }, [loadData]);
 
   // Filtered runs & vehicles by selected Hub

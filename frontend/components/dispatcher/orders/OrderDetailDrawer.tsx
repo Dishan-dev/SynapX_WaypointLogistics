@@ -57,18 +57,6 @@ export function OrderDetailDrawer({
 
   // Sync or fetch items when order changes
   useEffect(() => {
-    if (!order || !isOpen) {
-      setItems([]);
-      setDeferSuccessMsg(null);
-      return;
-    }
-
-    if (order.items && order.items.length > 0) {
-      setItems(order.items);
-      return;
-    }
-
-    // Fallback: Fetch order by ID if items weren't present in the list payload
     let ignore = false;
     async function fetchFullOrder() {
       setIsLoadingItems(true);
@@ -86,11 +74,19 @@ export function OrderDetailDrawer({
         if (!ignore) setIsLoadingItems(false);
       }
     }
-
-    fetchFullOrder();
-
+    const initial = setTimeout(() => {
+      if (!order || !isOpen) {
+        setItems([]);
+        setDeferSuccessMsg(null);
+      } else if (order.items && order.items.length > 0) {
+        setItems(order.items);
+      } else {
+        void fetchFullOrder();
+      }
+    }, 0);
     return () => {
       ignore = true;
+      clearTimeout(initial);
     };
   }, [order, isOpen]);
 

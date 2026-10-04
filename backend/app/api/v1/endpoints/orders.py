@@ -5,7 +5,7 @@ from sqlalchemy import or_, and_, func
 from app.api import deps
 from app.models.order import Order, OrderStatus
 from app.schemas.order import OrderCreate, OrderRead, OrderUpdate
-from app.services.order_service import order_service
+from app.services.order_service import TRANSITIONS, order_service
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -144,7 +144,7 @@ def bulk_allocate_orders(req: BulkAllocateRequest, db: Session = Depends(deps.ge
 
     # Up-front validation
     for order in orders:
-        if order.status != OrderStatus.ALLOCATED and OrderStatus.ALLOCATED not in order_service.TRANSITIONS.get(order.status, set()):
+        if order.status != OrderStatus.ALLOCATED and OrderStatus.ALLOCATED not in TRANSITIONS.get(order.status, set()):
             raise HTTPException(
                 status_code=409,
                 detail=f"{order.order_number} can't move from {order.status.value.lower()} to allocated."

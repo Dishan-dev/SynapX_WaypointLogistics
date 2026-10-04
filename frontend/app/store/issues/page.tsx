@@ -51,10 +51,10 @@ export default function ExceptionsAndIssuesPage() {
   };
 
   useEffect(() => {
-    loadIssues();
+    const initial = setTimeout(loadIssues, 0);
     const handleUpdate = () => loadIssues();
     window.addEventListener("waypoint_issues_updated", handleUpdate);
-    return () => window.removeEventListener("waypoint_issues_updated", handleUpdate);
+    return () => { clearTimeout(initial); window.removeEventListener("waypoint_issues_updated", handleUpdate); };
   }, []);
 
   const openCount = issues.filter((i) => i.status === "open").length;
@@ -206,16 +206,16 @@ export default function ExceptionsAndIssuesPage() {
       <div className="bg-card border border-border rounded-xl shadow-xs overflow-hidden">
         {/* Tabs Row (Figma 16:834) */}
         <div className="flex items-center border-b border-border/80 px-4 pt-3 gap-1 overflow-x-auto">
-          {[
+          {([
             { key: "all", label: `All (${totalCount})` },
             { key: "open", label: `Open (${openCount})` },
             { key: "under_review", label: `Under Review (${underReviewCount})` },
             { key: "resolved", label: `Resolved (${resolvedCount})` },
-          ].map((tab) => (
+          ] as const).map((tab) => (
             <button
               key={tab.key}
               type="button"
-              onClick={() => setSelectedTab(tab.key as any)}
+              onClick={() => setSelectedTab(tab.key)}
               className={`px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
                 selectedTab === tab.key
                   ? "border-primary text-primary font-bold"
@@ -574,7 +574,7 @@ export default function ExceptionsAndIssuesPage() {
                   <label className="font-bold text-muted-foreground">Issue Classification *</label>
                   <select
                     value={newType}
-                    onChange={(e) => setNewType(e.target.value as any)}
+                    onChange={(e) => setNewType(e.target.value as typeof newType)}
                     className="w-full text-xs p-2 rounded-lg border border-border bg-background focus:outline-none h-9"
                   >
                     <option value="Damaged Goods">Damaged Goods</option>

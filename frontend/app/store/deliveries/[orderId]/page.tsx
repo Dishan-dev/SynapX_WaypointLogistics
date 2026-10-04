@@ -62,7 +62,7 @@ export default function DeliveryDetailsAndReceivingPage({
   const vehicleSpecs = matchedOrder?.vehicle?.description || "Truck • Reefer • 5,510 kg • 26.4 m³";
   const homeDepot = matchedOrder?.vehicle?.origin || "Peliyagoda Depot";
   const bolNumber = matchedOrder?.vehicle?.manifestNumber ? `BOL-2026-${matchedOrder.vehicle.manifestNumber}` : "BOL-2026-0926";
-  const sealNumber = `SL-${Math.floor(100000 + Math.random() * 900000)}`;
+  const sealNumber = `SL-${[...orderNumber].reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) % 900000, 0) + 100000}`;
   const tempReading = matchedOrder?.temperatureClass === "chilled" ? "+3.6°C" : "Ambient";
   const tempLimit = matchedOrder?.temperatureClass === "chilled" ? "< +4.0°C (Chilled Cold Chain)" : "Ambient (< 25.0°C)";
   const deliveryWindow = "Today, 04:00 – 07:45";
@@ -624,7 +624,7 @@ export default function DeliveryDetailsAndReceivingPage({
                           <button
                             key={c.key}
                             type="button"
-                            onClick={() => handleSetCondition(item.id, c.key as any)}
+                            onClick={() => handleSetCondition(item.id, c.key as ItemState["condition"])}
                             className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
                               isSelected
                                 ? activeClass

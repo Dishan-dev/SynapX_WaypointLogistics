@@ -36,7 +36,7 @@ export function LiveRouteMap({ run }: LiveRouteMapProps) {
     // Base frequency so that a typical run has 1 or 1.5 waves across the width
     const normalized = i / (pointCount - 1 || 1);
     const y = 150 + Math.sin(normalized * Math.PI * 2.5) * 45;
-    return { x, y, name: typeof stop === 'string' ? stop : (stop as any).name || `Stop ${i + 1}` };
+    return { x, y, name: typeof stop === 'string' ? stop : stop.name || `Stop ${i + 1}` };
   });
 
   // Helper to generate a smooth bezier path through points

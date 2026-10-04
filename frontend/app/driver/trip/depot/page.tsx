@@ -67,7 +67,7 @@ export default function ArrivedAtDepotPage() {
           <div className="flex flex-col items-center gap-2 w-full text-center">
             <h2 className="font-bold text-[22px]" style={{ color: "#163A5F" }}>Arrived at depot?</h2>
             <p className="font-normal text-[14px] leading-[20px]" style={{ color: "#5D6A78" }}>
-              You're about to notify the dispatcher that you have returned to the depot.
+              You&apos;re about to notify the dispatcher that you have returned to the depot.
             </p>
           </div>
         </div>
