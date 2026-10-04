@@ -15,6 +15,7 @@ from app.models.reference import Outlet, Brand, Depot, DockType
 from app.models.outlet import OutletContact, OutletReceivingWindow
 from app.models.outlet_settings import OutletSettings
 from app.models.user import User
+from app.models.store_manager import StoreManagerAssignment
 from app.schemas.outlet import (
     ContactRead,
     OutletCreate,
@@ -469,6 +470,14 @@ def assign_outlet_manager(
         if not manager_phone:
             manager_phone = "077-0000000"
 
+    # The real user -> outlet link the Store Manager screens are scoped by (the name above is display only).
+    # Assigning moves the manager here from any other outlet; unassigning clears this outlet's managers.
+    if user_id is not None:
+        db.query(StoreManagerAssignment).filter(StoreManagerAssignment.user_id == user_id).delete()
+        db.add(StoreManagerAssignment(user_id=user_id, outlet_id=outlet.id))
+    else:
+        db.query(StoreManagerAssignment).filter(StoreManagerAssignment.outlet_id == outlet.id).delete()
+
     settings = db.query(OutletSettings).filter(OutletSettings.outlet_id == outlet.id).first()
     if not settings:
         settings = OutletSettings(
@@ -507,8 +516,10 @@ def assign_outlet_manager(
 def get_outlet_settings(
     outlet_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user),
 ):
     """Retrieve outlet profile, delivery & unloading parameters, and access preferences."""
+    deps.ensure_store_outlet_ref(db, current_user, outlet_id)
     return outlet_service.get_settings(db, outlet_id)
 
 
@@ -517,8 +528,10 @@ def update_outlet_settings(
     outlet_id: str,
     update_data: OutletSettingsUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user),
 ):
     """Update editable outlet contacts and notification/access preferences."""
+    deps.ensure_store_outlet_ref(db, current_user, outlet_id)
     return outlet_service.update_settings(db, outlet_id, update_data)
 
 
@@ -526,6 +539,8 @@ def update_outlet_settings(
 def reset_outlet_settings(
     outlet_id: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user),
 ):
     """Reset editable outlet settings to default verified values."""
+    deps.ensure_store_outlet_ref(db, current_user, outlet_id)
     return outlet_service.reset_settings(db, outlet_id)

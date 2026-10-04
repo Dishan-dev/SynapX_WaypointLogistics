@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
-import { CircleAlert, Printer } from "lucide-react";
+import { CircleAlert, Printer, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "cn";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -38,7 +38,7 @@ import {
   type StoreOrderItem,
   type StoreOutlet,
 } from "@/components/store/mock-data";
-import { formatDeliveryWindow, formatUnitCount } from "@/components/store/format";
+import { formatDeliveryWindow, formatUnitCount, windowFor } from "@/components/store/format";
 import { cutoffFor, isPastCutoff } from "@/components/store/new-request/delivery-rules";
 import { DispatcherNoteDialog } from "@/components/store/request-detail/dispatcher-note";
 import { cancelStoreOrder } from "@/components/store/api/store-data";
@@ -162,6 +162,17 @@ export function RequestDetailView({
               Cancel request
             </Button>
           )}
+          {/* Stores reorder the same goods often: start a new request with these items and quantities. */}
+          <Button
+            asChild
+            variant="outline"
+            className="h-11 border-2 border-primary px-4 text-base font-bold md:h-10"
+          >
+            <Link href={`/store/requests/new?repeat=${order.orderNumber}`}>
+              <RotateCcw aria-hidden="true" />
+              Repeat order
+            </Link>
+          </Button>
           <Button
             variant="outline"
             onClick={() => window.print()}
@@ -206,8 +217,8 @@ export function RequestDetailView({
           <InfoBlock
             label="Delivery window"
             value={format(deliveryDate, "d MMM yyyy")}
-            sub={formatDeliveryWindow(outlet)}
-            compact={`${format(deliveryDate, "d MMM")}, ${formatDeliveryWindow(outlet)}`}
+            sub={formatDeliveryWindow(windowFor(order, outlet))}
+            compact={`${format(deliveryDate, "d MMM")}, ${formatDeliveryWindow(windowFor(order, outlet))}`}
             className="md:order-3"
           />
           <InfoBlock

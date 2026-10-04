@@ -3,16 +3,21 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import { currentOutlet } from "@/components/store/mock-data";
+import { useStoreOutlet } from "@/components/store/outlet-context";
 import { UnreadCountText } from "@/components/store/notifications/notification-bell";
 import { useAuth } from "@/lib/auth-context";
 
 // Mobile "More" tab (Figma: Mobile / 12 More): pages that don't fit in the bottom nav.
-const moreLinks = [
+const moreLinks = (outletCode: string | undefined) => [
   {
     title: "Shortfalls & Back-orders",
     description: "Items not sent or received in full",
     href: "/store/requests/shortfalls",
+  },
+  {
+    title: "Store Stock",
+    description: "On-hand counts and CSV import",
+    href: "/store/stock",
   },
   {
     title: "Delivery History",
@@ -21,7 +26,7 @@ const moreLinks = [
   },
   {
     title: "Outlet Settings",
-    description: `${currentOutlet.code} details and delivery setup`,
+    description: `${outletCode ?? "Outlet"} details and delivery setup`,
     href: "/store/settings",
   },
   {
@@ -33,13 +38,14 @@ const moreLinks = [
 
 export default function StoreMorePage() {
   const { logout } = useAuth();
+  const outlet = useStoreOutlet();
 
   return (
     <div className="flex flex-col gap-6">
       <h1 className="sr-only">More</h1>
       <Card className="gap-0 py-0">
         <ul className="divide-y divide-border">
-          {moreLinks.map((link) => (
+          {moreLinks(outlet?.code).map((link) => (
             <li key={link.href}>
               <Link
                 href={link.href}

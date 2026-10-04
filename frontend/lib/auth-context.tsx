@@ -17,6 +17,7 @@ import {
   getIdToken,
   getRefreshToken,
   getStoredUser,
+  setAuthCookie,
   PKCE_STATE_KEY,
   PKCE_VERIFIER_KEY,
   saveAuthSession,
@@ -56,6 +57,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (payload?.exp && payload.exp < nowSec) {
           void refreshSession();
         } else {
+          // Sessions started before the cookie existed get it now.
+          setAuthCookie(storedToken);
           setTokenState(storedToken);
           setUser(storedUser);
         }
