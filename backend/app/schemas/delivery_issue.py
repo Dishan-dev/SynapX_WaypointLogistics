@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
 
 class DeliveryIssueBase(BaseModel):
     order_id: Optional[int] = None
@@ -16,26 +17,28 @@ class DeliveryIssueBase(BaseModel):
     photo_url: Optional[str] = None
     photo_name: Optional[str] = None
     photo_size: Optional[str] = None
-    reported_by: Optional[str] = None
-    status: Optional[str] = None
-    resolution_notes: Optional[str] = None
-    claimed_amount: Optional[str] = None
+    reported_by: Optional[str] = "Sarah Jenkins (Store Manager)"
     driver_name: Optional[str] = None
     vehicle_id: Optional[str] = None
+    claimed_amount: Optional[str] = None
+
 
 class DeliveryIssueCreate(DeliveryIssueBase):
     pass
+
 
 class DeliveryIssueUpdate(BaseModel):
     status: Optional[str] = None
     resolution_notes: Optional[str] = None
     claimed_amount: Optional[str] = None
 
+
 class DeliveryIssueRead(DeliveryIssueBase):
     id: int
+    status: str
+    resolution_notes: Optional[str] = None
     reported_at: datetime
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -25,19 +25,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StorePill, StorePillTone } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
-import { getStoredIssues, saveIssue, StoreIssue } from "@/services/issues-store";
+import { createStoreIssue, fetchStoreIssues, StoreIssue } from "@/services/issues-store";
 
-export default function ExceptionsAndIssuesPage() {
+import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+
+function ExceptionsAndIssuesContent() {
+  const searchParams = useSearchParams();
+  const initialOrderParam = searchParams.get("order") || "";
+  const initialSearchParam = searchParams.get("search") || "";
+  const autoOpenReport = searchParams.get("report") === "true" || !!initialOrderParam;
+
   const [issues, setIssues] = useState<StoreIssue[]>([]);
   const [selectedTab, setSelectedTab] = useState<"all" | "open" | "under_review" | "resolved">("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialSearchParam || initialOrderParam);
   const [typeFilter, setTypeFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("30");
   const [selectedIssue, setSelectedIssue] = useState<StoreIssue | null>(null);
 
   // Report Modal State
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [newOrderId, setNewOrderId] = useState("ORD0000001");
+  const [showCreateModal, setShowCreateModal] = useState(autoOpenReport);
+  const [newOrderId, setNewOrderId] = useState(initialOrderParam || "ORD0000001");
   const [newItemName, setNewItemName] = useState("");
   const [newItemSku, setNewItemSku] = useState("");
   const [newType, setNewType] = useState<"Damaged Goods" | "Missing Items" | "Quantity Mismatch" | "Temperature Breach">("Damaged Goods");
@@ -45,17 +53,44 @@ export default function ExceptionsAndIssuesPage() {
   const [newReceived, setNewReceived] = useState(8);
   const [newDescription, setNewDescription] = useState("");
   const [newPhoto, setNewPhoto] = useState<{ name: string; url: string; size: string } | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
 
-  const loadIssues = () => {
-    setIssues(getStoredIssues());
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const loadIssues = async () => {
+    try {
+      setIssues(await fetchStoreIssues());
+      setLoadError(null);
+    } catch {
+      setLoadError("Couldn't load your issues. Check your connection and refresh.");
+    }
   };
 
   useEffect(() => {
-    loadIssues();
-    const handleUpdate = () => loadIssues();
-    window.addEventListener("waypoint_issues_updated", handleUpdate);
-    return () => window.removeEventListener("waypoint_issues_updated", handleUpdate);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads once on mount
+    void loadIssues();
   }, []);
+
+  useEffect(() => {
+    if (initialOrderParam) {
+      setNewOrderId(initialOrderParam);
+      setShowCreateModal(true);
+    }
+    if (initialSearchParam) {
+      setSearchQuery(initialSearchParam);
+      const found = issues.find(
+        (i) =>
+          i.id.toLowerCase() === initialSearchParam.toLowerCase() ||
+          i.orderId.toLowerCase() === initialSearchParam.toLowerCase()
+      );
+      if (found) {
+        setSelectedIssue(found);
+      }
+    }
+  }, [initialOrderParam, initialSearchParam, issues]);
 
   const openCount = issues.filter((i) => i.status === "open").length;
   const underReviewCount = issues.filter((i) => i.status === "under_review").length;
@@ -84,6 +119,9 @@ export default function ExceptionsAndIssuesPage() {
     return true;
   });
 
+  const totalPages = Math.ceil(filteredIssues.length / pageSize) || 1;
+  const paginatedIssues = filteredIssues.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -95,11 +133,15 @@ export default function ExceptionsAndIssuesPage() {
     }
   };
 
-  const handleCreateIssue = (e: React.FormEvent) => {
+  const handleCreateIssue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDescription.trim()) return;
 
-    const created = saveIssue({
+    setIsSaving(true);
+    setSaveError(null);
+    let created: StoreIssue;
+    try {
+      created = await createStoreIssue({
       orderId: newOrderId,
       type: newType,
       title: `${newType}: ${newItemName || "Order Discrepancy"}`,
@@ -111,11 +153,15 @@ export default function ExceptionsAndIssuesPage() {
       photoUrl: newPhoto?.url,
       photoName: newPhoto?.name,
       photoSize: newPhoto?.size,
-      driverName: "Marcus Vance",
-      vehicleId: "VEH001",
     });
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Couldn't log the issue. Try again.");
+      setIsSaving(false);
+      return;
+    }
+    setIsSaving(false);
 
-    loadIssues();
+    await loadIssues();
     setSelectedIssue(created);
     setShowCreateModal(false);
     setNewDescription("");
@@ -175,6 +221,12 @@ export default function ExceptionsAndIssuesPage() {
       </div>
 
       {/* 4 Metric Cards (Figma 16:828) */}
+      {loadError && (
+        <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive-muted p-4 text-sm font-medium text-destructive">
+          {loadError}
+        </p>
+      )}
+
       <section aria-label="Exceptions Summary" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <StoreMetricCard
           label="Total Issues"
@@ -280,14 +332,14 @@ export default function ExceptionsAndIssuesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
-              {filteredIssues.length === 0 ? (
+              {paginatedIssues.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-muted-foreground">
                     No exceptions or issues match your criteria.
                   </td>
                 </tr>
               ) : (
-                filteredIssues.map((issue) => (
+                paginatedIssues.map((issue) => (
                   <tr
                     key={issue.id}
                     onClick={() => setSelectedIssue(issue)}
@@ -341,6 +393,41 @@ export default function ExceptionsAndIssuesPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Footer */}
+        {filteredIssues.length > 0 && (
+          <div className="p-3.5 border-t border-border/60 bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <span className="text-muted-foreground">
+              Showing {(currentPage - 1) * pageSize + 1} &ndash;{" "}
+              {Math.min(currentPage * pageSize, filteredIssues.length)} of {filteredIssues.length} issues
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="h-8 text-xs font-semibold"
+              >
+                Previous
+              </Button>
+              <span className="px-2 text-xs font-medium text-muted-foreground">
+                Page {currentPage} of {totalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="h-8 text-xs font-semibold"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Side Panel / Issue Details Drawer (Figma 16:816 & 16:939) */}
@@ -679,13 +766,18 @@ export default function ExceptionsAndIssuesPage() {
                 )}
               </div>
 
+              {saveError && (
+                <p role="alert" className="text-sm font-medium text-destructive">
+                  {saveError}
+                </p>
+              )}
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/60">
                 <Button type="button" variant="outline" onClick={() => setShowCreateModal(false)}>
                   Cancel
                 </Button>
                 <Button
                   type="submit"
-                  disabled={!newDescription.trim()}
+                  disabled={!newDescription.trim() || isSaving}
                   className="bg-primary text-primary-foreground font-bold hover:bg-primary/90"
                 >
                   Submit Issue Report
@@ -698,3 +790,12 @@ export default function ExceptionsAndIssuesPage() {
     </div>
   );
 }
+
+export default function ExceptionsAndIssuesPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground text-xs">Loading issues...</div>}>
+      <ExceptionsAndIssuesContent />
+    </Suspense>
+  );
+}
+
