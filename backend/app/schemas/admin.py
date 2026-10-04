@@ -1,5 +1,5 @@
 from datetime import datetime, time, date
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Union
 from pydantic import BaseModel, ConfigDict, EmailStr
 from app.models.user import UserRole
 from app.models.reference import Brand, Depot, DockType
@@ -158,6 +158,25 @@ class DepotDispatcherAssignRequest(BaseModel):
     user_id: Optional[int] = None
     keycloak_id: Optional[str] = None
 
+
+class DepotLoaderItem(BaseModel):
+    id: int
+    full_name: str
+    short_name: str
+    dock_id: Optional[int] = None
+    dock_name: Optional[str] = None
+    dock_code: Optional[str] = None
+    depot: Optional[str] = None
+    is_active: bool = True
+    created_at: Optional[str] = None
+
+
+class DepotLoaderAssignRequest(BaseModel):
+    loader_id: Union[int, str]
+    dock_id: Optional[int] = None
+    action: Optional[str] = "assign"  # "assign" | "unassign"
+
+
 class DepotSummary(BaseModel):
     key: str
     name: str
@@ -170,6 +189,7 @@ class DepotSummary(BaseModel):
     outlet_count: int
     available_vehicles: int
     allocated_vehicles: int
+    loader_count: int = 0
     status: str = "Operational"
 
 

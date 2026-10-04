@@ -35,6 +35,8 @@ from app.schemas.admin import (
     RoleAssignRequest,
     DepotSummary,
     DepotDispatcherAssignRequest,
+    DepotLoaderItem,
+    DepotLoaderAssignRequest,
     OperationalConfig,
     DeliveryWindowConfig,
     TripConstraintConfig,
@@ -240,6 +242,8 @@ def get_admin_overview(db: Session = Depends(deps.get_db)) -> Any:
     k_docks = db.query(Dock).filter(Dock.depot == Depot.KANDY).count()
     p_tablets = db.query(DockTablet).join(Dock).filter(Dock.depot == Depot.PELIYAGODA).count()
     k_tablets = db.query(DockTablet).join(Dock).filter(Dock.depot == Depot.KANDY).count()
+    p_loaders_count = db.query(LoaderUser).join(Dock, LoaderUser.home_dock_id == Dock.id).filter(Dock.depot == Depot.PELIYAGODA).count()
+    k_loaders_count = db.query(LoaderUser).join(Dock, LoaderUser.home_dock_id == Dock.id).filter(Dock.depot == Depot.KANDY).count()
 
     depots_summary = [
         DepotSummary(
@@ -254,6 +258,7 @@ def get_admin_overview(db: Session = Depends(deps.get_db)) -> Any:
             outlet_count=outlets_by_depot.get("peliyagoda", 0),
             available_vehicles=sum(1 for v in p_vehicles if v.status == VehicleStatus.AVAILABLE),
             allocated_vehicles=sum(1 for v in p_vehicles if v.status in (VehicleStatus.ALLOCATED, VehicleStatus.LOADING)),
+            loader_count=p_loaders_count,
             status="Operational",
         ),
         DepotSummary(
@@ -268,6 +273,7 @@ def get_admin_overview(db: Session = Depends(deps.get_db)) -> Any:
             outlet_count=outlets_by_depot.get("kandy", 0),
             available_vehicles=sum(1 for v in k_vehicles if v.status == VehicleStatus.AVAILABLE),
             allocated_vehicles=sum(1 for v in k_vehicles if v.status in (VehicleStatus.ALLOCATED, VehicleStatus.LOADING)),
+            loader_count=k_loaders_count,
             status="Operational",
         )
     ]
@@ -427,7 +433,7 @@ def list_admin_users(
                         full_name=l.full_name,
                         role="LOADER",
                         role_display="Dock Loader",
-                        assigned_depot=None,
+                        assigned_depot=l.home_dock.depot.value.lower() if (l.home_dock and l.home_dock.depot) else None,
                         is_active=l.is_active,
                         is_keycloak_managed=False,
                         created_at=l.created_at,
@@ -500,6 +506,7 @@ def list_admin_users(
                     full_name=l.full_name,
                     role="LOADER",
                     role_display="Loader",
+                    assigned_depot=l.home_dock.depot.value.lower() if (l.home_dock and l.home_dock.depot) else None,
                     is_active=l.is_active,
                     is_keycloak_managed=False,
                     created_at=l.created_at,
@@ -1086,6 +1093,30 @@ def _depot_dispatcher(db: Session, depot: Depot) -> Optional[Dict[str, Any]]:
     }
 
 
+def _depot_loaders(db: Session, depot: Depot) -> List[Dict[str, Any]]:
+    loaders = (
+        db.query(LoaderUser)
+        .join(Dock, LoaderUser.home_dock_id == Dock.id)
+        .filter(Dock.depot == depot)
+        .order_by(LoaderUser.full_name)
+        .all()
+    )
+    return [
+        {
+            "id": l.id,
+            "full_name": l.full_name,
+            "short_name": l.short_name,
+            "dock_id": l.home_dock_id,
+            "dock_name": l.home_dock.name if l.home_dock else None,
+            "dock_code": l.home_dock.code if l.home_dock else None,
+            "depot": depot.value,
+            "is_active": l.is_active,
+            "created_at": l.created_at.isoformat() if l.created_at else None,
+        }
+        for l in loaders
+    ]
+
+
 @router.put("/depots/{depot}/dispatcher")
 def assign_depot_dispatcher(
     depot: Depot,
@@ -1144,6 +1175,151 @@ def assign_depot_dispatcher(
         severity="INFO",
     )
     return {"depot": depot.value, "dispatcher": _depot_dispatcher(db, depot)}
+
+
+@router.get("/depots/loaders/all")
+def get_all_depot_loaders(db: Session = Depends(deps.get_db)) -> Any:
+    """List all loader workers with their current depot and dock allocations."""
+    loaders = db.query(LoaderUser).order_by(LoaderUser.full_name).all()
+    return [
+        {
+            "id": l.id,
+            "full_name": l.full_name,
+            "short_name": l.short_name,
+            "dock_id": l.home_dock_id,
+            "dock_name": l.home_dock.name if l.home_dock else None,
+            "dock_code": l.home_dock.code if l.home_dock else None,
+            "depot": l.home_dock.depot.value if (l.home_dock and l.home_dock.depot) else None,
+            "is_active": l.is_active,
+            "created_at": l.created_at.isoformat() if l.created_at else None,
+        }
+        for l in loaders
+    ]
+
+
+@router.post("/depots/{depot}/loaders")
+def assign_depot_loader(
+    depot: Depot,
+    payload: DepotLoaderAssignRequest,
+    db: Session = Depends(deps.get_db),
+    _: User = Depends(deps.require_admin),
+) -> Any:
+    """Assign, transfer, or unassign a loader to/from a depot."""
+    lid = payload.loader_id
+    if isinstance(lid, str):
+        if lid.startswith("loader-"):
+            lid = int(lid.replace("loader-", ""))
+        elif lid.isdigit():
+            lid = int(lid)
+
+    loader = None
+    if isinstance(lid, int):
+        if lid >= 10000:
+            loader = db.query(LoaderUser).filter(LoaderUser.id == lid - 10000).first()
+        else:
+            loader = db.query(LoaderUser).filter(LoaderUser.id == lid).first()
+
+        if not loader:
+            u = db.query(User).filter(User.id == lid).first()
+            if u:
+                loader = db.query(LoaderUser).filter(LoaderUser.full_name == u.full_name).first()
+                if not loader:
+                    loader = LoaderUser(
+                        full_name=u.full_name,
+                        short_name=u.full_name.split()[0] if u.full_name else "Loader",
+                        pin_hash=security.get_password_hash("1234"),
+                        is_active=True,
+                    )
+                    db.add(loader)
+                    db.flush()
+
+    if not loader:
+        raise HTTPException(status_code=404, detail="Loader not found.")
+
+    action = (payload.action or "assign").lower()
+
+    if action == "unassign":
+        prev_dock = loader.home_dock.name if loader.home_dock else "depot"
+        loader.home_dock_id = None
+        db.commit()
+        db.refresh(loader)
+
+        record_audit(
+            action_type="DEPOT_LOADER_UNASSIGNED",
+            entity_name="Depot Loader",
+            entity_id=str(loader.id),
+            summary=f"Unassigned loader {loader.full_name} from {depot.value.title()} ({prev_dock}).",
+            severity="INFO",
+        )
+        return {
+            "status": "success",
+            "loader_id": loader.id,
+            "depot": depot.value,
+            "action": "unassign",
+            "loaders": _depot_loaders(db, depot),
+        }
+
+    # Action is "assign"
+    target_dock = None
+    if payload.dock_id is not None:
+        target_dock = db.query(Dock).filter(Dock.id == payload.dock_id, Dock.depot == depot).first()
+        if not target_dock:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Dock {payload.dock_id} does not belong to depot {depot.value.title()}.",
+            )
+    else:
+        target_dock = db.query(Dock).filter(Dock.depot == depot).first()
+        if not target_dock:
+            target_dock = Dock(
+                code=f"DCK-{depot.value[:3].upper()}-01",
+                name=f"{depot.value.title()} Bay 1",
+                depot=depot,
+            )
+            db.add(target_dock)
+            db.flush()
+
+    prev_depot = loader.home_dock.depot.value.title() if (loader.home_dock and loader.home_dock.depot) else None
+    loader.home_dock_id = target_dock.id
+    loader.is_active = True
+    db.commit()
+    db.refresh(loader)
+
+    transfer_text = f" (transferred from {prev_depot})" if (prev_depot and prev_depot.lower() != depot.value.lower()) else ""
+    record_audit(
+        action_type="DEPOT_LOADER_ASSIGNED",
+        entity_name="Depot Loader",
+        entity_id=str(loader.id),
+        summary=f"Assigned loader {loader.full_name} to {depot.value.title()} at {target_dock.name}{transfer_text}.",
+        severity="INFO",
+    )
+
+    return {
+        "status": "success",
+        "loader_id": loader.id,
+        "depot": depot.value,
+        "dock_id": target_dock.id,
+        "dock_name": target_dock.name,
+        "action": "assign",
+        "loaders": _depot_loaders(db, depot),
+    }
+
+
+@router.delete("/depots/{depot}/loaders/{loader_id}")
+def unassign_depot_loader(
+    depot: Depot,
+    loader_id: str,
+    db: Session = Depends(deps.get_db),
+    _: User = Depends(deps.require_admin),
+) -> Any:
+    """Remove loader from depot."""
+    return assign_depot_loader(
+        depot=depot,
+        payload=DepotLoaderAssignRequest(loader_id=loader_id, action="unassign"),
+        db=db,
+        _=_,
+    )
+
 
 @router.get("/depots")
 def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
@@ -1214,6 +1390,30 @@ def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
         if (o.depot.value if hasattr(o.depot, "value") else str(o.depot)).lower() == "kandy"
     ]
 
+    p_db_docks = db.query(Dock).filter(Dock.depot == Depot.PELIYAGODA).all()
+    k_db_docks = db.query(Dock).filter(Dock.depot == Depot.KANDY).all()
+
+    p_docks = [
+        {"id": d.id, "code": d.code, "name": d.name, "status": "Available"}
+        for d in p_db_docks
+    ] if p_db_docks else [
+        {"id": 1, "code": "DCK-P01", "name": "Bay 1 - Ambient Bulk", "status": "Available"},
+        {"id": 2, "code": "DCK-P02", "name": "Bay 2 - Chilled Reefer", "status": "Loading"},
+        {"id": 3, "code": "DCK-P03", "name": "Bay 3 - Fast Dispatches", "status": "Available"},
+        {"id": 4, "code": "DCK-P04", "name": "Bay 4 - Cross Dock", "status": "Available"},
+    ]
+
+    k_docks = [
+        {"id": d.id, "code": d.code, "name": d.name, "status": "Available"}
+        for d in k_db_docks
+    ] if k_db_docks else [
+        {"id": 5, "code": "DCK-K01", "name": "Bay 1 - Central Ambience", "status": "Available"},
+        {"id": 6, "code": "DCK-K02", "name": "Bay 2 - Mountain Chilled", "status": "Available"},
+    ]
+
+    p_loaders = _depot_loaders(db, Depot.PELIYAGODA)
+    k_loaders = _depot_loaders(db, Depot.KANDY)
+
     return {
         "peliyagoda": {
             "key": "peliyagoda",
@@ -1221,13 +1421,8 @@ def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
             "code": "DEP-CMB-01",
             "address": "Kandy Road, Peliyagoda, Western Province",
             "district": "Gampaha / Colombo Metropolitan",
-            "dock_count": 4,
-            "docks": [
-                {"id": 1, "code": "DCK-P01", "name": "Bay 1 - Ambient Bulk", "status": "Available"},
-                {"id": 2, "code": "DCK-P02", "name": "Bay 2 - Chilled Reefer", "status": "Loading"},
-                {"id": 3, "code": "DCK-P03", "name": "Bay 3 - Fast Dispatches", "status": "Available"},
-                {"id": 4, "code": "DCK-P04", "name": "Bay 4 - Cross Dock", "status": "Available"},
-            ],
+            "dock_count": len(p_docks),
+            "docks": p_docks,
             "tablets": [
                 {"id": 1, "label": "Tablet Dock 1", "active": True},
                 {"id": 2, "label": "Tablet Dock 2", "active": True},
@@ -1238,6 +1433,8 @@ def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
             "outlet_count": len(p_outlets),
             "outlets": p_outlets,
             "dispatcher": _depot_dispatcher(db, Depot.PELIYAGODA),
+            "loader_count": len(p_loaders),
+            "loaders": p_loaders,
         },
         "kandy": {
             "key": "kandy",
@@ -1245,11 +1442,8 @@ def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
             "code": "DEP-KDY-01",
             "address": "Katugastota Industrial Zone, Kandy, Central Province",
             "district": "Kandy / Central Highlands",
-            "dock_count": 2,
-            "docks": [
-                {"id": 5, "code": "DCK-K01", "name": "Bay 1 - Central Ambience", "status": "Available"},
-                {"id": 6, "code": "DCK-K02", "name": "Bay 2 - Mountain Chilled", "status": "Available"},
-            ],
+            "dock_count": len(k_docks),
+            "docks": k_docks,
             "tablets": [
                 {"id": 4, "label": "Kandy Dock Tablet A", "active": True},
                 {"id": 5, "label": "Kandy Dock Tablet B", "active": True},
@@ -1259,6 +1453,8 @@ def get_admin_depots(db: Session = Depends(deps.get_db)) -> Any:
             "outlet_count": len(k_outlets),
             "outlets": k_outlets,
             "dispatcher": _depot_dispatcher(db, Depot.KANDY),
+            "loader_count": len(k_loaders),
+            "loaders": k_loaders,
         }
     }
 

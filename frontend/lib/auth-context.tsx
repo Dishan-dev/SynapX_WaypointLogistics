@@ -29,7 +29,7 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  loginWithKeycloak: (targetRole?: KeycloakAppRole) => Promise<void>;
+  loginWithKeycloak: (targetRole?: KeycloakAppRole, returnUrl?: string) => Promise<void>;
   logout: (ssoLogout?: boolean) => Promise<void>;
   hasRole: (role: KeycloakAppRole) => boolean;
   switchRole: (role: KeycloakAppRole) => void;
@@ -144,7 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   /**
    * Initiates OIDC PKCE redirect to Keycloak login screen
    */
-  const loginWithKeycloak = useCallback(async (targetRole?: KeycloakAppRole) => {
+  const loginWithKeycloak = useCallback(async (targetRole?: KeycloakAppRole, returnUrl?: string) => {
     if (typeof window === "undefined") return;
 
     const redirectUri = `${window.location.origin}/auth/callback`;
@@ -154,6 +154,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.setItem(PKCE_VERIFIER_KEY, verifier);
     if (targetRole) {
       sessionStorage.setItem(TARGET_ROLE_KEY, targetRole);
+    }
+    if (returnUrl) {
+      sessionStorage.setItem("waypoint_return_url", returnUrl);
     }
 
     window.location.href = url;

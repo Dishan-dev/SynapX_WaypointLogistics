@@ -1,4 +1,5 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from app.api import deps
 from app.api.v1.endpoints import health, auth, orders, inventory, dispatch, tracking, fleet, allocations, driver
 from app.api.v1.endpoints import store_orders, notifications, calendar, loader, outlets, operation_exceptions, admin, issues
 from app.api.v1.endpoints import catalogue, store, store_stock
@@ -27,4 +28,9 @@ api_router.include_router(store_stock.router, prefix="/outlets", tags=["Store St
 api_router.include_router(issues.router, prefix="/issues", tags=["Delivery Issues & Exceptions"])
 api_router.include_router(operation_exceptions.router, prefix="/operations", tags=["Operations"])
 api_router.include_router(receipts_router, tags=["Receipts"])
-api_router.include_router(admin.router, prefix="/admin", tags=["Admin"])
+api_router.include_router(
+    admin.router,
+    prefix="/admin",
+    tags=["Admin"],
+    dependencies=[Depends(deps.require_admin)],
+)
