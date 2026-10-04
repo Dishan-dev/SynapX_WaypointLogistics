@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACCESS_TOKEN_COOKIE } from "@/lib/auth";
+import { getKeycloakConfig } from "@/lib/keycloak";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const refreshToken = body.refresh_token;
 
-    const keycloakUrl = (process.env.NEXT_PUBLIC_KEYCLOAK_URL || "https://auth.tenderease.me").replace(/\/$/, "");
-    const realm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "waypointlogistics";
-    const clientId = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || "waypoint-frontend";
+    const { clientId, logoutEndpoint } = getKeycloakConfig();
 
     // Attempt backchannel revocation in Keycloak if refresh token is present
     if (refreshToken) {
       try {
-        await fetch(`${keycloakUrl}/realms/${realm}/protocol/openid-connect/logout`, {
+        await fetch(logoutEndpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",

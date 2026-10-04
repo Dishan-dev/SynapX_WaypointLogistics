@@ -5,23 +5,20 @@ import {
   subscribe, flush, enqueue, enqueueWithPhoto, dequeue, dismissFailed,
   initSyncQueue, PendingAction, QueueState
 } from "./syncQueue";
+import { apiBaseUrls } from "./api-urls";
 
 // ─── Active connectivity probe ────────────────────────────────────────────────
 // navigator.onLine is unreliable — it only checks if a network interface is UP,
 // not if the backend is actually reachable (e.g. WiFi disconnected but loopback
 // is still active). We probe the health endpoint every PROBE_INTERVAL ms.
 
-const PROBE_URLS = [
-  process.env.NEXT_PUBLIC_API_URL,
-  "http://localhost:8000",
-  "http://localhost:5000",
-].filter(Boolean) as string[];
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL;
 
 const PROBE_INTERVAL = 5000;  // check every 5 s
 const PROBE_TIMEOUT  = 3000;  // give up after 3 s
 
 async function probeConnectivity(): Promise<boolean> {
-  for (const base of PROBE_URLS) {
+  for (const base of apiBaseUrls(configuredApiUrl)) {
     try {
       const res = await fetch(`${base}/api/v1/health`, {
         signal: AbortSignal.timeout(PROBE_TIMEOUT),
@@ -75,7 +72,7 @@ export function useSyncQueue() {
     const unsubscribe = subscribe(sync);
 
     // ── Initial probe (don't wait for the interval) ─────────────────────────
-    checkOnline();
+    queueMicrotask(() => void checkOnline());
 
     // ── Recurring probe ─────────────────────────────────────────────────────
     intervalRef.current = setInterval(checkOnline, PROBE_INTERVAL);
