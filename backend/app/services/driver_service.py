@@ -17,6 +17,7 @@ from app.models.allocation import AllocationStatus
 from app.models.fleet import DriverProfile, VehicleStatus
 from app.models.order import Order, OrderStatus
 from app.models.shipment import DispatchTrip
+from app.email.service import queue_driver_issue, queue_sos
 from app.models.user import User
 from app.schemas.driver import DeliveryStopRead, normalise_phone
 from app.schemas.loader import GateOutRequest
@@ -583,6 +584,8 @@ def report_issue(db: Session, trip_id: int, issue_data: dict, driver_id: int) ->
         photo_url=issue_data.get("photo_url")
     )
     db.add(issue)
+    db.flush()
+    queue_driver_issue(db, issue)
     db.commit()
     db.refresh(issue)
     return issue
@@ -608,6 +611,8 @@ def trigger_sos(db: Session, driver_id: int, sos_data: dict, at: Optional[dateti
         triggered_at=_tap_time(at),  # an SOS sent from the offline queue keeps when it was pressed
     )
     db.add(alert)
+    db.flush()
+    queue_sos(db, alert)
     db.commit()
     db.refresh(alert)
     return alert
