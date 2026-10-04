@@ -182,7 +182,7 @@ export default function SOSPage() {
 
         {/* Emergency Type Section */}
         <div className="flex flex-col gap-2">
-          <span className="font-bold text-[14px]" style={{ color: "#171A1F" }}>What's happening?</span>
+          <span className="font-bold text-[14px]" style={{ color: "#171A1F" }}>What&apos;s happening?</span>
           
           <div className="grid grid-cols-2 gap-2">
             {emergencyTypes.map((type, idx) => {
