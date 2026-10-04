@@ -29,6 +29,7 @@ interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isLoggingOut: boolean;
   loginWithKeycloak: (targetRole?: KeycloakAppRole, returnUrl?: string) => Promise<void>;
   logout: (ssoLogout?: boolean) => Promise<void>;
   hasRole: (role: KeycloakAppRole) => boolean;
@@ -43,6 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setTokenState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
 
   // Initialize session on mount
   useEffect(() => {
@@ -166,11 +168,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * Signs out the user locally and triggers Keycloak SSO logout
    */
   const logout = useCallback(async (ssoLogout = true) => {
+    setIsLoggingOut(true);
     const idToken = getIdToken() || undefined;
+    const refreshToken = getRefreshToken() || undefined;
+
+    // 1. Call server logout endpoint to revoke session in Keycloak & delete auth cookies
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+    } catch {
+      // Proceed with client cleanup regardless of server fetch error
+    }
+
+    // 2. Clear all local storage & browser cookies
     clearAuthSession();
     setUser(null);
     setTokenState(null);
 
+    // 3. Initiate Keycloak SSO logout redirect
     if (ssoLogout && typeof window !== "undefined") {
       const redirectUri = window.location.origin;
       window.location.href = buildLogoutUrl(redirectUri, idToken);
@@ -202,6 +220,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     token,
     isAuthenticated: !!user && !!token,
     isLoading,
+    isLoggingOut,
     loginWithKeycloak,
     logout,
     hasRole,

@@ -58,7 +58,7 @@ const navItems: Array<{
 ];
 
 export function AdminSidebar({ currentTab, onTabChange, systemStatus }: AdminSidebarProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, isLoggingOut } = useAuth();
 
   return (
     <aside className="w-64 bg-[#092C4C] text-white flex flex-col shrink-0 border-r border-[#18385F]/50 shadow-md">
@@ -116,28 +116,34 @@ export function AdminSidebar({ currentTab, onTabChange, systemStatus }: AdminSid
       </div>
 
       {/* Footer, User Account & Back Link */}
-      <div className="p-3 border-t border-white/10 bg-[#07223b] space-y-2">
+      <div className="p-3 border-t border-white/10 bg-[#07223b] space-y-2.5">
         {/* Current Authenticated Admin Identity */}
-        {user && (
-          <div className="p-2 rounded-lg bg-white/5 border border-white/10 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="size-7 rounded-full bg-purple-500/20 border border-purple-400/30 flex items-center justify-center text-purple-200 text-xs font-bold shrink-0">
-                {user.name ? user.name[0].toUpperCase() : "A"}
+        <div className="p-2.5 rounded-lg bg-white/5 border border-white/10 space-y-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="size-8 rounded-full bg-purple-500/20 border border-purple-400/40 flex items-center justify-center text-purple-200 text-xs font-bold shrink-0">
+              {user?.name ? user.name[0].toUpperCase() : "A"}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-semibold text-white truncate">
+                {user?.name || user?.username || "Administrator"}
               </div>
-              <div className="min-w-0">
-                <div className="text-xs font-semibold text-white truncate">{user.name || user.username}</div>
-                <div className="text-[10px] text-white/50 truncate font-mono">{user.email}</div>
+              <div className="text-[10px] text-white/50 truncate font-mono">
+                {user?.email || "admin@waypointlogistics.lk"}
               </div>
             </div>
-            <button
-              onClick={() => logout(true)}
-              title="Sign Out of Keycloak SSO"
-              className="p-1 rounded text-white/50 hover:text-red-300 hover:bg-white/10 transition-colors shrink-0"
-            >
-              <LogOut className="size-3.5" />
-            </button>
           </div>
-        )}
+
+          <button
+            type="button"
+            onClick={() => void logout(true)}
+            disabled={isLoggingOut}
+            title="Sign out of Keycloak SSO session"
+            className="w-full py-1.5 px-2 rounded-md bg-white/5 hover:bg-red-500/20 hover:border-red-400/40 border border-white/10 text-white/80 hover:text-red-200 transition-colors flex items-center justify-center gap-2 text-xs font-medium cursor-pointer disabled:opacity-50"
+          >
+            <LogOut className="size-3.5 text-red-400" />
+            <span>{isLoggingOut ? "Signing out..." : "Sign Out"}</span>
+          </button>
+        </div>
 
         <div className="px-2 py-1.5 rounded bg-white/5 border border-white/10 flex items-center justify-between text-[11px]">
           <span className="flex items-center gap-1.5 text-white/70">

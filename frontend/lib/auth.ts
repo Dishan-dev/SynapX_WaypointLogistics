@@ -31,7 +31,11 @@ export function setAuthCookie(accessToken: string): void {
 
 function clearAuthCookie(): void {
   if (typeof document === "undefined") return;
-  document.cookie = `${ACCESS_TOKEN_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+  document.cookie = `${ACCESS_TOKEN_COOKIE}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; SameSite=Lax`;
+  document.cookie = `${ACCESS_TOKEN_COOKIE}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0`;
+  if (typeof window !== "undefined" && window.location.hostname) {
+    document.cookie = `${ACCESS_TOKEN_COOKIE}=; Path=/; Domain=${window.location.hostname}; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0`;
+  }
 }
 
 export function getAccessToken(): string | null {

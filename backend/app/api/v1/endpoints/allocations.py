@@ -11,6 +11,9 @@ from app.models.reference import Depot
 from app.schemas.allocation import AllocationCreate, AllocationResponse, AllocationUpdate
 from app.schemas.allocation_recommendation import ConfirmAllocationRequest
 from app.services.allocation_confirmation import allocation_confirmation_service
+from app.schemas.loader import DispatcherPlanRequest
+from app.models.shipment import DispatchTrip
+from app.models.order import OrderStatus
 
 router = APIRouter()
 
@@ -182,6 +185,97 @@ def update_allocation(
     db.commit()
     db.refresh(allocation)
     return allocation
+
+@router.post("/{allocation_id}/adjust", response_model=AllocationResponse)
+def adjust_allocation(
+    allocation_id: int,
+    payload: DispatcherPlanRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_dispatcher_or_admin),
+    depot: Depot = Depends(get_dispatcher_depot),
+) -> Any:
+    """Adjust orders on an allocation. Routes to loader if LOADING, otherwise directly modifies."""
+    target = db.query(Allocation.vehicle_id).join(Allocation.vehicle).filter(
+        Allocation.id == allocation_id, Vehicle.depot_name == depot.value
+    ).first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="Allocation not found")
+        
+    allocation = db.query(Allocation).filter(Allocation.id == allocation_id).with_for_update().populate_existing().first()
+    if allocation is None:
+        raise HTTPException(status_code=404, detail="Allocation not found")
+
+    if allocation.status == AllocationStatus.LOADING:
+        trip = db.query(DispatchTrip).filter(DispatchTrip.allocation_id == allocation.id, DispatchTrip.status != "completed").first()
+        if trip:
+            from app.services.loader_service import loader_service
+            loader_run = loader_service.run_for_dispatch_trip(db, trip.id)
+            if loader_run:
+                loader_service.publish_dispatcher_plan(db, loader_run, payload)
+                db.commit()
+                db.refresh(allocation)
+                return _with_allocation_orders(db, allocation)
+        raise HTTPException(status_code=400, detail="Cannot adjust loading run without active trip")
+
+    if allocation.status not in [AllocationStatus.DRAFT, AllocationStatus.ALLOCATED, AllocationStatus.READY]:
+        raise HTTPException(status_code=400, detail=f"Cannot adjust allocation in {allocation.status} state")
+
+    for ref in payload.remove:
+        order = db.query(Order).filter(Order.order_number == ref.order_number, Order.depot == depot).first()
+        if order and order.allocation_id == allocation.id:
+            order.allocation_id = None
+            if order.status == OrderStatus.ALLOCATED:
+                order.status = OrderStatus.SUBMITTED
+    
+    for ref in payload.add:
+        order = db.query(Order).filter(Order.order_number == ref.order_number, Order.depot == depot).first()
+        if order and order.allocation_id is None:
+            order.allocation_id = allocation.id
+            if order.status in [OrderStatus.SUBMITTED, OrderStatus.CONFIRMED]:
+                order.status = OrderStatus.ALLOCATED
+
+    for defer in payload.defer:
+        order = db.query(Order).filter(Order.order_number == defer.order_number, Order.depot == depot).first()
+        if order and order.allocation_id == allocation.id:
+            if defer.quantity_sent == 0:
+                order.allocation_id = None
+                order.status = OrderStatus.SUBMITTED
+
+    db.flush()
+    current_orders = db.query(Order).filter(Order.allocation_id == allocation.id).all()
+    
+    vehicle = db.query(Vehicle).filter(Vehicle.id == allocation.vehicle_id).first()
+    if vehicle:
+        total_weight = sum(o.weight_kg for o in current_orders)
+        if vehicle.max_weight_kg > 0:
+            allocation.load_percentage = round((total_weight / vehicle.max_weight_kg) * 100, 2)
+            
+    # Recalculate route plan since orders changed
+    from app.services.route_planning import route_planning_service
+    from datetime import datetime, timezone
+    departure_time = allocation.departure_time or datetime.now(timezone.utc)
+    if not departure_time.tzinfo:
+        departure_time = departure_time.replace(tzinfo=timezone.utc)
+        
+    route = route_planning_service.plan(db, current_orders, depot, departure_time, vehicle)
+    allocation.planned_stop_codes = route.ordered_outlet_codes
+    allocation.route_plan = route.as_dict()
+            
+    db.commit()
+    db.refresh(allocation)
+    return _with_allocation_orders(db, allocation)
+
+def _with_allocation_orders(db: Session, allocation: Allocation):
+    return (
+        db.query(Allocation)
+        .options(
+            joinedload(Allocation.vehicle),
+            joinedload(Allocation.driver).joinedload(DriverProfile.user),
+            joinedload(Allocation.orders)
+        )
+        .filter(Allocation.id == allocation.id)
+        .first()
+    )
 
 @router.delete("/{allocation_id}")
 def delete_allocation(

@@ -33,3 +33,9 @@ class User(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+
+    @property
+    def assigned_depot(self):
+        if self.depot_dispatcher_assignment and self.depot_dispatcher_assignment.depot:
+            return self.depot_dispatcher_assignment.depot.value
+        return None
