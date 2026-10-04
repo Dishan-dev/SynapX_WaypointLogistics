@@ -176,6 +176,20 @@ def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+
+    # Link store manager assignment from token claims if present
+    if user.role in STORE_ROLES and payload:
+        claim_outlet = payload.get("outlet_id") or payload.get("outlet")
+        if claim_outlet:
+            try:
+                oid = int(claim_outlet)
+                assignment = db.query(StoreManagerAssignment).filter(StoreManagerAssignment.user_id == user.id).first()
+                if not assignment:
+                    db.add(StoreManagerAssignment(user_id=user.id, outlet_id=oid))
+                    db.commit()
+            except Exception:
+                db.rollback()
+
     return user
 
 

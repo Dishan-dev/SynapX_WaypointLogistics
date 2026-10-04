@@ -34,15 +34,20 @@ import {
   deleteStoreIssue,
   StoreIssue,
 } from "@/services/issues-store";
+import { getStoreOrder, getStoreOrders } from "@/components/store/api/store-data";
+import type { StoreOrder } from "@/components/store/mock-data";
 
-import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useRef } from "react";
+import { toast } from "sonner";
 
 function ExceptionsAndIssuesContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialOrderParam = searchParams.get("order") || "";
   const initialSearchParam = searchParams.get("search") || "";
   const autoOpenReport = searchParams.get("report") === "true" || !!initialOrderParam;
+  const didInitialOpen = useRef(false);
 
   const [issues, setIssues] = useState<StoreIssue[]>([]);
   const [selectedTab, setSelectedTab] = useState<"all" | "open" | "under_review" | "resolved">("all");
@@ -51,15 +56,21 @@ function ExceptionsAndIssuesContent() {
   const [dateFilter, setDateFilter] = useState("30");
   const [selectedIssue, setSelectedIssue] = useState<StoreIssue | null>(null);
 
+  // Orders for lookup & item autofill
+  const [storeOrders, setStoreOrders] = useState<StoreOrder[]>([]);
+  const [selectedOrderObj, setSelectedOrderObj] = useState<StoreOrder | null>(null);
+  const [itemSelectMode, setItemSelectMode] = useState<string>("whole_order");
+  const [orderSearchStatus, setOrderSearchStatus] = useState<"idle" | "loading" | "found" | "not_found">("idle");
+
   // Report & Edit Modal State
-  const [showCreateModal, setShowCreateModal] = useState(autoOpenReport);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingIssue, setEditingIssue] = useState<StoreIssue | null>(null);
   const [newOrderId, setNewOrderId] = useState(initialOrderParam || "");
   const [newItemName, setNewItemName] = useState("");
   const [newItemSku, setNewItemSku] = useState("");
   const [newType, setNewType] = useState<"Damaged Goods" | "Missing Items" | "Quantity Mismatch" | "Temperature Breach">("Damaged Goods");
-  const [newExpected, setNewExpected] = useState(10);
-  const [newReceived, setNewReceived] = useState(8);
+  const [newExpected, setNewExpected] = useState(1);
+  const [newReceived, setNewReceived] = useState(1);
   const [newDescription, setNewDescription] = useState("");
   const [newPhoto, setNewPhoto] = useState<{ name: string; url: string; size: string } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -81,16 +92,22 @@ function ExceptionsAndIssuesContent() {
     }
   };
 
+  const loadOrders = async () => {
+    try {
+      const orders = await getStoreOrders();
+      setStoreOrders(orders);
+    } catch {
+      // Non-blocking: manual input still works if orders list fails
+    }
+  };
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- loads once on mount
     void loadIssues();
+    void loadOrders();
   }, []);
 
   useEffect(() => {
-    if (initialOrderParam) {
-      setNewOrderId(initialOrderParam);
-      setShowCreateModal(true);
-    }
     if (initialSearchParam) {
       setSearchQuery(initialSearchParam);
       const found = issues.find(
@@ -102,7 +119,14 @@ function ExceptionsAndIssuesContent() {
         setSelectedIssue(found);
       }
     }
-  }, [initialOrderParam, initialSearchParam, issues]);
+  }, [initialSearchParam, issues]);
+
+  useEffect(() => {
+    if ((initialOrderParam || autoOpenReport) && !didInitialOpen.current) {
+      didInitialOpen.current = true;
+      void openCreateModal(initialOrderParam);
+    }
+  }, [initialOrderParam, autoOpenReport]);
 
   const openCount = issues.filter((i) => i.status === "open").length;
   const underReviewCount = issues.filter((i) => i.status === "under_review").length;
@@ -146,40 +170,111 @@ function ExceptionsAndIssuesContent() {
   const totalPages = Math.ceil(filteredIssues.length / pageSize) || 1;
   const paginatedIssues = filteredIssues.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const url = await shrinkPhoto(file);
-      setNewPhoto({
-        name: file.name,
-        url,
-        size: `${Math.max(1, Math.round((url.length * 3) / 4 / 1024))} KB • Captured today`,
-      });
-    } catch {
-      setSaveError("That photo couldn't be read. Try a JPG or PNG.");
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setNewPhoto({
+          name: file.name,
+          url: reader.result as string,
+          size: `${(file.size / (1024 * 1024)).toFixed(1)} MB • Captured today`,
+        });
+      };
+      reader.readAsDataURL(file);
     }
   };
 
-  const openCreateModal = () => {
+  const resolveOrder = async (orderId: string, orderList = storeOrders): Promise<StoreOrder | null> => {
+    const trimmed = orderId.trim();
+    if (!trimmed) {
+      setSelectedOrderObj(null);
+      setOrderSearchStatus("idle");
+      return null;
+    }
+    const match = orderList.find((o) => o.orderNumber.toLowerCase() === trimmed.toLowerCase());
+    if (match) {
+      setSelectedOrderObj(match);
+      setOrderSearchStatus("found");
+      return match;
+    }
+    setOrderSearchStatus("loading");
+    try {
+      const liveOrder = await getStoreOrder(trimmed);
+      if (liveOrder) {
+        setSelectedOrderObj(liveOrder);
+        setOrderSearchStatus("found");
+        return liveOrder;
+      }
+      setSelectedOrderObj(null);
+      setOrderSearchStatus("not_found");
+    } catch {
+      setSelectedOrderObj(null);
+      setOrderSearchStatus("not_found");
+    }
+    return null;
+  };
+
+  const handleItemSelect = (itemKey: string, order: StoreOrder | null = selectedOrderObj) => {
+    setItemSelectMode(itemKey);
+    if (itemKey === "whole_order") {
+      setNewItemName("Whole delivery");
+      setNewItemSku("");
+      const totalUnits = order?.items.reduce((sum, it) => sum + (it.quantitySent ?? it.quantity), 0) || 1;
+      setNewExpected(totalUnits);
+      setNewReceived(totalUnits);
+    } else if (itemKey === "custom") {
+      setNewItemName("");
+      setNewItemSku("");
+      setNewExpected(1);
+      setNewReceived(0);
+    } else {
+      const foundItem = order?.items.find((it) => it.sku === itemKey);
+      if (foundItem) {
+        setNewItemName(foundItem.itemName);
+        setNewItemSku(foundItem.sku);
+        const exp = foundItem.quantitySent ?? foundItem.quantity;
+        setNewExpected(exp);
+        setNewReceived(exp);
+      }
+    }
+  };
+
+  const handleOrderIdChange = async (val: string) => {
+    setNewOrderId(val);
+    const order = await resolveOrder(val);
+    if (order && order.items.length > 0) {
+      handleItemSelect(order.items[0].sku, order);
+    } else if (order) {
+      handleItemSelect("whole_order", order);
+    }
+  };
+
+  const openCreateModal = async (overrideOrder?: string) => {
     setEditingIssue(null);
-    setNewOrderId(initialOrderParam || "");
-    setNewItemName("");
-    setNewItemSku("");
+    const targetOrder = (typeof overrideOrder === "string" ? overrideOrder : "") || initialOrderParam || (storeOrders[0]?.orderNumber ?? "");
+    setNewOrderId(targetOrder);
     setNewType("Damaged Goods");
-    setNewExpected(0);
-    setNewReceived(0);
     setNewDescription("");
     setNewPhoto(null);
     setSaveError(null);
     setShowCreateModal(true);
+
+    if (targetOrder) {
+      const order = await resolveOrder(targetOrder);
+      if (order && order.items.length > 0) {
+        handleItemSelect(order.items[0].sku, order);
+      } else {
+        handleItemSelect("whole_order", order);
+      }
+    } else {
+      handleItemSelect("custom");
+    }
   };
 
-  const openEditModal = (issue: StoreIssue) => {
+  const openEditModal = async (issue: StoreIssue) => {
     setEditingIssue(issue);
     setNewOrderId(issue.orderId);
-    setNewItemName(issue.affectedItem === "Whole delivery" || issue.affectedItem === "Consignment Item" ? "" : issue.affectedItem);
-    setNewItemSku(issue.sku);
     setNewType((issue.type as any) || "Damaged Goods");
     setNewExpected(issue.expectedUnits);
     setNewReceived(issue.receivedUnits);
@@ -195,6 +290,21 @@ function ExceptionsAndIssuesContent() {
     );
     setSaveError(null);
     setShowCreateModal(true);
+
+    const order = await resolveOrder(issue.orderId);
+    if (issue.sku && order?.items.some((i) => i.sku === issue.sku)) {
+      setItemSelectMode(issue.sku);
+      setNewItemName(issue.affectedItem);
+      setNewItemSku(issue.sku);
+    } else if (!issue.sku || issue.affectedItem === "Whole delivery") {
+      setItemSelectMode("whole_order");
+      setNewItemName(issue.affectedItem);
+      setNewItemSku("");
+    } else {
+      setItemSelectMode("custom");
+      setNewItemName(issue.affectedItem);
+      setNewItemSku(issue.sku);
+    }
   };
 
   const promptCancelIssue = (issue: StoreIssue) => {
@@ -220,20 +330,42 @@ function ExceptionsAndIssuesContent() {
 
   const handleSaveIssue = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newDescription.trim()) return;
+    if (!newOrderId.trim()) {
+      setSaveError("Please enter or select a valid Order ID.");
+      return;
+    }
+    if (orderSearchStatus === "not_found") {
+      setSaveError(`Order ${newOrderId} was not found in your outlet.`);
+      return;
+    }
+    if (newExpected < 1) {
+      setSaveError("Expected units must be at least 1.");
+      return;
+    }
+    if (newReceived < 0) {
+      setSaveError("Received units cannot be negative.");
+      return;
+    }
+    if (!newDescription.trim()) {
+      setSaveError("Please enter defect or discrepancy details.");
+      return;
+    }
 
     setIsSaving(true);
     setSaveError(null);
     try {
+      const finalItemName = newItemName.trim() || (itemSelectMode === "whole_order" ? "Whole delivery" : "Consignment Item");
+      const finalSku = newItemSku.trim() || (itemSelectMode === "whole_order" ? "" : "SKU-GEN");
+
       if (editingIssue) {
         const updated = await updateStoreIssue(editingIssue.id, {
           type: newType,
-          title: `${newType}: ${newItemName || "Order Discrepancy"}`,
-          affectedItem: newItemName,
-          sku: newItemSku,
+          title: `${newType}: ${finalItemName}`,
+          affectedItem: finalItemName,
+          sku: finalSku,
           expectedUnits: newExpected,
           receivedUnits: newReceived,
-          description: newDescription,
+          description: newDescription.trim(),
           photoUrl: newPhoto?.url || "",
           photoName: newPhoto?.name || "",
           photoSize: newPhoto?.size || "",
@@ -242,14 +374,14 @@ function ExceptionsAndIssuesContent() {
         setSelectedIssue(updated);
       } else {
         const created = await createStoreIssue({
-          orderId: newOrderId,
+          orderId: newOrderId.trim(),
           type: newType,
-          title: `${newType}: ${newItemName || "Order Discrepancy"}`,
-          affectedItem: newItemName,
-          sku: newItemSku,
+          title: `${newType}: ${finalItemName}`,
+          affectedItem: finalItemName,
+          sku: finalSku,
           expectedUnits: newExpected,
           receivedUnits: newReceived,
-          description: newDescription,
+          description: newDescription.trim(),
           photoUrl: newPhoto?.url,
           photoName: newPhoto?.name,
           photoSize: newPhoto?.size,
@@ -261,6 +393,12 @@ function ExceptionsAndIssuesContent() {
       setEditingIssue(null);
       setNewDescription("");
       setNewPhoto(null);
+      router.replace("/store/issues", { scroll: false });
+      toast.success(editingIssue ? "Issue updated successfully" : "Issue reported successfully", {
+        description: editingIssue
+          ? `Changes saved for ${editingIssue.id}`
+          : `Discrepancy logged for ${newOrderId.trim()}`,
+      });
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Couldn't save the issue. Try again.");
     } finally {
@@ -312,7 +450,7 @@ function ExceptionsAndIssuesContent() {
 
         <Button
           type="button"
-          onClick={openCreateModal}
+          onClick={() => void openCreateModal()}
           className="bg-primary text-primary-foreground font-bold hover:bg-primary/90 gap-1.5 shadow-xs"
         >
           <Plus className="size-4" />
@@ -358,16 +496,16 @@ function ExceptionsAndIssuesContent() {
       <div className="bg-card border border-border rounded-xl shadow-xs overflow-hidden">
         {/* Tabs Row (Figma 16:834) */}
         <div className="flex items-center border-b border-border/80 px-4 pt-3 gap-1 overflow-x-auto">
-          {([
+          {[
             { key: "all", label: `All (${totalCount})` },
             { key: "open", label: `Open (${openCount})` },
             { key: "under_review", label: `Under Review (${underReviewCount})` },
             { key: "resolved", label: `Resolved (${resolvedCount})` },
-          ] as const).map((tab) => (
+          ].map((tab) => (
             <button
               key={tab.key}
               type="button"
-              onClick={() => setSelectedTab(tab.key)}
+              onClick={() => setSelectedTab(tab.key as any)}
               className={`px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
                 selectedTab === tab.key
                   ? "border-primary text-primary font-bold"
@@ -709,7 +847,7 @@ function ExceptionsAndIssuesContent() {
             {/* Panel Footer (Figma 16:1010) */}
             <div className="p-4 border-t border-border bg-card/95 flex items-center justify-between gap-2 sticky bottom-0">
               <div className="flex items-center gap-2">
-                {selectedIssue.status === "open" && (
+                {(selectedIssue.status === "open" || selectedIssue.status === "under_review") && (
                   <>
                     <Button
                       type="button"
@@ -771,6 +909,7 @@ function ExceptionsAndIssuesContent() {
                 onClick={() => {
                   setShowCreateModal(false);
                   setEditingIssue(null);
+                  router.replace("/store/issues", { scroll: false });
                 }}
                 className="p-1 rounded-md text-muted-foreground hover:bg-muted"
               >
@@ -779,23 +918,50 @@ function ExceptionsAndIssuesContent() {
             </div>
 
             <form onSubmit={handleSaveIssue} className="space-y-4 text-xs">
+              {/* Order ID & Classification */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="font-bold text-muted-foreground">Order ID *</label>
-                  <Input
-                    required
-                    disabled={!!editingIssue}
-                    value={newOrderId}
-                    onChange={(e) => setNewOrderId(e.target.value)}
-                    placeholder="e.g. ORD0000001"
-                    className="text-xs h-9"
-                  />
+                  <label className="font-bold text-muted-foreground">Order Number *</label>
+                  {editingIssue ? (
+                    <Input
+                      disabled
+                      value={newOrderId}
+                      className="text-xs h-9 bg-muted/40 font-mono font-medium"
+                    />
+                  ) : (
+                    <div className="space-y-1">
+                      <Input
+                        required
+                        list="store-orders-list"
+                        value={newOrderId}
+                        onChange={(e) => void handleOrderIdChange(e.target.value)}
+                        placeholder="e.g. ORD0000001"
+                        className={`text-xs h-9 font-mono ${orderSearchStatus === "not_found" ? "border-destructive text-destructive" : ""}`}
+                      />
+                      <datalist id="store-orders-list">
+                        {storeOrders.map((o) => (
+                          <option key={o.orderNumber} value={o.orderNumber}>
+                            {o.orderNumber} ({o.items.length} items · {o.status.toUpperCase()})
+                          </option>
+                        ))}
+                      </datalist>
+                    </div>
+                  )}
+                  {orderSearchStatus === "found" && selectedOrderObj && (
+                    <p className="text-[10px] font-medium text-success flex items-center gap-1">
+                      <span>✓</span>
+                      <span>Verified ({selectedOrderObj.items.length} items on manifest)</span>
+                    </p>
+                  )}
+                  {orderSearchStatus === "not_found" && (
+                    <p className="text-[10px] font-medium text-destructive">Order not found in your outlet</p>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <label className="font-bold text-muted-foreground">Issue Classification *</label>
                   <select
                     value={newType}
-                    onChange={(e) => setNewType(e.target.value as typeof newType)}
+                    onChange={(e) => setNewType(e.target.value as any)}
                     className="w-full text-xs p-2 rounded-lg border border-border bg-background focus:outline-none h-9"
                   >
                     <option value="Damaged Goods">Damaged Goods</option>
@@ -806,11 +972,42 @@ function ExceptionsAndIssuesContent() {
                 </div>
               </div>
 
+              {/* Affected Item Selection (Autofills Item Name & SKU) */}
+              <div className="space-y-1">
+                <label className="font-bold text-muted-foreground flex items-center justify-between">
+                  <span>Select Affected Item *</span>
+                  {selectedOrderObj && (
+                    <span className="text-[10px] text-muted-foreground">
+                      Autofills SKU &amp; units
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={itemSelectMode}
+                  onChange={(e) => handleItemSelect(e.target.value)}
+                  className="w-full text-xs p-2 rounded-lg border border-border bg-background focus:outline-none h-9"
+                >
+                  <option value="whole_order">Whole Delivery / Consignment (All Items)</option>
+                  {selectedOrderObj?.items && selectedOrderObj.items.length > 0 && (
+                    <optgroup label="Order Items">
+                      {selectedOrderObj.items.map((it) => (
+                        <option key={it.sku} value={it.sku}>
+                          {it.itemName} ({it.sku}) — {it.quantitySent ?? it.quantity} units
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <option value="custom">Other / Unlisted Item (Manual Entry)</option>
+                </select>
+              </div>
+
+              {/* Item Details: Name & SKU */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="font-bold text-muted-foreground">Affected Item Name</label>
+                  <label className="font-bold text-muted-foreground">Item Name</label>
                   <Input
                     value={newItemName}
+                    disabled={itemSelectMode !== "custom" && itemSelectMode !== "whole_order"}
                     onChange={(e) => setNewItemName(e.target.value)}
                     placeholder="e.g. Fresh Whole Milk 1L"
                     className="text-xs h-9"
@@ -820,29 +1017,40 @@ function ExceptionsAndIssuesContent() {
                   <label className="font-bold text-muted-foreground">Item SKU</label>
                   <Input
                     value={newItemSku}
+                    disabled={itemSelectMode !== "custom"}
                     onChange={(e) => setNewItemSku(e.target.value)}
-                    placeholder="e.g. SKU-99201"
-                    className="text-xs h-9"
+                    placeholder={itemSelectMode === "whole_order" ? "N/A (Whole Order)" : "e.g. SKU-001"}
+                    className="text-xs h-9 font-mono"
                   />
                 </div>
               </div>
 
+              {/* Expected and Received Units */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="font-bold text-muted-foreground">Expected Units</label>
+                  <label className="font-bold text-muted-foreground">Expected Units *</label>
                   <Input
                     type="number"
                     min="1"
+                    required
                     value={newExpected}
                     onChange={(e) => setNewExpected(parseInt(e.target.value, 10) || 0)}
                     className="text-xs h-9"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="font-bold text-muted-foreground">Received Units</label>
+                  <label className="font-bold text-muted-foreground flex items-center justify-between">
+                    <span>Received Units *</span>
+                    {newReceived < newExpected && (
+                      <span className="text-[10px] text-warning font-semibold">
+                        {newExpected - newReceived} short
+                      </span>
+                    )}
+                  </label>
                   <Input
                     type="number"
                     min="0"
+                    required
                     value={newReceived}
                     onChange={(e) => setNewReceived(parseInt(e.target.value, 10) || 0)}
                     className="text-xs h-9"
@@ -979,31 +1187,6 @@ function ExceptionsAndIssuesContent() {
       )}
     </div>
   );
-}
-
-/**
- * Photos are stored with the issue until shared file storage exists, so keep them small: at most 1280px on the
- * longest side, as a JPEG data URL (usually 100–300 KB).
- */
-function shrinkPhoto(file: File, maxSide = 1280): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => {
-      const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(image.width * scale);
-      canvas.height = Math.round(image.height * scale);
-      canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL("image/jpeg", 0.75));
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Not an image"));
-    };
-    image.src = url;
-  });
 }
 
 export default function ExceptionsAndIssuesPage() {

@@ -18,13 +18,15 @@ receipt_service = ReceiptService()
 
 def _scoped(db: Session, user: User, payload: ReceiptCreateRequest) -> ReceiptCreateRequest:
     """A store manager confirms receipts for their own outlet's orders only."""
-    if user.role not in deps.STORE_ROLES:
-        return payload
-    outlet = deps.resolve_store_outlet(db, user, None)
     order = db.query(Order).filter(Order.id == payload.order_id).first()
-    if order is None or order.outlet_id != outlet.id:
-        raise HTTPException(status_code=403, detail="That order belongs to another outlet.")
-    return payload.model_copy(update={"outlet_id": outlet.id})
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if user.role in deps.STORE_ROLES:
+        outlet = deps.resolve_store_outlet(db, user, None)
+        if order.outlet_id != outlet.id:
+            raise HTTPException(status_code=403, detail="That order belongs to another outlet.")
+        return payload.model_copy(update={"outlet_id": outlet.id})
+    return payload.model_copy(update={"outlet_id": order.outlet_id})
 
 
 def _reporter(user: User) -> str:
