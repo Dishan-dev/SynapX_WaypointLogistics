@@ -21,6 +21,7 @@ from app.models.delivery_run import RunOrderState, RunStatus, RunStop, RunStopOr
 from app.models.driver import DeliveryStop, DriverAvailability, DriverTrip, SOSAlert
 from app.models.allocation import AllocationStatus
 from app.models.fleet import DriverProfile, VehicleStatus
+from app.models.loader_issue import IssueStatus, IssueType
 from app.models.notification import Notification, NotificationType
 from app.models.order import OrderStatus
 from app.models.shipment import DispatchTrip
@@ -28,6 +29,8 @@ from app.models.user import User, UserRole
 from app.services.loader_service import LoaderService
 from tests.conftest_loader import (  # noqa: F401  (loader_client and trip_setup are fixtures)
     loader_client,
+    make_issue,
+    make_loader,
     make_outlet,
     make_run_order,
     make_stop,
@@ -288,6 +291,50 @@ def test_flagged_order_shows_as_not_on_the_truck(loader_client, released):
     body = loader_client.get(f"{API}/stops/{stop['id']}", headers=auth(released["driver"])).json()
 
     assert [(o["order_number"], o["on_truck"]) for o in body["orders"]] == [(FLAGGED, False)]
+    assert body["orders"][0]["units_loaded"] == 0
+
+
+def send_short(db, run, order, missing, decision="Send without it"):
+    """The loader flags the order short and the dispatcher sends what is there."""
+    row = next(r for r in run_rows(db, run) if r.order_id == order.id)
+    row.state = RunOrderState.FLAGGED
+    issue = make_issue(db, run, order, make_loader(db))
+    issue.issue_type = IssueType.SHORT
+    issue.units_affected = missing
+    issue.units_total = row.units
+    issue.status = IssueStatus.DECIDED
+    next(o for o in issue.options if o.label == decision).is_chosen = True
+    db.flush()
+
+
+def test_short_order_is_on_the_truck_and_shows_units_loaded(loader_client, released):
+    db, orders = released["db"], released["orders"]
+    send_short(db, released["run"], orders["ORD1001"], missing=3)  # 9 of 12 go out
+    trip = started_trip(loader_client, released)
+    stop = next(s for s in trip["stops"] if s["customer_name"] == "Outlet OUT026")
+
+    body = loader_client.get(f"{API}/stops/{stop['id']}", headers=auth(released["driver"])).json()
+
+    short = next(o for o in body["orders"] if o["order_number"] == "ORD1001")
+    assert (short["on_truck"], short["units"], short["units_loaded"]) == (True, 12, 9)
+    assert short["shortfall"] == {"reason": "short", "decision": "Send without it"}
+    full = next(o for o in body["orders"] if o["order_number"] == "ORD1004")
+    assert (full["units"], full["units_loaded"], full["shortfall"]) == (3, 3, None)
+
+
+def test_short_order_is_dispatched_then_delivered(loader_client, released):
+    db, orders = released["db"], released["orders"]
+    send_short(db, released["run"], orders["ORD1001"], missing=3)
+    trip = started_trip(loader_client, released)
+
+    db.refresh(orders["ORD1001"])
+    assert orders["ORD1001"].status == OrderStatus.DISPATCHED  # not left at Ready for dispatch
+
+    stop = next(s for s in trip["stops"] if s["customer_name"] == "Outlet OUT026")
+    deliver(loader_client, released["driver"], stop["id"])
+
+    db.refresh(orders["ORD1001"])
+    assert orders["ORD1001"].status == OrderStatus.DELIVERED
 
 
 def test_delivering_a_stop_tells_the_store_and_the_dispatcher(loader_client, released):

@@ -11,7 +11,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.core.exceptions import WaypointLogisticsError
-from app.models.delivery_run import DeliveryRun, RunOrderState, RunStatus, RunStop
+from app.models.delivery_run import DeliveryRun, RunOrderState, RunStatus, RunStop, RunStopOrder
+from app.models.loader_issue import LoaderIssue
 from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus, DriverAvailability
 from app.models.allocation import AllocationStatus
 from app.models.fleet import DriverProfile, VehicleStatus
@@ -116,13 +117,30 @@ def _run_stop_for(db: Session, stop: DeliveryStop) -> Tuple[Optional[DeliveryRun
     return run, run_stop
 
 
-def _orders_at(run: DeliveryRun, run_stop: RunStop, loaded_only: bool = False) -> List[Order]:
-    """Orders for this stop on the current plan; loaded_only keeps the ones on the truck."""
-    rows = [
+def _plan_rows(run: DeliveryRun, run_stop: RunStop) -> List[RunStopOrder]:
+    return [
         row for row in run_stop.orders
         if row.plan_version == run.current_plan_version and row.state not in OFF_PLAN_STATES
     ]
-    return [row.order for row in rows if not loaded_only or row.state == RunOrderState.LOADED]
+
+
+def _loaded_rows(db: Session, run: DeliveryRun, run_stop: RunStop) -> List[Tuple[RunStopOrder, int, Optional[LoaderIssue]]]:
+    """Each order of this stop with the units on the truck and the loader's latest
+    flag. The loader's own count (the hand-off, quantity_sent and the Store page use
+    it too), so an order sent short ("12 of 15") is on the truck, not left behind."""
+    issues = LoaderService._latest_issues(db, run)
+    rows = []
+    for row in _plan_rows(run, run_stop):
+        issue = issues.get(row.order_id)
+        rows.append((row, LoaderService.loaded_units(row, issue), issue))
+    return rows
+
+
+def _orders_at(db: Session, run: DeliveryRun, run_stop: RunStop, loaded_only: bool = False) -> List[Order]:
+    """Orders for this stop on the current plan; loaded_only keeps the ones on the truck."""
+    if not loaded_only:
+        return [row.order for row in _plan_rows(run, run_stop)]
+    return [row.order for row, loaded, _ in _loaded_rows(db, run, run_stop) if loaded > 0]
 
 
 def _stop_note(run_stop: RunStop) -> str:
@@ -328,7 +346,7 @@ def start_trip(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
     # Order updates commit on their own, so they go after the trip is saved.
     if run is not None:
         for run_stop in _current_run_stops(db, run):
-            for order in _orders_at(run, run_stop, loaded_only=True):
+            for order in _orders_at(db, run, run_stop, loaded_only=True):
                 _advance_order(db, order.id, OrderStatus.DISPATCHED)
     db.refresh(trip)
     return trip
@@ -407,11 +425,13 @@ def get_stop_detail(db: Session, stop_id: int, driver_id: int) -> dict:
         run, run_stop = _run_stop_for(db, stop)
         orders = []
         if run_stop is not None:
-            loaded = {order.id for order in _orders_at(run, run_stop, loaded_only=True)}
             window = _outlet_window(run_stop)
             orders = [
-                _order_info(order, on_truck=order.id in loaded, window=window)
-                for order in _orders_at(run, run_stop)
+                _order_info(
+                    row.order, on_truck=loaded > 0, window=window, units=row.units,
+                    units_loaded=loaded, shortfall=_shortfall(issue, row.units, loaded),
+                )
+                for row, loaded, issue in _loaded_rows(db, run, run_stop)
             ]
     detail["orders"] = orders
     if orders:
@@ -426,7 +446,19 @@ def _outlet_window(run_stop: RunStop) -> Optional[str]:
     return f"{outlet.window_start:%H:%M}-{outlet.window_end:%H:%M}"
 
 
-def _order_info(order: Order, on_truck: bool, window: Optional[str] = None) -> dict:
+def _shortfall(issue: Optional[LoaderIssue], units: Optional[int], loaded: int) -> Optional[dict]:
+    """Why fewer units are on the truck: the loader's flag and the dispatcher's choice."""
+    if issue is None or loaded >= (units or 0):
+        return None
+    chosen = next((option.label for option in issue.options if option.is_chosen), None)
+    return {"reason": issue.issue_type.value, "decision": chosen}
+
+
+def _order_info(
+    order: Order, on_truck: bool, window: Optional[str] = None, units: Optional[int] = None,
+    units_loaded: Optional[int] = None, shortfall: Optional[dict] = None,
+) -> dict:
+    units = units if units is not None else order.units
     # The loader's temperature class wins: temperature_zone defaults to "Ambient".
     if order.temperature_class is not None:
         temperature = order.temperature_class.value.capitalize()
@@ -437,7 +469,9 @@ def _order_info(order: Order, on_truck: bool, window: Optional[str] = None) -> d
         "brand": order.brand,
         "temperature_zone": temperature,
         "delivery_window": order.delivery_window or window,
-        "units": order.units,
+        "units": units,
+        "units_loaded": units_loaded if units_loaded is not None else (units if on_truck else 0),
+        "shortfall": shortfall,
         "weight_kg": order.weight_kg,
         "volume_m3": order.volume_m3,
         "notes": order.notes,
@@ -535,7 +569,7 @@ def submit_pod(db: Session, stop_id: int, pod_data: dict, driver_id: int) -> Pro
     # The store sees the order arrive; order updates commit on their own.
     run, run_stop = _run_stop_for(db, stop)
     if run_stop is not None:
-        for order in _orders_at(run, run_stop, loaded_only=True):
+        for order in _orders_at(db, run, run_stop, loaded_only=True):
             _advance_order(db, order.id, OrderStatus.DELIVERED)
     db.refresh(pod)
     return pod

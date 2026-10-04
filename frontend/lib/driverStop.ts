@@ -23,6 +23,10 @@ export interface StopOrderInfo {
   notes: string | null;
   /** False when the order is on the plan but the loader didn't load it. */
   on_truck?: boolean;
+  /** Units on the truck: fewer than `units` when the loader sent it short. */
+  units_loaded?: number | null;
+  /** Why fewer units went: the loader's flag and the dispatcher's choice. */
+  shortfall?: { reason: string; decision: string | null } | null;
   items: StopOrderItem[];
 }
 
