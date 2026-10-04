@@ -14,8 +14,10 @@ import {
   Store, 
   LineChart, 
   PieChart, 
-  Command
+  Command,
+  LogOut,
 } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
 import {
   Sidebar,
   SidebarContent,
@@ -44,6 +46,9 @@ const navItems = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const { user, logout } = useAuth();
+  const displayName = user?.name || user?.username || "Dispatcher";
+  const initials = displayName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
   const [userName, setUserName] = React.useState<string>("Dispatcher");
   const [userRole, setUserRole] = React.useState<string>("DISPATCHER");
   const [depot, setDepot] = React.useState<DispatcherDepot>(getDispatcherDepot());
@@ -113,6 +118,14 @@ export function AppSidebar() {
           })}
         </SidebarMenu>
       </SidebarContent>
+      <SidebarFooter className="p-4 border-t border-sidebar-border">
+        <div className="flex items-center gap-3">
+          <div className="size-8 rounded-full bg-accent flex items-center justify-center text-accent-foreground font-semibold text-xs border border-border">
+            {initials}
+          </div>
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
+            <span className="text-xs text-sidebar-foreground/70 truncate">{user?.email || "Dispatch Portal"}</span>
       <SidebarFooter className="p-3 border-t border-sidebar-border">
         {/* Dynamic User Account Footer */}
         <div className="flex items-center gap-2.5">
@@ -126,6 +139,19 @@ export function AppSidebar() {
             </span>
           </div>
         </div>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              type="button"
+              tooltip="Log out"
+              onClick={() => void logout(true)}
+              className="h-10 font-medium text-sidebar-foreground hover:text-destructive"
+            >
+              <LogOut className="size-4" aria-hidden="true" />
+              <span>Log out</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
   );

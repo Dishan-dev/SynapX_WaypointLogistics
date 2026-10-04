@@ -85,7 +85,8 @@ export default function DispatcherOutletsPage() {
   }, []);
 
   useEffect(() => {
-    void loadOutlets();
+    const initial = setTimeout(() => { void loadOutlets(); }, 0);
+    return () => clearTimeout(initial);
   }, [loadOutlets]);
 
   // Handle Export CSV
@@ -138,7 +139,8 @@ export default function DispatcherOutletsPage() {
 
   // Reset pagination on filter change
   useEffect(() => {
-    setCurrentPage(1);
+    const reset = setTimeout(() => setCurrentPage(1), 0);
+    return () => clearTimeout(reset);
   }, [searchQuery, brandFilter, depotFilter, accessFilter, pageSize]);
 
   // Paginated records

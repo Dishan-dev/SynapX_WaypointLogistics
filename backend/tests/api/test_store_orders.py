@@ -522,3 +522,27 @@ def test_store_manager_edits_and_withdraws_only_open_issues_and_cannot_resolve_t
     assert client.post(
         "/api/v1/issues", json={"issue_type": "Other", "title": "Photo", "description": "x", "photo_url": too_big}
     ).status_code == 422
+
+
+def test_assigning_and_moving_a_manager_keeps_login_and_email_links_in_step(client, outlets, db_session):
+    from app.models.outlet_settings import OutletSettings
+    from app.models.store_manager import StoreManagerAssignment
+    from app.models.user import User, UserRole
+
+    manager = User(email="sm.move@waypoint.com", full_name="Ruwan Silva", role=UserRole.STORE_MANAGER, is_active=True)
+    db_session.add(manager)
+    db_session.commit()
+    fresh, style = outlets["fresh"], outlets["style"]
+    settings_of = lambda outlet: db_session.query(OutletSettings).filter_by(outlet_id=outlet.id).first()
+
+    client.post(f"/api/v1/outlets/{fresh.id}/assign-manager", json={"user_id": manager.id})
+    db_session.expire_all()
+    assert settings_of(fresh).store_manager_user_id == manager.id
+    assert db_session.query(StoreManagerAssignment).filter_by(user_id=manager.id).one().outlet_id == fresh.id
+
+    # Moving them to the Style outlet unlinks Fresh for both login and emails.
+    client.post(f"/api/v1/outlets/{style.id}/assign-manager", json={"user_id": manager.id})
+    db_session.expire_all()
+    assert settings_of(style).store_manager_user_id == manager.id
+    assert settings_of(fresh).store_manager_user_id is None
+    assert db_session.query(StoreManagerAssignment).filter_by(user_id=manager.id).one().outlet_id == style.id
