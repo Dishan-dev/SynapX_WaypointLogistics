@@ -278,6 +278,9 @@ class IssueDetailRead(BaseModel):
     quick_note_tag: Optional[str] = None
     note: Optional[str] = None
     photo_path: Optional[str] = None
+    # Where the flag's photo can be loaded: the public R2 URL, or a
+    # /static/uploads/... path on this API when R2 is not set up.
+    photo_url: Optional[str] = None
     reported_by: str
     reported_at: UtcDateTime
     status: IssueStatus

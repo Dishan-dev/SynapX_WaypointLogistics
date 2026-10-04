@@ -48,6 +48,7 @@ from app.models.reference import (
     VehicleType,
 )
 from app.schemas import loader as schemas
+from app.services import photo_storage
 from app.services.calendar_service import calendar_service
 from app.services.order_service import order_service
 
@@ -615,6 +616,30 @@ class LoaderService:
         return issue
 
     @staticmethod
+    def attach_issue_photo(
+        db: Session, client_action_id: str, contents: bytes, content_type: str
+    ) -> LoaderIssue:
+        """Store the flag's photo and keep its address in photo_path.
+
+        The tablet uploads by the flag's client_action_id, which it knows even
+        while the flag is still queued offline: 404 until the flag has reached
+        the server, so the tablet tries again after the next sync. A photo
+        already attached is kept (a retried upload stores nothing new).
+        """
+        issue = db.execute(
+            select(LoaderIssue).filter_by(client_action_id=client_action_id)
+        ).scalars().first()
+        if issue is None:
+            raise NotFoundError(
+                f"No issue flagged under action {client_action_id} yet.",
+                entity="LoaderIssue", entity_id=client_action_id,
+            )
+        if issue.photo_path is None:
+            issue.photo_path = photo_storage.save_photo(contents, content_type, folder="loader")
+            db.flush()
+        return issue
+
+    @staticmethod
     def current_stops(db: Session, run: DeliveryRun) -> List[RunStop]:
         """Stops for the run's current plan version, in LOADING order.
 
@@ -983,6 +1008,7 @@ class LoaderService:
             quick_note_tag=issue.quick_note_tag,
             note=issue.note,
             photo_path=issue.photo_path,
+            photo_url=issue.photo_path,
             reported_by=issue.reported_by.short_name,
             reported_at=issue.reported_at,
             status=issue.status,
