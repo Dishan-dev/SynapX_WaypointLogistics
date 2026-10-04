@@ -290,7 +290,7 @@ def seed(s: Seeder, day: date) -> str:
         loaders[short_name] = s.ensure(
             LoaderUser, {"full_name": full_name},
             {"short_name": short_name, "pin_hash": get_password_hash(pin),
-             "home_dock_id": _id(dock), "is_active": True},
+             "home_dock_id": _id(dock), "depot": Depot.PELIYAGODA, "is_active": True},
             f"{short_name} (PIN {pin})",
         )
     saman = loaders["Saman J."]
@@ -328,6 +328,8 @@ def seed(s: Seeder, day: date) -> str:
          "brand": Brand.FRESH, "district": "Gampaha", "wave": "night",
          "departs_at": at(day, DEPARTS), "status": RunStatus.NOT_STARTED,
          "current_plan_version": 1,
+         # No dispatch trip, so no driver taps "Arrived": the truck is at the dock already.
+         "arrived_at": published_at, "arrived_dock_id": _id(dock),
          "planned_weight_kg": planned_kg, "planned_volume_m3": planned_m3,
          "loaded_weight_kg": 0.0, "loaded_volume_m3": 0.0},
         f"{run_code} Fresh Gampaha night, departs {day} {DEPARTS}, "

@@ -90,6 +90,18 @@ export interface DepotDispatcher {
   keycloak_id?: string | null;
 }
 
+export interface DepotLoaderItem {
+  id: number;
+  full_name: string;
+  short_name: string;
+  dock_id?: number | null;
+  dock_name?: string | null;
+  dock_code?: string | null;
+  depot?: string | null;
+  is_active: boolean;
+  created_at?: string | null;
+}
+
 export interface DepotDetail {
   key: string;
   name: string;
@@ -104,6 +116,8 @@ export interface DepotDetail {
   outlet_count: number;
   outlets: Array<OutletRecord>;
   dispatcher: DepotDispatcher | null;
+  loader_count?: number;
+  loaders?: Array<DepotLoaderItem>;
 }
 
 export interface DepotSummary {
@@ -118,6 +132,7 @@ export interface DepotSummary {
   outlet_count: number;
   available_vehicles: number;
   allocated_vehicles: number;
+  loader_count?: number;
   status: string;
 }
 
@@ -513,6 +528,37 @@ export const adminService = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || "Failed to update the depot dispatcher");
+    }
+  },
+
+  async getAllLoaders(): Promise<DepotLoaderItem[]> {
+    const res = await adminFetch("/api/v1/admin/depots/loaders/all", { cache: "no-store" });
+    if (!res.ok) throw new Error("Failed to fetch loaders");
+    return res.json();
+  },
+
+  async assignDepotLoader(
+    depot: "peliyagoda" | "kandy",
+    payload: { loader_id: number | string; dock_id?: number | null; action?: "assign" | "unassign" }
+  ): Promise<void> {
+    const res = await adminFetch(`/api/v1/admin/depots/${depot}/loaders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to assign loader to depot");
+    }
+  },
+
+  async unassignDepotLoader(depot: "peliyagoda" | "kandy", loaderId: number | string): Promise<void> {
+    const res = await adminFetch(`/api/v1/admin/depots/${depot}/loaders/${loaderId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to unassign loader from depot");
     }
   },
 

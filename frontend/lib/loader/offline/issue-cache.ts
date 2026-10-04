@@ -1,6 +1,6 @@
 // One flagged issue (GET /loader/issues/{id}) for the L8 waiting / decision
 // screen, with this tablet's last copy for offline use. An issue never opened
-// here can still show offline from the Issues tab's last list of the dock.
+// here can still show offline from the Issues tab's last list of the depot.
 
 import type { LoaderIssue } from "../types";
 import { cachedIssues } from "./issues-cache";
@@ -35,10 +35,10 @@ function writeCache(id: number, entry: CachedIssue) {
   }
 }
 
-/** This tablet's last copy of the issue: its own, else the newer one in the dock's list. */
-export function cachedIssue(id: number, dock?: string): CachedIssue | undefined {
+/** This tablet's last copy of the issue: its own, else the newer one in the depot's list. */
+export function cachedIssue(id: number, depot?: string): CachedIssue | undefined {
   const own = readCache(id);
-  const list = dock ? cachedIssues(dock) : undefined;
+  const list = depot ? cachedIssues(depot) : undefined;
   const fromList = list?.issues.find((i) => i.id === id);
   if (fromList && list && (!own || list.fetchedAt > own.fetchedAt)) {
     return { issue: fromList, fetchedAt: list.fetchedAt };
@@ -47,7 +47,7 @@ export function cachedIssue(id: number, dock?: string): CachedIssue | undefined 
 }
 
 /** The issue from the server, or the last copy when the server cannot be reached. */
-export async function loadIssue(transport: Transport, id: number, dock?: string): Promise<LoadedIssue> {
+export async function loadIssue(transport: Transport, id: number, depot?: string): Promise<LoadedIssue> {
   try {
     const issue = await transport.fetchIssue(id);
     if (!issue) return { kind: "not_found" };
@@ -56,7 +56,7 @@ export async function loadIssue(transport: Transport, id: number, dock?: string)
     return { kind: "ok", ...entry, source: "server" };
   } catch (err) {
     if (!(err instanceof NetworkError)) throw err;
-    const cached = cachedIssue(id, dock);
+    const cached = cachedIssue(id, depot);
     return cached ? { kind: "ok", ...cached, source: "cache" } : { kind: "unavailable" };
   }
 }

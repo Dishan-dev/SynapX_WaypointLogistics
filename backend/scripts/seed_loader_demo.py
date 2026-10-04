@@ -349,6 +349,7 @@ def seed_reference(db: Session) -> dict:
                 "short_name": short_name,
                 "pin_hash": get_password_hash(pin),
                 "home_dock_id": dock.id,
+                "depot": Depot.PELIYAGODA,
                 "is_active": True,
             },
         )
@@ -392,7 +393,10 @@ def seed_run(
     departs: str,
     status: RunStatus,
     plan_version: int,
+    arrived: str | None = "00:30",
 ) -> DeliveryRun:
+    """arrived: when the truck pulled in (depot clock, like departs); None
+    leaves the run awaiting its truck, hidden from the loader queue."""
     return upsert(
         db,
         DeliveryRun,
@@ -407,6 +411,8 @@ def seed_run(
             "departs_at": at(departs),
             "status": status,
             "current_plan_version": plan_version,
+            "arrived_at": at(arrived) if arrived else None,
+            "arrived_dock_id": dock.id if arrived else None,
         },
     )
 
@@ -649,21 +655,22 @@ def seed_scenario(db: Session) -> None:
     ).released_by_id = nimal.id
     run_022 = db.execute(select(DeliveryRun).filter_by(code="RUN-022")).scalars().one()
     run_022.released_at = at("01:48")
+    run_022.release_notified_at = run_022.released_at  # an old release: nobody to tell now
 
     seed_run(
         db, code="RUN-029", vehicle=vehicles["VEH005"], dock=dock, trip_number=2,
         brand=Brand.FRESH, district="Colombo", wave="night", departs="05:20",
-        status=RunStatus.NOT_STARTED, plan_version=1,
+        status=RunStatus.NOT_STARTED, plan_version=1, arrived="01:10",  # at the dock, free to pick
     )
     seed_run(
         db, code="RUN-031", vehicle=vehicles["VEH014"], dock=dock, trip_number=1,
         brand=Brand.STYLE, district="Colombo", wave="day", departs="08:20",
-        status=RunStatus.NOT_STARTED, plan_version=1,
+        status=RunStatus.NOT_STARTED, plan_version=1, arrived=None,  # truck not in yet
     )
     seed_run(
         db, code="RUN-033", vehicle=vehicles["VEH012"], dock=dock, trip_number=1,
         brand=Brand.TECH, district="Colombo", wave="day", departs="09:10",
-        status=RunStatus.NOT_STARTED, plan_version=1,
+        status=RunStatus.NOT_STARTED, plan_version=1, arrived=None,  # truck not in yet
     )
 
 

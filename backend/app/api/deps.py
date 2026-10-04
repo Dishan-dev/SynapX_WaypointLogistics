@@ -176,6 +176,20 @@ def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+
+    # Link store manager assignment from token claims if present
+    if user.role in STORE_ROLES and payload:
+        claim_outlet = payload.get("outlet_id") or payload.get("outlet")
+        if claim_outlet:
+            try:
+                oid = int(claim_outlet)
+                assignment = db.query(StoreManagerAssignment).filter(StoreManagerAssignment.user_id == user.id).first()
+                if not assignment:
+                    db.add(StoreManagerAssignment(user_id=user.id, outlet_id=oid))
+                    db.commit()
+            except Exception:
+                db.rollback()
+
     return user
 
 
@@ -247,15 +261,15 @@ def require_dispatcher_or_admin(
 
 
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    """Require the Keycloak-mapped administrator role outside development."""
-    if settings.KEYCLOAK_DEV_MODE:
+    """Require the Keycloak-mapped administrator role."""
+    if current_user.role == UserRole.ADMIN:
         return current_user
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="System administrator access is required.",
-        )
-    return current_user
+    if settings.KEYCLOAK_DEV_MODE and current_user.id == 0:
+        return current_user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="System administrator access is required.",
+    )
 
 
 def require_driver(current_user: User = Depends(get_current_user)) -> User:

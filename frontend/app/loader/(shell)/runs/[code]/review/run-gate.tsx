@@ -49,7 +49,11 @@ export function RunGate({
       <LoaderScreen title={title}>
         <div className="mx-auto flex max-w-md flex-col gap-2 rounded-xl border border-dashed border-border bg-card p-6 text-center">
           <p className="text-base font-semibold text-primary">
-            {result.kind === "not_found" ? `${code} is not on this dock's queue.` : `${code} is not available offline.`}
+            {result.kind === "not_found"
+              ? `${code} is not on this depot's queue.`
+              : result.kind === "picked"
+                ? `${result.pickedBy} is loading ${code}.`
+                : `${code} is not available offline.`}
           </p>
           <Link href="/loader" className="text-sm font-medium text-info underline-offset-4 hover:underline">
             Back to the queue
@@ -62,21 +66,21 @@ export function RunGate({
 }
 
 /**
- * The run's flags (GET /loader/issues, filtered to the run), from the dock's
+ * The run's flags (GET /loader/issues, filtered to the run), from the depot's
  * list so it works offline too; refetched after each sync.
  */
 export function useRunIssues(runCode: string): LoaderIssue[] {
-  const dock = useStoredSession()?.session.dock;
+  const depot = useStoredSession()?.session.depot;
   const { transport, sync } = useLoaderSync();
   const [issues, setIssues] = React.useState<LoaderIssue[]>(() =>
-    dock ? (cachedIssues(dock)?.issues ?? []) : [],
+    depot ? (cachedIssues(depot)?.issues ?? []) : [],
   );
 
   React.useEffect(() => {
-    if (!dock) return;
+    if (!depot) return;
     let cancelled = false;
     const id = window.setTimeout(() => {
-      void loadIssues(transport, dock).then((loaded) => {
+      void loadIssues(transport, depot).then((loaded) => {
         if (!cancelled && loaded) setIssues(loaded.issues);
       });
     }, 0);
@@ -84,7 +88,7 @@ export function useRunIssues(runCode: string): LoaderIssue[] {
       cancelled = true;
       window.clearTimeout(id);
     };
-  }, [dock, transport, sync.lastSyncedAt]);
+  }, [depot, transport, sync.lastSyncedAt]);
 
   return React.useMemo(() => issues.filter((i) => i.run_code === runCode), [issues, runCode]);
 }

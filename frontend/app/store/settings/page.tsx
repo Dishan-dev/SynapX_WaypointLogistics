@@ -29,6 +29,35 @@ export default function OutletSettingsPage() {
   const [shareDockGateCode, setShareDockGateCode] = useState(mockOutletSettings.shareDockGateCode);
   const [emailAlertsIssues, setEmailAlertsIssues] = useState(mockOutletSettings.emailAlertsIssues);
   const [smsAlertsPriority, setSmsAlertsPriority] = useState(mockOutletSettings.smsAlertsPriority);
+  const [phoneError, setPhoneError] = useState<string | null>(null);
+  const [emergencyError, setEmergencyError] = useState<string | null>(null);
+
+  const validatePhone = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setPhoneError("Contact phone is required");
+      return false;
+    }
+    // Matches Sri Lankan mobile/landline (+94 7X, 07X, +94 11, 011, etc) or general international numbers
+    const clean = trimmed.replace(/[\s\-()]/g, "");
+    const phoneRegex = /^(\+94|0)?(7[0-9]|11|2[1-8]|3[1-8]|4[1-7]|5[1-7]|6[3-7]|81|91)\d{7}$|^\+?[1-9]\d{7,14}$/;
+    if (!phoneRegex.test(clean)) {
+      setPhoneError("Enter a valid phone number (e.g. 077-1234567 or +94 11 234 5678)");
+      return false;
+    }
+    setPhoneError(null);
+    return true;
+  };
+
+  const validateEmergency = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (trimmed && trimmed.length < 3) {
+      setEmergencyError("Emergency contact note must be at least 3 characters");
+      return false;
+    }
+    setEmergencyError(null);
+    return true;
+  };
 
   useEffect(() => {
     async function load() {
@@ -52,11 +81,18 @@ export default function OutletSettingsPage() {
   }, []);
 
   async function handleSave() {
+    const isPhoneValid = validatePhone(contactPhone);
+    const isEmergencyValid = validateEmergency(emergencyContact);
+    if (!isPhoneValid || !isEmergencyValid) {
+      toast.error("Please fix the validation errors before saving");
+      return;
+    }
+
     setIsSaving(true);
     try {
       const updated = await updateOutletSettings({
-        contactPhone,
-        emergencyContact,
+        contactPhone: contactPhone.trim(),
+        emergencyContact: emergencyContact.trim(),
         driverCheckInCall,
         shareDockGateCode,
         emailAlertsIssues,
@@ -77,6 +113,8 @@ export default function OutletSettingsPage() {
 
   async function handleReset() {
     setIsResetting(true);
+    setPhoneError(null);
+    setEmergencyError(null);
     try {
       const reset = await resetOutletSettings();
       setSettings(reset);
@@ -215,15 +253,20 @@ export default function OutletSettingsPage() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="contactPhone" className="text-xs md:text-sm font-medium text-foreground">
-              Contact phone
+              Contact phone *
             </Label>
             <Input
               id="contactPhone"
               value={contactPhone}
-              onChange={(e) => setContactPhone(e.target.value)}
+              onChange={(e) => {
+                setContactPhone(e.target.value);
+                if (phoneError) validatePhone(e.target.value);
+              }}
+              onBlur={() => validatePhone(contactPhone)}
               placeholder="+94 11 234 5678"
-              className="h-10 text-foreground font-medium"
+              className={`h-10 text-foreground font-medium ${phoneError ? "border-destructive focus-visible:ring-destructive" : ""}`}
             />
+            {phoneError && <p className="text-[11px] font-medium text-destructive">{phoneError}</p>}
           </div>
 
           <div className="space-y-1.5 md:col-span-3">
@@ -233,10 +276,15 @@ export default function OutletSettingsPage() {
             <Input
               id="emergencyContact"
               value={emergencyContact}
-              onChange={(e) => setEmergencyContact(e.target.value)}
+              onChange={(e) => {
+                setEmergencyContact(e.target.value);
+                if (emergencyError) validateEmergency(e.target.value);
+              }}
+              onBlur={() => validateEmergency(emergencyContact)}
               placeholder="Kamal S. (Backroom Lead) · ext 8802"
-              className="h-10 text-foreground font-medium"
+              className={`h-10 text-foreground font-medium ${emergencyError ? "border-destructive focus-visible:ring-destructive" : ""}`}
             />
+            {emergencyError && <p className="text-[11px] font-medium text-destructive">{emergencyError}</p>}
           </div>
         </div>
 

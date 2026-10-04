@@ -3,10 +3,12 @@
 Imported by the loader test modules. Kept out of tests/conftest.py so the
 existing fixtures other teams rely on are untouched.
 """
+import re
 from datetime import datetime, time
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.core.security import get_password_hash
 from app.models.allocation import Allocation, AllocationStatus
@@ -37,9 +39,8 @@ from app.models.reference import (
 DAY = "2026-05-28"
 
 
-@pytest.fixture
-def loader_client(db_session):
-    """A TestClient that reads the SAME session the test seeds into.
+def _override_db(db_session):
+    """The endpoints read the SAME session the test seeds into.
 
     The shared `client` fixture overrides app.core.database.get_db, but the
     endpoints depend on app.api.deps.get_db - a separate function with its own
@@ -57,6 +58,110 @@ def loader_client(db_session):
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[deps.get_db] = override_get_db
+    return app
+
+
+LOADER_API = "/api/v1/loader/"
+_RUN_PATH = re.compile(r"/api/v1/loader/runs/([^/?]+)")
+# Tablet paths that need no signed-in loader.
+_NO_TABLET = ("users", "session", "docks", "dispatch-trips", "dev/", "issues/by-action/")
+
+
+class TabletClient(TestClient):
+    """loader_client: a TestClient that also stands in for a signed-in tablet.
+
+    The pick lock, depot sign-in and "Arrived at dock" came after most loader
+    tests were written; those tests are about the checklist, plans, flags and
+    release, and assume a loader is already at the truck. So, on tablet calls
+    only:
+    - a read without X-Loader-Session gets one: the session holding the run,
+      else a default Peliyagoda loader's session (made on first use);
+    - a write without loader_session_id gets the default session's id;
+    - the run a read or write names is marked arrived if it was not, and a
+      write's session picks it first (taking it over from any holder).
+    Tests of the lock, arrival and depot scope use strict_loader_client, which
+    does none of this.
+    """
+
+    def __init__(self, app, db):
+        super().__init__(app)
+        self.db = db
+        self._default_session = None
+
+    def default_session(self):
+        from app.models.loader_user import LoaderSession
+
+        if self._default_session is None:
+            loader = self.db.execute(
+                select(LoaderUser)
+                .where(LoaderUser.is_active.is_(True), LoaderUser.depot == Depot.PELIYAGODA)
+                .order_by(LoaderUser.id)
+            ).scalars().first() or make_loader(self.db, "Tablet Loader", "Tablet L.")
+            self._default_session = LoaderSession(loader_user_id=loader.id)
+            self.db.add(self._default_session)
+            self.db.flush()
+        return self._default_session
+
+    def _run(self, path, body):
+        match = _RUN_PATH.search(path)
+        code = match.group(1) if match else (body or {}).get("run_code")
+        if code is None:
+            return None
+        return self.db.execute(select(DeliveryRun).filter_by(code=code)).scalars().first()
+
+    def request(self, method, url, **kwargs):
+        from app.models.loader_user import LoaderSession
+        from app.services.loader_service import LoaderService
+
+        path = str(url)
+        tail = path.split(LOADER_API, 1)[1] if LOADER_API in path else None
+        if tail is None or tail.startswith(_NO_TABLET) or "/pick" in tail or "/unpick" in tail:
+            return super().request(method, url, **kwargs)
+
+        body = kwargs.get("json")
+        run = self._run(path, body if isinstance(body, dict) else None)
+        if run is not None and run.arrived_at is None:
+            run.arrived_at = datetime.utcnow()
+            run.arrived_dock_id = run.dock_id
+            self.db.flush()
+
+        headers = dict(kwargs.get("headers") or {})
+        if method.upper() == "GET":
+            if "X-Loader-Session" not in headers:
+                holder = LoaderService.pick_holder(run) if run is not None else None
+                headers["X-Loader-Session"] = str((holder or self.default_session()).id)
+            kwargs["headers"] = headers
+        elif isinstance(body, dict) and "client_action_id" in body:
+            body = dict(body)
+            if "loader_session_id" not in body:
+                body["loader_session_id"] = self.default_session().id
+            kwargs["json"] = body
+            session = (
+                self.db.get(LoaderSession, body["loader_session_id"])
+                if isinstance(body["loader_session_id"], int) else None
+            )
+            if run is not None and session is not None and run.picked_session_id != session.id:
+                run.picked_by = session.loader_user
+                run.picked_session = session
+                run.picked_at = datetime.utcnow()
+                self.db.flush()
+        return super().request(method, url, **kwargs)
+
+
+@pytest.fixture
+def loader_client(db_session):
+    """The tablet-standing-in client (TabletClient); see its docstring."""
+    app = _override_db(db_session)
+    with TabletClient(app, db_session) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def strict_loader_client(db_session):
+    """A plain TestClient on the test's session: every header, session id,
+    pick and arrival is the test's own."""
+    app = _override_db(db_session)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -77,21 +182,40 @@ def make_vehicle(db, code="VEH001", vtype=VehicleType.TRUCK, temp=TempCapability
     return vehicle
 
 
-def make_dock(db, code="DOCK3", name="Dock 3") -> Dock:
-    dock = Dock(code=code, name=name, depot=Depot.PELIYAGODA)
+def make_dock(db, code="DOCK3", name="Dock 3", depot=Depot.PELIYAGODA) -> Dock:
+    dock = Dock(code=code, name=name, depot=depot)
     db.add(dock)
     db.flush()
     return dock
 
 
-def make_loader(db, full_name="Saman Jayawardena", short_name="Saman J.") -> LoaderUser:
+def make_loader(db, full_name="Saman Jayawardena", short_name="Saman J.",
+                depot=Depot.PELIYAGODA) -> LoaderUser:
     user = LoaderUser(
         full_name=full_name, short_name=short_name,
-        pin_hash=get_password_hash("4417"), is_active=True,
+        pin_hash=get_password_hash("4417"), is_active=True, depot=depot,
     )
     db.add(user)
     db.flush()
     return user
+
+
+def hold(db, run, loader=None):
+    """A live session for `loader` (default: the depot's first loader) that
+    has picked `run`. Returns the session."""
+    from app.models.loader_user import LoaderSession
+
+    loader = loader or db.execute(
+        select(LoaderUser).where(LoaderUser.depot == run.dock.depot).order_by(LoaderUser.id)
+    ).scalars().first()
+    session = LoaderSession(loader_user_id=loader.id)
+    db.add(session)
+    db.flush()
+    run.picked_by = loader
+    run.picked_session = session
+    run.picked_at = datetime.utcnow()
+    db.flush()
+    return session
 
 
 def make_outlet(db, code, dock_type=DockType.REAR_DOCK, van_only=False,
@@ -120,11 +244,14 @@ def make_order(db, number, outlet, temperature=TemperatureClass.AMBIENT,
 
 
 def make_run(db, vehicle, dock, code="RUN-021", status=RunStatus.LOADING,
-             plan_version=2, departs="03:30") -> DeliveryRun:
+             plan_version=2, departs="03:30", arrived="01:00") -> DeliveryRun:
+    """A run whose truck is at the dock (arrived=None: still awaiting it)."""
     run = DeliveryRun(
         code=code, vehicle_id=vehicle.id, dock_id=dock.id, trip_number=1,
         brand=Brand.FRESH, district="Gampaha", wave="night",
         departs_at=at(departs), status=status, current_plan_version=plan_version,
+        arrived_at=at(arrived) if arrived else None,
+        arrived_dock_id=dock.id if arrived else None,
     )
     db.add(run)
     db.flush()

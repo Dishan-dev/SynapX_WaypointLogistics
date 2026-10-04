@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Building2,
   Truck,
@@ -12,6 +12,14 @@ import {
   CheckCircle2,
   RefreshCw,
   UserRoundCheck,
+  Users,
+  HardHat,
+  Plus,
+  Trash2,
+  ArrowRightLeft,
+  ShieldCheck,
+  Check,
+  Info,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,7 +34,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AdminUser, DepotDetail } from "@/services/admin-service";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { adminService, AdminUser, DepotDetail, DepotLoaderItem } from "@/services/admin-service";
 
 interface DepotsTabProps {
   depotsData: { peliyagoda: DepotDetail; kandy: DepotDetail } | null;
@@ -34,14 +51,49 @@ interface DepotsTabProps {
   isLoading: boolean;
   onRefresh: () => void;
   onAssignDispatcher: (depot: "peliyagoda" | "kandy", userId: number | string | null) => Promise<void>;
+  onAssignLoader?: (depot: "peliyagoda" | "kandy", loaderId: number | string, dockId?: number | null) => Promise<void>;
+  onUnassignLoader?: (depot: "peliyagoda" | "kandy", loaderId: number | string) => Promise<void>;
 }
 
-export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDispatcher }: DepotsTabProps) {
+export function DepotsTab({
+  depotsData,
+  users,
+  isLoading,
+  onRefresh,
+  onAssignDispatcher,
+  onAssignLoader,
+  onUnassignLoader,
+}: DepotsTabProps) {
   const [activeDepotKey, setActiveDepotKey] = useState<"peliyagoda" | "kandy">("peliyagoda");
-  const [activeSubTab, setActiveSubTab] = useState<"vehicles" | "outlets" | "docks">("vehicles");
+  const [activeSubTab, setActiveSubTab] = useState<"vehicles" | "outlets" | "docks" | "loaders">("vehicles");
   const [isSavingDispatcher, setIsSavingDispatcher] = useState(false);
   const [dispatcherError, setDispatcherError] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // Loader Assignment Dialog State
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [allLoaders, setAllLoaders] = useState<DepotLoaderItem[]>([]);
+  const [selectedLoaderId, setSelectedLoaderId] = useState<string>("");
+  const [selectedDockId, setSelectedDockId] = useState<string>("any");
+  const [isAssigningLoader, setIsAssigningLoader] = useState(false);
+  const [loaderModalError, setLoaderModalError] = useState<string | null>(null);
+  const [unassigningLoaderId, setUnassigningLoaderId] = useState<number | null>(null);
+  const [transferringLoaderId, setTransferringLoaderId] = useState<number | null>(null);
+
+  const fetchAllLoaders = async () => {
+    try {
+      const data = await adminService.getAllLoaders();
+      setAllLoaders(data);
+    } catch (err) {
+      console.error("Failed to load all loaders:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (depotsData) {
+      fetchAllLoaders();
+    }
+  }, [depotsData]);
 
   if (isLoading || !depotsData) {
     return (
@@ -54,6 +106,7 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
   }
 
   const currentDepot = depotsData[activeDepotKey];
+  const currentDepotLoaders = currentDepot.loaders || [];
   const dispatchers = users.filter(
     (user) => user.role.toUpperCase() === "DISPATCHER" && user.is_active,
   );
@@ -81,6 +134,97 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
     }
   };
 
+  const handleOpenAssignModal = () => {
+    setSelectedLoaderId("");
+    setSelectedDockId("any");
+    setLoaderModalError(null);
+    fetchAllLoaders();
+    setIsAssignModalOpen(true);
+  };
+
+  const handleConfirmAssignLoader = async () => {
+    if (!selectedLoaderId) return;
+    setIsAssigningLoader(true);
+    setLoaderModalError(null);
+    try {
+      const dockId = (selectedDockId === "any" || selectedDockId === "default") ? null : Number(selectedDockId);
+      if (onAssignLoader) {
+        await onAssignLoader(activeDepotKey, Number(selectedLoaderId), dockId);
+      } else {
+        await adminService.assignDepotLoader(activeDepotKey, {
+          loader_id: Number(selectedLoaderId),
+          dock_id: dockId,
+          action: "assign",
+        });
+        onRefresh();
+      }
+      await fetchAllLoaders();
+      setIsAssignModalOpen(false);
+      setNotification({
+        type: "success",
+        message: `Loader assigned to ${currentDepot.name} successfully.`,
+      });
+    } catch (err) {
+      setLoaderModalError(err instanceof Error ? err.message : "Failed to assign loader to depot.");
+    } finally {
+      setIsAssigningLoader(false);
+    }
+  };
+
+  const handleUnassignLoader = async (loaderId: number, loaderName: string) => {
+    setUnassigningLoaderId(loaderId);
+    setNotification(null);
+    try {
+      if (onUnassignLoader) {
+        await onUnassignLoader(activeDepotKey, loaderId);
+      } else {
+        await adminService.unassignDepotLoader(activeDepotKey, loaderId);
+        onRefresh();
+      }
+      await fetchAllLoaders();
+      setNotification({
+        type: "success",
+        message: `Unassigned ${loaderName} from ${currentDepot.name}.`,
+      });
+    } catch (err) {
+      setNotification({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to unassign loader.",
+      });
+    } finally {
+      setUnassigningLoaderId(null);
+    }
+  };
+
+  const handleTransferLoader = async (loaderId: number, loaderName: string) => {
+    const targetDepotKey = activeDepotKey === "peliyagoda" ? "kandy" : "peliyagoda";
+    const targetDepotName = targetDepotKey === "peliyagoda" ? "Peliyagoda Central Depot" : "Kandy Regional Depot";
+    setTransferringLoaderId(loaderId);
+    setNotification(null);
+    try {
+      if (onAssignLoader) {
+        await onAssignLoader(targetDepotKey, loaderId, null);
+      } else {
+        await adminService.assignDepotLoader(targetDepotKey, {
+          loader_id: loaderId,
+          action: "assign",
+        });
+        onRefresh();
+      }
+      await fetchAllLoaders();
+      setNotification({
+        type: "success",
+        message: `Transferred ${loaderName} to ${targetDepotName}.`,
+      });
+    } catch (err) {
+      setNotification({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to transfer loader.",
+      });
+    } finally {
+      setTransferringLoaderId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -92,7 +236,7 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
             <span>Depots &amp; Hub Logistics</span>
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Operational details and asset allocations for the primary Peliyagoda and Kandy distribution centers.
+            Operational details, assigned dispatchers, and loaders for the primary Peliyagoda and Kandy distribution centers.
           </p>
         </div>
         <Button
@@ -134,7 +278,7 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
               activeDepotKey === "peliyagoda" ? "text-white/80" : "text-muted-foreground"
             }`}
           >
-            Western Province &bull; 75 Outlets &bull; {depotsData.peliyagoda.vehicle_count} Vehicles
+            Western Province &bull; 75 Outlets &bull; {depotsData.peliyagoda.vehicle_count} Vehicles &bull; {depotsData.peliyagoda.loaders?.length || 0} Loaders
           </div>
         </button>
 
@@ -164,7 +308,7 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
               activeDepotKey === "kandy" ? "text-white/80" : "text-muted-foreground"
             }`}
           >
-            Central Province &bull; 45 Outlets &bull; {depotsData.kandy.vehicle_count} Vehicles
+            Central Province &bull; 45 Outlets &bull; {depotsData.kandy.vehicle_count} Vehicles &bull; {depotsData.kandy.loaders?.length || 0} Loaders
           </div>
         </button>
       </div>
@@ -271,9 +415,8 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
             )}
           </div>
 
-
           {/* Quick Metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
             <div className="p-3 bg-slate-50 rounded-lg border border-border">
               <div className="text-xl font-extrabold text-foreground">{currentDepot.vehicle_count}</div>
               <div className="text-[11px] text-muted-foreground font-medium mt-0.5">Assigned Vehicles</div>
@@ -281,6 +424,12 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
             <div className="p-3 bg-slate-50 rounded-lg border border-border">
               <div className="text-xl font-extrabold text-foreground">{currentDepot.outlet_count}</div>
               <div className="text-[11px] text-muted-foreground font-medium mt-0.5">Assigned Outlets</div>
+            </div>
+            <div className="p-3 bg-slate-50 rounded-lg border border-border">
+              <div className="text-xl font-extrabold text-foreground text-primary flex items-center justify-center gap-1">
+                <span>{currentDepotLoaders.length}</span>
+              </div>
+              <div className="text-[11px] text-muted-foreground font-medium mt-0.5">Assigned Loaders</div>
             </div>
             <div className="p-3 bg-slate-50 rounded-lg border border-border">
               <div className="text-xl font-extrabold text-foreground">{currentDepot.dock_count}</div>
@@ -294,7 +443,7 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
         </CardContent>
       </Card>
 
-      {/* Sub-tabs: Vehicles, Outlets, Docks */}
+      {/* Sub-tabs: Vehicles, Outlets, Docks, Loaders */}
       <Tabs value={activeSubTab} onValueChange={(val) => setActiveSubTab(val as typeof activeSubTab)}>
         <TabsList className="bg-slate-100 p-1 border border-border">
           <TabsTrigger value="vehicles" className="text-xs font-semibold gap-1.5">
@@ -304,6 +453,10 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
           <TabsTrigger value="outlets" className="text-xs font-semibold gap-1.5">
             <Store className="size-3.5" />
             <span>Associated Outlets ({currentDepot.outlets.length})</span>
+          </TabsTrigger>
+          <TabsTrigger value="loaders" className="text-xs font-semibold gap-1.5">
+            <HardHat className="size-3.5 text-primary" />
+            <span>Assigned Loaders ({currentDepotLoaders.length})</span>
           </TabsTrigger>
           <TabsTrigger value="docks" className="text-xs font-semibold gap-1.5">
             <Tablet className="size-3.5" />
@@ -422,7 +575,164 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
           </Card>
         </TabsContent>
 
-        {/* 3. Bays & Tablets */}
+        {/* 3. Assigned Loaders (Multiple loaders per depot) */}
+        <TabsContent value="loaders" className="mt-4 space-y-4">
+          <Card className="border-border shadow-xs overflow-hidden">
+            <CardHeader className="p-4 bg-slate-50 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <HardHat className="size-4 text-primary" />
+                  <span>Depot Staging &amp; Loading Workforce ({currentDepotLoaders.length})</span>
+                </CardTitle>
+                <CardDescription className="text-xs mt-0.5">
+                  Loaders assigned to {currentDepot.name} can log in to paired dock tablets, stage pallets, scan barcodes, and authorize cargo departure. Multiple loaders can be assigned to a depot.
+                </CardDescription>
+              </div>
+              <Button
+                size="sm"
+                onClick={handleOpenAssignModal}
+                className="text-xs gap-1.5 shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
+              >
+                <Plus className="size-3.5" />
+                <span>Assign Loader to Depot</span>
+              </Button>
+            </CardHeader>
+
+            <Table>
+              <TableHeader className="bg-slate-50/50">
+                <TableRow>
+                  <TableHead className="text-xs font-semibold">Loader Worker</TableHead>
+                  <TableHead className="text-xs font-semibold">Short Name / Badge</TableHead>
+                  <TableHead className="text-xs font-semibold">Assigned Loading Bay</TableHead>
+                  <TableHead className="text-xs font-semibold">Tablet Authentication</TableHead>
+                  <TableHead className="text-xs font-semibold">Status</TableHead>
+                  <TableHead className="text-xs font-semibold text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {currentDepotLoaders.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-12">
+                      <div className="flex flex-col items-center justify-center max-w-sm mx-auto text-center space-y-3">
+                        <div className="size-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
+                          <HardHat className="size-6" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-foreground">No Loaders Assigned to {currentDepot.name}</p>
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            Dock tablets at this hub will require loader assignment before cargo staging runs can be authorized.
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={handleOpenAssignModal}
+                          className="text-xs gap-1.5 bg-primary text-primary-foreground"
+                        >
+                          <Plus className="size-3.5" />
+                          <span>Assign First Loader</span>
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  currentDepotLoaders.map((loader) => {
+                    const initials = loader.full_name
+                      .split(" ")
+                      .map((n) => n[0])
+                      .slice(0, 2)
+                      .join("")
+                      .toUpperCase();
+                    const otherDepotKey = activeDepotKey === "peliyagoda" ? "kandy" : "peliyagoda";
+                    const otherDepotName = otherDepotKey === "peliyagoda" ? "Peliyagoda" : "Kandy";
+
+                    return (
+                      <TableRow key={loader.id} className="hover:bg-slate-50/60">
+                        <TableCell>
+                          <div className="flex items-center gap-2.5">
+                            <div className="size-8 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-xs font-bold shrink-0">
+                              {initials}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-xs text-foreground">{loader.full_name}</div>
+                              <div className="text-[10px] text-muted-foreground font-mono">ID: #{loader.id}</div>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="font-mono text-[11px] bg-slate-50 border-slate-200">
+                            {loader.short_name}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {loader.dock_name && !loader.dock_code?.includes("ANY") && !loader.dock_name.toLowerCase().includes("any") ? (
+                            <div className="space-y-0.5">
+                              <span className="font-semibold text-xs text-foreground">{loader.dock_name}</span>
+                              {loader.dock_code && (
+                                <span className="block font-mono text-[10px] text-muted-foreground">
+                                  {loader.dock_code}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <Badge variant="outline" className="text-[11px] font-medium bg-amber-50 text-amber-900 border-amber-200">
+                              Any Dock (Assigned by Dispatcher)
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            <ShieldCheck className="size-3.5 text-emerald-600" />
+                            <span>PIN Authenticated</span>
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] font-semibold ${
+                              loader.is_active
+                                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {loader.is_active ? "Active Worker" : "Inactive"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title={`Transfer loader to ${otherDepotName} Depot`}
+                              onClick={() => handleTransferLoader(loader.id, loader.full_name)}
+                              disabled={transferringLoaderId === loader.id || unassigningLoaderId === loader.id}
+                              className="h-7 text-[11px] gap-1 px-2 text-slate-600 hover:text-primary"
+                            >
+                              <ArrowRightLeft className={`size-3 ${transferringLoaderId === loader.id ? "animate-spin" : ""}`} />
+                              <span className="hidden md:inline">Transfer to {otherDepotName}</span>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Unassign loader from depot"
+                              onClick={() => handleUnassignLoader(loader.id, loader.full_name)}
+                              disabled={unassigningLoaderId === loader.id || transferringLoaderId === loader.id}
+                              className="h-7 text-[11px] gap-1 px-2 text-destructive hover:bg-red-50 hover:text-destructive"
+                            >
+                              <Trash2 className={`size-3 ${unassigningLoaderId === loader.id ? "animate-spin" : ""}`} />
+                              <span>Unassign</span>
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </Card>
+        </TabsContent>
+
+        {/* 4. Bays & Tablets */}
         <TabsContent value="docks" className="mt-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="border-border shadow-xs">
@@ -467,6 +777,125 @@ export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDis
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Assign Loader Dialog */}
+      <Dialog open={isAssignModalOpen} onOpenChange={setIsAssignModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <HardHat className="size-5 text-primary" />
+              <span>Assign Loader to {currentDepot.name}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Select a loader to allocate to this depot hub. Multiple loaders can be assigned to a single depot to operate dock scanning terminals and stage cargo runs.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            {loaderModalError && (
+              <div className="p-2.5 rounded bg-red-50 text-red-800 border border-red-200 text-xs">
+                {loaderModalError}
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Select Loader Worker *</Label>
+              <Select value={selectedLoaderId} onValueChange={setSelectedLoaderId}>
+                <SelectTrigger className="w-full text-xs" aria-label="Select loader worker">
+                  <SelectValue placeholder="Choose loader worker to assign..." />
+                </SelectTrigger>
+                <SelectContent className="max-h-60">
+                  {allLoaders.map((loader) => {
+                    const isAlreadyHere = loader.depot?.toLowerCase() === activeDepotKey;
+                    const otherDepotName = activeDepotKey === "peliyagoda" ? "Kandy" : "Peliyagoda";
+                    const isAtOtherDepot = loader.depot && loader.depot.toLowerCase() !== activeDepotKey;
+
+                    return (
+                      <SelectItem
+                        key={loader.id}
+                        value={String(loader.id)}
+                        disabled={isAlreadyHere}
+                      >
+                        <div className="flex items-center justify-between gap-3 w-full">
+                          <span className="font-medium">{loader.full_name}</span>
+                          <span className="text-[11px] text-muted-foreground">
+                            {isAlreadyHere
+                              ? "✓ (Already here)"
+                              : isAtOtherDepot
+                              ? `(Will transfer from ${otherDepotName})`
+                              : "(Unassigned)"}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Home Dock / Loading Bay</Label>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+                  Default: Any
+                </span>
+              </div>
+              <Select value={selectedDockId} onValueChange={setSelectedDockId}>
+                <SelectTrigger className="w-full text-xs" aria-label="Select loading bay">
+                  <SelectValue placeholder="Any (Assigned to dock later by dispatcher)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">
+                    <span className="font-semibold text-primary">Any</span> &mdash; Assigned to dock later by dispatcher
+                  </SelectItem>
+                  {currentDepot.docks
+                    .filter((dock) => !dock.code?.includes("ANY") && !dock.name?.toLowerCase().includes("any dock"))
+                    .map((dock) => (
+                      <SelectItem key={dock.id} value={String(dock.id)}>
+                        Specific Bay: {dock.name} ({dock.code})
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-1">
+                <Info className="size-3 text-primary shrink-0" />
+                <span>By default, loader is assigned to the depot as &quot;Any&quot; dock. The dispatcher will allocate them to a specific dock later during cargo staging.</span>
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsAssignModalOpen(false)}
+              disabled={isAssigningLoader}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleConfirmAssignLoader}
+              disabled={!selectedLoaderId || isAssigningLoader}
+              className="gap-1.5 bg-primary text-primary-foreground"
+            >
+              {isAssigningLoader ? (
+                <>
+                  <RefreshCw className="size-3.5 animate-spin" />
+                  <span>Assigning...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="size-3.5" />
+                  <span>Confirm Assignment</span>
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

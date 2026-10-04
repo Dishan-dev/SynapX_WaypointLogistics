@@ -320,7 +320,7 @@ function groupRow(order: RunOrder, stop: RunStop): RunOrder {
 function spareLine(run: Run, kg: number, m3: number): string {
   const spareKg = Math.round(run.vehicle.max_weight_kg - kg);
   const spareM3 = Math.round((run.vehicle.max_volume_m3 - m3) * 10) / 10;
-  if (spareKg < 0 || spareM3 < 0) return "Over the vehicle limit — tell the Dispatcher before loading.";
+  if (spareKg < 0 || spareM3 < 0) return "Over the vehicle limit — after you acknowledge, flag the overflow as Won’t fit.";
   return `Still fits: ${formatKg(spareKg)} and ${formatM3(spareM3)} spare.`;
 }
 

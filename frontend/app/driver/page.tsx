@@ -10,6 +10,8 @@ import { cachedGet, keepPageOffline, writeCache } from "@/lib/driverCache";
 import { colomboNow, greeting, READY_CUTOFF_HOUR } from "@/lib/colomboTime";
 import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
 import SyncStatus from "@/components/driver/SyncStatus";
+import DockArrival from "@/components/driver/DockArrival";
+import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
 import { UserNotificationBell } from "@/components/notifications/user-notification-bell";
 import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
 import DockArrival from "@/components/driver/DockArrival";

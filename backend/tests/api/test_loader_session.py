@@ -1,11 +1,15 @@
-"""L2: GET /loader/users, POST /loader/session, DELETE /loader/session/{id}."""
+"""L2: GET /loader/users, POST /loader/session, DELETE /loader/session/{id}.
+
+Loaders belong to a depot (loader_users.depot): the tablet lists the loaders of
+the depot it signs into, and a session sees every dock of that depot.
+"""
 import uuid
 
 from sqlalchemy import select
 
 from app.models.loader_activity import LoadingCheck
 from app.models.loader_user import LoaderSession, SessionEndReason
-from app.models.reference import DockTablet
+from app.models.reference import Depot, DockTablet
 from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     build_run_021,
     loader_client,
@@ -24,11 +28,15 @@ def register_tablet(db, dock, label=TABLET, active=True):
     return tablet
 
 
-def sign_in(client, user_id, pin="4417", tablet=TABLET):
-    return client.post(
-        f"{BASE}/session",
-        json={"loader_user_id": user_id, "pin": pin, "dock_tablet_label": tablet},
-    )
+def sign_in(client, user_id, pin="4417", tablet=None, depot="peliyagoda"):
+    body = {"loader_user_id": user_id, "pin": pin, "depot": depot}
+    if tablet is not None:
+        body["dock_tablet_label"] = tablet
+    return client.post(f"{BASE}/session", json=body)
+
+
+def users(client, **params):
+    return client.get(f"{BASE}/users", params={"depot": "peliyagoda", **params})
 
 
 def end(client, session_id, reason="sign_out"):
@@ -45,7 +53,7 @@ def test_users_are_the_active_loaders_by_full_name_without_pins(loader_client, d
     make_loader(db_session, "Retired Loader", "Retired L.").is_active = False
     db_session.flush()
 
-    response = loader_client.get(f"{BASE}/users")
+    response = users(loader_client)
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -58,20 +66,33 @@ def test_users_can_be_searched_by_full_or_short_name(loader_client, db_session):
     make_loader(db_session, "Tharindu Jayasuriya", "Tharindu J.")
     db_session.flush()
 
-    by_full = loader_client.get(f"{BASE}/users", params={"q": "jayasur"}).json()
-    by_short = loader_client.get(f"{BASE}/users", params={"q": "saman j."}).json()
-    blank = loader_client.get(f"{BASE}/users", params={"q": "  "}).json()
+    by_full = users(loader_client, q="jayasur").json()
+    by_short = users(loader_client, q="saman j.").json()
+    blank = users(loader_client, q="  ").json()
 
     assert [u["short_name"] for u in by_full] == ["Tharindu J."]
     assert [u["short_name"] for u in by_short] == ["Saman J."]
     assert len(blank) == 2
 
 
+def test_users_are_only_the_depots_being_signed_into(loader_client, db_session):
+    make_loader(db_session, "Saman Jayawardena", "Saman J.")
+    make_loader(db_session, "Kasun Bandara", "Kasun B.", depot=Depot.KANDY)
+    make_loader(db_session, "No Depot", "No D.", depot=None)
+    db_session.flush()
+
+    peliyagoda = users(loader_client).json()
+    kandy = users(loader_client, depot="kandy").json()
+
+    assert [u["short_name"] for u in peliyagoda] == ["Saman J."]
+    assert [u["short_name"] for u in kandy] == ["Kasun B."]
+    assert loader_client.get(f"{BASE}/users").status_code == 422  # the depot is required
+
+
 # --- POST /loader/session --------------------------------------------------------
 
 
-def test_sign_in_opens_a_session_on_the_tablets_dock(loader_client, db_session):
-    register_tablet(db_session, make_dock(db_session))
+def test_sign_in_opens_a_session_at_the_loaders_depot(loader_client, db_session):
     saman = make_loader(db_session)
     db_session.flush()
 
@@ -80,11 +101,43 @@ def test_sign_in_opens_a_session_on_the_tablets_dock(loader_client, db_session):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["loader"] == {"id": saman.id, "short_name": "Saman J."}
-    assert (body["dock"], body["depot"]) == ("Dock 3", "peliyagoda")
+    assert (body["dock"], body["depot"]) == (None, "peliyagoda")
     assert body["started_at"].endswith("Z")
     assert (body["ended_at"], body["end_reason"]) == (None, None)
     stored = db_session.get(LoaderSession, body["session_id"])
     assert stored.loader_user_id == saman.id and stored.ended_at is None
+    assert stored.dock_tablet_id is None
+
+
+def test_a_registered_tablet_is_recorded_when_sent(loader_client, db_session):
+    tablet = register_tablet(db_session, make_dock(db_session))
+    saman = make_loader(db_session)
+    db_session.flush()
+
+    body = sign_in(loader_client, saman.id, tablet=TABLET).json()
+
+    assert db_session.get(LoaderSession, body["session_id"]).dock_tablet_id == tablet.id
+
+
+def test_a_loader_with_no_depot_cannot_sign_in(loader_client, db_session):
+    nodepot = make_loader(db_session, "No Depot", "No D.", depot=None)
+    db_session.flush()
+
+    response = sign_in(loader_client, nodepot.id)
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "LOADER_NO_DEPOT"
+    assert db_session.query(LoaderSession).count() == 0
+
+
+def test_signing_in_at_another_depot_is_refused(loader_client, db_session):
+    kasun = make_loader(db_session, "Kasun Bandara", "Kasun B.", depot=Depot.KANDY)
+    db_session.flush()
+
+    response = sign_in(loader_client, kasun.id, depot="peliyagoda")
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "LOADER_OTHER_DEPOT"
 
 
 def test_a_wrong_pin_is_a_401_the_tablet_understands(loader_client, db_session):

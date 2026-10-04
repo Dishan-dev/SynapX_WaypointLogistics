@@ -162,7 +162,7 @@ export function KitView() {
         )}
       </section>
       <section className="overflow-hidden rounded-lg border border-border">
-        <LoaderAppBar title="Loading checklist" subtitle="RUN-021 · Dock tablet 3 · Saman J." hasUnread />
+        <LoaderAppBar title="Loading checklist" subtitle={`${run.code} · ${run.dock} · Saman J.`} hasUnread />
         <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 0, syncing: false, stale: 0, failed: 0 }} />
         <PlanSourceStrip plan={planSource(run)} sync={{ online: false, pending: 3, syncing: false, stale: 0, failed: 0 }} />
         <PlanSourceStrip plan={planSource(run)} sync={{ online: true, pending: 3, syncing: true, stale: 0, failed: 0 }} />
@@ -197,12 +197,12 @@ export function KitView() {
         </div>
       </section>
       <section aria-label="Run cards" className="grid gap-3 md:grid-cols-2">
-        {mockQueue.groups.flatMap((g) => g.runs).map((r) => (
+        {mockQueue.docks.flatMap((d) => d.runs).map((r) => (
           <RunCard key={r.code} run={r} />
         ))}
       </section>
       <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MetricTile label="Runs" value={6} caption="At Dock 3 today" />
+        <MetricTile label="Runs" value={5} caption="At Peliyagoda DC today" />
         <MetricTile label="Loading" value={2} caption="Saman, Tharindu" />
         <MetricTile label="Issues" value={1} caption="Awaiting decision" />
         <MetricTile label="Ready" value={1} caption="RUN-022" />

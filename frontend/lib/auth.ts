@@ -104,6 +104,7 @@ export function saveAuthSession(tokens: {
 
   const user = parseUserFromToken(tokens.access_token, tokens.id_token);
   localStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
+  window.dispatchEvent(new CustomEvent("waypoint:auth-session-changed", { detail: { user } }));
   return user;
 }
 
@@ -118,6 +119,7 @@ export function clearAuthSession(): void {
   sessionStorage.removeItem(PKCE_VERIFIER_KEY);
   sessionStorage.removeItem(PKCE_STATE_KEY);
   sessionStorage.removeItem(TARGET_ROLE_KEY);
+  window.dispatchEvent(new CustomEvent("waypoint:auth-session-changed", { detail: { user: null } }));
 }
 
 export function isAuthenticated(): boolean {

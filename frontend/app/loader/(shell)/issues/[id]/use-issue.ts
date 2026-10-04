@@ -23,7 +23,7 @@ export type IssueState =
  * 15 s, after each sync and when the tab comes back; once decided (or the
  * default applied) the answer is final and polling stops.
  */
-export function useIssue(id: number, dock: string | undefined): IssueState {
+export function useIssue(id: number, depot: string | undefined): IssueState {
   const { transport, sync } = useLoaderSync();
   const [state, setState] = React.useState<IssueState>({ status: "loading" });
   // Only the newest load may update the screen.
@@ -31,7 +31,7 @@ export function useIssue(id: number, dock: string | undefined): IssueState {
 
   const refresh = React.useCallback(async () => {
     const mine = ++seq.current;
-    const loaded = await loadIssue(transport, id, dock);
+    const loaded = await loadIssue(transport, id, depot);
     if (mine !== seq.current) return;
     if (loaded.kind === "ok") {
       setState({ status: "ready", issue: loaded.issue, fetchedAt: loaded.fetchedAt, source: loaded.source });
@@ -39,11 +39,11 @@ export function useIssue(id: number, dock: string | undefined): IssueState {
       // Keep a copy already on screen rather than blanking it.
       setState((s) => (s.status === "ready" && loaded.kind === "unavailable" ? s : { status: loaded.kind }));
     }
-  }, [transport, id, dock]);
+  }, [transport, id, depot]);
 
   // The last copy first, so the screen shows at once, even offline.
   React.useEffect(() => {
-    const cached = cachedIssue(id, dock);
+    const cached = cachedIssue(id, depot);
     if (!cached) return;
     const timer = window.setTimeout(() =>
       setState((s) =>
@@ -51,7 +51,7 @@ export function useIssue(id: number, dock: string | undefined): IssueState {
       ),
     );
     return () => window.clearTimeout(timer);
-  }, [id, dock]);
+  }, [id, depot]);
 
   const waiting = state.status !== "ready" || isIssueWaiting(state.issue);
   const waitingRef = React.useRef(waiting);
