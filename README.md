@@ -24,7 +24,7 @@ Further documentation (download the HTML files and open them in a browser):
 
 ### Accounts
 
-The judge accounts are in the **credentials file submitted separately**, with one account per role. Every role signs in from the same page: open the live system and choose **Sign In with Waypoint Identity**. A user with one role lands straight in their workspace; a user with several roles chooses one at `/portal`.
+The judge accounts are in the **credentials file submitted separately**, with one account per role. Every role signs in from the same page: open the live system and choose **Sign In with Waypoint Identity**. After sign-in you land in your role's workspace. A user with several roles can switch between workspaces at `/portal`.
 
 | Role | Workspace | What the account can see |
 | --- | --- | --- |
