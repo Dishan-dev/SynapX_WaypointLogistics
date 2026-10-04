@@ -22,12 +22,13 @@ import {
   PieChart,
   CarFront,
   Zap,
+  Lock,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { dispatcherDepotHeaders, getDispatcherDepot, setDispatcherDepot, type DispatcherDepot } from "@/lib/dispatcher-depot";
+import { DEPOT_CHANGE_EVENT, dispatcherDepotHeaders, getDispatcherDepot, setDispatcherDepot, type DispatcherDepot } from "@/lib/dispatcher-depot";
 import { fetchWithFallback } from "@/lib/api";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000").replace(/\/$/, "");
@@ -136,7 +137,7 @@ export default function DispatcherDashboard() {
         fetchWithFallback("/api/v1/orders/", { cache: "no-store" }),
         fetchWithFallback("/api/v1/delivery-runs/", { cache: "no-store" }),
         fetchWithFallback("/api/v1/fleet/vehicles", { cache: "no-store" }),
-        fetch(`${API_BASE}/api/v1/outlets?depot=${hubFilter}`, { cache: "no-store", headers: dispatcherDepotHeaders() }),
+        fetchWithFallback(`/api/v1/outlets?depot=${hubFilter}`, { cache: "no-store" }),
       ]);
 
       if (ordersRes.status === "fulfilled" && ordersRes.value.ok) {
@@ -167,12 +168,23 @@ export default function DispatcherDashboard() {
   useEffect(() => {
     // Defer the first pulse so the effect only subscribes to refresh work.
     const initialLoad = window.setTimeout(() => void loadData(), 0);
+    const onDepotChange = (e: Event) => {
+      const customEvent = e as CustomEvent<DispatcherDepot>;
+      if (customEvent.detail) {
+        setHubFilter(customEvent.detail);
+      }
+      void loadData();
+    };
+    window.addEventListener(DEPOT_CHANGE_EVENT, onDepotChange);
+
     // Auto-refresh pulse every 45s
     const timer = setInterval(() => {
       void loadData();
     }, 45000);
+
     return () => {
       window.clearTimeout(initialLoad);
+      window.removeEventListener(DEPOT_CHANGE_EVENT, onDepotChange);
       clearInterval(timer);
     };
   }, [loadData]);
@@ -364,8 +376,9 @@ export default function DispatcherDashboard() {
               </button>
             </div>
           ) : (
-            <Badge variant="outline" className="border-primary/30 bg-accent text-primary text-xs font-semibold">
-              {hubFilter === "peliyagoda" ? "Peliyagoda Depot" : "Kandy Depot"}
+            <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary text-xs font-semibold py-1 px-3 flex items-center gap-1.5 shadow-2xs">
+              <Lock className="size-3" />
+              <span>{hubFilter === "peliyagoda" ? "📍 Peliyagoda Central Depot (Assigned Scope)" : "📍 Kandy Regional Depot (Assigned Scope)"}</span>
             </Badge>
           )}
 

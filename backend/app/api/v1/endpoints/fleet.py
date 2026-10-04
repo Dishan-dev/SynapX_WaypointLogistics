@@ -215,11 +215,13 @@ def get_vehicles(
     query = db.query(Vehicle).options(
         joinedload(Vehicle.driver).joinedload(DriverProfile.user)
     )
-    if depot and depot.lower() != "all":
-        query = query.filter(func.lower(Vehicle.depot_name) == depot.lower())
-    elif current_user.role == UserRole.DISPATCHER and x_waypoint_depot:
+    if current_user.role == UserRole.DISPATCHER:
         d = get_dispatcher_depot(db=db, current_user=current_user, x_waypoint_depot=x_waypoint_depot)
         query = query.filter(func.lower(Vehicle.depot_name) == d.value)
+    elif depot and depot.lower() != "all":
+        query = query.filter(func.lower(Vehicle.depot_name) == depot.lower())
+    elif x_waypoint_depot and x_waypoint_depot.lower() != "all":
+        query = query.filter(func.lower(Vehicle.depot_name) == x_waypoint_depot.strip().lower())
 
     if status and status != "ALL":
         query = query.filter(Vehicle.status == status.upper())
