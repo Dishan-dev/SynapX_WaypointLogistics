@@ -14,9 +14,9 @@ import {
   Calendar,
   ChevronRight,
   ExternalLink,
-  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { TableLoading } from "@/components/ui/table-loading";
 import { Input } from "@/components/ui/input";
 import { StorePill } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
@@ -295,8 +295,7 @@ export default function DeliveryHistoryPage() {
               {loading ? (
                 <tr>
                   <td colSpan={7} className="py-8 text-center text-muted-foreground">
-                    <RefreshCw className="size-5 animate-spin mx-auto mb-2 text-primary" />
-                    Loading delivery history...
+                    <TableLoading label="Loading delivery history..." />
                   </td>
                 </tr>
               ) : paginatedHistory.length === 0 ? (
