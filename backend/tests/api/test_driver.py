@@ -11,7 +11,8 @@ from sqlalchemy import select
 from app.core.security import create_access_token, get_password_hash
 from app.models.delivery_run import RunOrderState, RunStatus, RunStop, RunStopOrder
 from app.models.driver import DeliveryStop, DriverTrip, SOSAlert
-from app.models.fleet import DriverProfile
+from app.models.allocation import AllocationStatus
+from app.models.fleet import DriverProfile, VehicleStatus
 from app.models.notification import Notification, NotificationType
 from app.models.order import OrderStatus
 from app.models.shipment import DispatchTrip
@@ -340,6 +341,45 @@ def test_completing_the_trip_closes_the_dispatchers_run(loader_client, released)
     assert dispatch_trip.loading_events[-1]["note"] == "2 delivered · 0 partial · 1 not delivered"
     # Still on today's list, as finished
     assert [t["status"] for t in today(loader_client, driver)] == ["completed"]
+
+
+def test_finishing_the_trip_frees_the_truck_for_the_next_plan(loader_client, released):
+    db, driver = released["db"], released["driver"]
+    allocation = released["dispatch_trip"].allocation
+    allocation.vehicle.status = VehicleStatus.ALLOCATED  # held by this run, as Quick Allocate leaves it
+    db.flush()
+    trip = started_trip(loader_client, released)
+    for stop in trip["stops"]:
+        loader_client.patch(f"{API}/stops/{stop['id']}/outcome", headers=auth(driver), json={"outcome": "failed"})
+
+    res = loader_client.post(f"{API}/trips/{trip['id']}/complete", headers=auth(driver))
+
+    assert res.status_code == 200, res.text
+    db.refresh(allocation)
+    assert allocation.status == AllocationStatus.COMPLETED
+    assert allocation.vehicle.status == VehicleStatus.AVAILABLE
+    # The dispatcher can plan the same truck again (next trip, or tomorrow's)
+    again = loader_client.post(
+        "/api/v1/allocations/", headers={"X-Waypoint-Depot": "peliyagoda"},
+        json={"vehicle_id": allocation.vehicle_id, "status": "ALLOCATED"},
+    )
+    assert again.status_code == 201, again.text
+
+
+def test_a_truck_out_of_service_stays_unavailable(loader_client, released):
+    db, driver = released["db"], released["driver"]
+    allocation = released["dispatch_trip"].allocation
+    trip = started_trip(loader_client, released)
+    allocation.vehicle.status = VehicleStatus.UNAVAILABLE  # admin took it out mid-trip
+    db.flush()
+    for stop in trip["stops"]:
+        loader_client.patch(f"{API}/stops/{stop['id']}/outcome", headers=auth(driver), json={"outcome": "failed"})
+
+    loader_client.post(f"{API}/trips/{trip['id']}/complete", headers=auth(driver))
+
+    db.refresh(allocation)
+    assert allocation.status == AllocationStatus.COMPLETED
+    assert allocation.vehicle.status == VehicleStatus.UNAVAILABLE
 
 
 def test_sync_replay_does_not_apply_twice(loader_client, released):

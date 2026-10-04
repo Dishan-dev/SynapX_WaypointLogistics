@@ -12,7 +12,8 @@ from fastapi import HTTPException, status
 from app.core.exceptions import WaypointLogisticsError
 from app.models.delivery_run import DeliveryRun, RunOrderState, RunStatus, RunStop
 from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus
-from app.models.fleet import DriverProfile
+from app.models.allocation import AllocationStatus
+from app.models.fleet import DriverProfile, VehicleStatus
 from app.models.order import Order, OrderStatus
 from app.models.shipment import DispatchTrip
 from app.models.user import User
@@ -349,11 +350,25 @@ def complete_trip(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
     return trip
 
 
+def _free_truck(dispatch_trip: DispatchTrip) -> None:
+    """Trip over: the dispatcher's allocation is done and the truck can be planned
+    again (a second trip today, or tomorrow's), as completing it in Allocations
+    does. A truck taken out of service meanwhile stays unavailable."""
+    allocation = dispatch_trip.allocation
+    if allocation is None or allocation.status in (AllocationStatus.COMPLETED, AllocationStatus.CANCELLED):
+        return
+    allocation.status = AllocationStatus.COMPLETED
+    vehicle = allocation.vehicle
+    if vehicle is not None and vehicle.status != VehicleStatus.UNAVAILABLE:
+        vehicle.status = VehicleStatus.AVAILABLE
+
+
 def _close_dispatch_trip(trip: DriverTrip) -> None:
     dispatch_trip = trip.dispatch_trip
     if dispatch_trip is None or dispatch_trip.status == "completed":
         return
     dispatch_trip.status = "completed"
+    _free_truck(dispatch_trip)
     _sync_progress(trip)
     counts = {s: sum(1 for stop in trip.stops if stop.status == s) for s in DeliveryStopStatus}
     _log(
