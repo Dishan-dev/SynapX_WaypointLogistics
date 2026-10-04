@@ -1,4 +1,4 @@
-// The loading queue for this tablet's dock: GET /loader/runs and /summary,
+// The loading queue for this tablet's depot (every dock): GET /loader/runs and /summary,
 // kept in IndexedDB so the queue opens offline. Runs with actions still
 // waiting to sync show this tablet's own counts, like the checklist does.
 
@@ -17,23 +17,23 @@ export interface LoadedQueue extends CachedQueue {
 /** Fired on window after a fresh queue is loaded; detail is the CachedQueue. */
 export const QUEUE_EVENT = "waypoint-loader-queue";
 
-/** This tablet's last copy of the dock's queue. */
-export async function cachedQueue(dock: string): Promise<CachedQueue | undefined> {
+/** This tablet's last copy of the depot's queue. */
+export async function cachedQueue(depot: string): Promise<CachedQueue | undefined> {
   try {
-    return await getCachedQueue(dock);
+    return await getCachedQueue(depot);
   } catch {
     return undefined; // No IndexedDB: nothing kept.
   }
 }
 
 /**
- * The dock's queue from the server, or this tablet's last copy when the
+ * The depot's queue from the server, or this tablet's last copy when the
  * server cannot be reached. Undefined when there is neither.
  */
-export async function loadQueue(transport: Transport, dock: string): Promise<LoadedQueue | undefined> {
+export async function loadQueue(transport: Transport, depot: string): Promise<LoadedQueue | undefined> {
   try {
-    const [queue, summary] = await Promise.all([transport.fetchQueue(dock), transport.fetchSummary(dock)]);
-    const entry: CachedQueue = { dock, queue, summary, fetched_at: new Date().toISOString() };
+    const [queue, summary] = await Promise.all([transport.fetchQueue(), transport.fetchSummary()]);
+    const entry: CachedQueue = { depot, queue, summary, fetched_at: new Date().toISOString() };
     try {
       await putCachedQueue(entry);
     } catch {
@@ -43,7 +43,7 @@ export async function loadQueue(transport: Transport, dock: string): Promise<Loa
     return { ...entry, source: "server" };
   } catch (err) {
     if (!(err instanceof NetworkError)) throw err;
-    const cached = await cachedQueue(dock);
+    const cached = await cachedQueue(depot);
     return cached && { ...cached, source: "cache" };
   }
 }
@@ -64,8 +64,8 @@ async function localRun(code: string): Promise<Run | undefined> {
  * as the server sent them; the server builds their alerts.
  */
 export async function withLocalRuns(queue: RunQueue): Promise<RunQueue> {
-  const groups = await Promise.all(
-    queue.groups.map(async (group) => ({
+  const docks = await Promise.all(
+    queue.docks.map(async (group) => ({
       ...group,
       runs: await Promise.all(
         group.runs.map(async (card) => {
@@ -86,5 +86,5 @@ export async function withLocalRuns(queue: RunQueue): Promise<RunQueue> {
       ),
     })),
   );
-  return { groups };
+  return { ...queue, docks };
 }

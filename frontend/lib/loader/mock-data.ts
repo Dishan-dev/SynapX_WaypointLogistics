@@ -1,8 +1,10 @@
 // Mock data for the loader UI until the /loader API is wired up, in the shapes
 // of docs/loader/API_CONTRACT.md. Scenario follows Figma "02 — Loader":
-// Peliyagoda DC, Dock 3, Fresh night wave.
+// Peliyagoda DC, Fresh night wave. Loaders see every dock of the depot.
 //
-// - mockQueue / mockSummary match T1b (queue before plan v3 was acknowledged).
+// - mockQueue / mockSummary follow T1b (queue before plan v3 was acknowledged),
+//   grouped by dock: RUN-021 is free to pick, Tharindu J. is loading RUN-027,
+//   and RUN-033's truck has not arrived yet, so it is not listed.
 // - RUN-021's detail matches T1c (checklist after v3 was acknowledged).
 // Outlet names other than OUT027 are placeholders.
 
@@ -47,7 +49,7 @@ export const mockUserPins: Record<number, string> = {
 export const mockSession: LoaderSession = {
   session_id: 12,
   loader: { id: 1, short_name: "Saman J." },
-  dock: "Dock 3",
+  dock: null,
   depot: "peliyagoda",
   started_at: at("01:30"),
 };
@@ -79,7 +81,7 @@ const RUN_021: Run = {
   departs_at: at("03:30"),
   status: "loading",
   current_plan_version: 3,
-  dock: "Dock 3",
+  dock: "Dock 2",
   vehicle: {
     code: "VEH001",
     vehicle_type: "truck",
@@ -300,7 +302,7 @@ const RUN_022: Run = {
   departs_at: at("03:40"),
   status: "ready_to_depart",
   current_plan_version: 2,
-  dock: "Dock 3",
+  dock: "Dock 2",
   vehicle: {
     code: "VEH005",
     vehicle_type: "truck",
@@ -451,70 +453,32 @@ export const mockActivity: Record<string, ActivityEntry[]> = {
 // ---- Queue (GET /loader/runs, GET /loader/summary) -----------------------
 
 export const mockSummary: QueueSummary = {
-  dock: "Dock 3",
+  depot: "peliyagoda",
+  dock: null,
+  dock_count: 3,
   date: DAY,
   day_label: "Thu 28 May",
   next_holiday: { date: "2026-05-30", label: "Poson Sat 30 May" },
-  runs: 6,
+  runs: 5,
   loading: { count: 2, loaders: ["Saman", "Tharindu"] },
   issues: { count: 1, label: "Awaiting decision" },
   ready: { count: 1, run_codes: ["RUN-022"] },
 };
 
+/** Every dock of Peliyagoda with a truck in, by arrival (GET /loader/runs). */
 export const mockQueue: RunQueue = {
-  groups: [
+  depot: "peliyagoda",
+  docks: [
     {
-      label: "Fresh · night wave",
-      brand: "fresh",
-      wave: "night",
+      dock: "Dock 1",
+      dock_code: "DOCK1",
       runs: [
         {
-          code: "RUN-021",
-          vehicle_code: "VEH001",
-          vehicle_type: "truck",
-          temp_capability: "reefer",
-          trip_number: 1,
-          brand: "fresh",
-          district: "Gampaha",
-          departs_at: at("03:30"),
-          status: "loading",
-          stop_count: 4,
-          orders_loaded: 5,
-          orders_checked: 5,
-          orders_total: 8,
-          loader: "Saman J.",
-          chips: ["Truck", "Reefer", "5,510 kg · 26.4 m³"],
-          alert: {
-            tone: "warning",
-            message: "Plan updated 02:14 · v2 → v3",
-            action: "Review",
-            href: "/loader/runs/RUN-021",
-          },
-        },
-        {
-          code: "RUN-022",
-          vehicle_code: "VEH005",
-          vehicle_type: "truck",
-          temp_capability: "reefer",
-          trip_number: 1,
-          brand: "fresh",
-          district: "Colombo",
-          departs_at: at("03:40"),
-          status: "ready_to_depart",
-          stop_count: 2,
-          orders_loaded: 4,
-          orders_checked: 4,
-          orders_total: 4,
-          loader: "Nimal S.",
-          chips: ["Truck", "Reefer", "rear_dock 04:00–07:45"],
-          alert: {
-            tone: "success",
-            message: "Signed off · driver can collect",
-            action: "View",
-            href: "/loader/runs/RUN-022/ready",
-          },
-        },
-        {
+          dock: "Dock 1",
+          stage: "loading",
+          arrived_at: at("01:20"),
+          picked_by: "Tharindu J.",
+          picked_at: at("01:35"),
           code: "RUN-027",
           vehicle_code: "VEH035",
           vehicle_type: "van",
@@ -538,6 +502,11 @@ export const mockQueue: RunQueue = {
           },
         },
         {
+          dock: "Dock 1",
+          stage: "at_dock",
+          arrived_at: at("01:45"),
+          picked_by: null,
+          picked_at: null,
           code: "RUN-029",
           vehicle_code: "VEH005",
           vehicle_type: "truck",
@@ -563,11 +532,77 @@ export const mockQueue: RunQueue = {
       ],
     },
     {
-      label: "Style · day wave",
-      brand: "style",
-      wave: "day",
+      dock: "Dock 2",
+      dock_code: "DOCK2",
       runs: [
         {
+          dock: "Dock 2",
+          stage: "ready",
+          arrived_at: at("00:50"),
+          picked_by: null,
+          picked_at: null,
+          code: "RUN-022",
+          vehicle_code: "VEH005",
+          vehicle_type: "truck",
+          temp_capability: "reefer",
+          trip_number: 1,
+          brand: "fresh",
+          district: "Colombo",
+          departs_at: at("03:40"),
+          status: "ready_to_depart",
+          stop_count: 2,
+          orders_loaded: 4,
+          orders_checked: 4,
+          orders_total: 4,
+          loader: "Nimal S.",
+          chips: ["Truck", "Reefer", "rear_dock 04:00–07:45"],
+          alert: {
+            tone: "success",
+            message: "Signed off · driver can collect",
+            action: "View",
+            href: "/loader/runs/RUN-022/ready",
+          },
+        },
+        {
+          dock: "Dock 2",
+          stage: "loading",
+          arrived_at: at("01:10"),
+          picked_by: null,
+          picked_at: null,
+          code: "RUN-021",
+          vehicle_code: "VEH001",
+          vehicle_type: "truck",
+          temp_capability: "reefer",
+          trip_number: 1,
+          brand: "fresh",
+          district: "Gampaha",
+          departs_at: at("03:30"),
+          status: "loading",
+          stop_count: 4,
+          orders_loaded: 5,
+          orders_checked: 5,
+          orders_total: 8,
+          loader: "Saman J.",
+          chips: ["Truck", "Reefer", "5,510 kg · 26.4 m³"],
+          alert: {
+            tone: "warning",
+            message: "Plan updated 02:14 · v2 → v3",
+            action: "Review",
+            href: "/loader/runs/RUN-021",
+          },
+        },
+      ],
+    },
+    {
+      dock: "Dock 4",
+      dock_code: "DOCK4",
+      runs: [
+        {
+          dock: "Dock 4",
+          stage: "at_dock",
+          arrived_at: at("01:55"),
+          picked_by: null,
+          picked_at: null,
           code: "RUN-031",
           vehicle_code: "VEH012",
           vehicle_type: "truck",
@@ -583,31 +618,6 @@ export const mockQueue: RunQueue = {
           orders_total: 3,
           loader: null,
           chips: ["Truck", "Ambient", "3,200 kg · 18.0 m³"],
-          alert: null,
-        },
-      ],
-    },
-    {
-      label: "Tech · day wave",
-      brand: "tech",
-      wave: "day",
-      runs: [
-        {
-          code: "RUN-033",
-          vehicle_code: "VEH020",
-          vehicle_type: "van",
-          temp_capability: "ambient",
-          trip_number: 1,
-          brand: "tech",
-          district: "Gampaha",
-          departs_at: at("06:30"),
-          status: "not_started",
-          stop_count: 2,
-          orders_loaded: 0,
-          orders_checked: 0,
-          orders_total: 2,
-          loader: null,
-          chips: ["Van", "Ambient", "1,500 kg · 9.0 m³"],
           alert: null,
         },
       ],

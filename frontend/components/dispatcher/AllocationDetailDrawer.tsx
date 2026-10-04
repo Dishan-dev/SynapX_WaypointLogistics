@@ -14,6 +14,7 @@ import { StatusBadge, StatusVariant } from "./StatusBadge";
 import { toast } from "sonner";
 import { type Allocation } from "./AllocationTable";
 import { fetchWithFallback } from "@/lib/api";
+import { AdjustAllocationPlanDialog } from "./AdjustAllocationPlanDialog";
 
 interface AllocationDetailDrawerProps {
   open: boolean;
@@ -32,6 +33,7 @@ export function AllocationDetailDrawer({
   const router = useRouter();
   const [docks, setDocks] = React.useState<{id: number, code: string, name: string}[]>([]);
   const [selectedDock, setSelectedDock] = React.useState<string>("");
+  const [showEditOrders, setShowEditOrders] = React.useState(false);
 
   React.useEffect(() => {
     if (open) {
@@ -164,6 +166,7 @@ export function AllocationDetailDrawer({
   const unavailableState = allocation.vehicle?.maintenance_state || "Unavailable";
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* showCloseButton={false} — we have our own Close button in the footer */}
       <DialogContent className="max-w-[400px] p-0 overflow-hidden bg-white" showCloseButton={false}>
@@ -381,9 +384,9 @@ export function AllocationDetailDrawer({
                   <Button
                     variant="outline"
                     className="px-4 shadow-none border-slate-200 text-slate-700 font-medium flex-1"
-                    onClick={() => onOpenChange(false)}
+                    onClick={() => setShowEditOrders(true)}
                   >
-                    Close
+                    Adjust Orders
                   </Button>
                   <Button
                     style={{ backgroundColor: "#1c355e", color: "#ffffff" }}
@@ -398,13 +401,22 @@ export function AllocationDetailDrawer({
 
             {/* READY or LOADING — Loader handles dispatch, dispatcher just views */}
             {(isReadyMode || isLoadingMode) && (
-              <Button
-                variant="outline"
-                className="px-4 shadow-none border-slate-200 text-slate-700 font-medium flex-1"
-                onClick={() => onOpenChange(false)}
-              >
-                Close
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  className="px-4 shadow-none border-slate-200 text-slate-700 font-medium flex-1"
+                  onClick={() => onOpenChange(false)}
+                >
+                  Close
+                </Button>
+                <Button
+                  variant="outline"
+                  className="px-4 shadow-none border-slate-200 text-slate-700 font-medium flex-1"
+                  onClick={() => setShowEditOrders(true)}
+                >
+                  Adjust Orders
+                </Button>
+              </div>
             )}
 
             {/* DISPATCHED — navigate to Delivery Runs */}
@@ -435,5 +447,15 @@ export function AllocationDetailDrawer({
 
       </DialogContent>
     </Dialog>
+    {showEditOrders && allocation && (
+      <AdjustAllocationPlanDialog
+        allocation={allocation}
+        onClose={() => setShowEditOrders(false)}
+        onSave={() => {
+          onSuccess();
+        }}
+      />
+    )}
+    </>
   );
 }

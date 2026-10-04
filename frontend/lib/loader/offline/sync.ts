@@ -5,7 +5,6 @@ import {
   isPlanConflict,
   type ConflictCode,
   type QueuedAction,
-  type QueuedActionPayload,
   type ReleaseBlocker,
 } from "../types";
 import { deleteOutboxAction, getCachedRun, listOutbox, putCachedRun, putOutboxAction } from "./db";
@@ -41,16 +40,13 @@ const CONFLICT_CODES: ConflictCode[] = [
   "UNDO_WINDOW_EXPIRED",
   "CLIENT_ACTION_ID_REUSED",
   "INVALID_STATE_TRANSITION",
+  "RUN_PICKED_BY_OTHER",
+  "RUN_NOT_PICKED",
 ];
 
 function conflictCode(d: Record<string, unknown> | undefined): ConflictCode {
   const code = d?.code as ConflictCode | undefined;
   return code && CONFLICT_CODES.includes(code) ? code : "INVALID_STATE_TRANSITION";
-}
-
-/** A 404 for the loader_session_id rather than for the run or order. */
-function isUnknownSession(res: TransportResponse): boolean {
-  return res.status === 404 && errorDetail(res.body)?.entity === "LoaderSession";
 }
 
 async function send(transport: Transport, action: QueuedAction): Promise<TransportResponse | NetworkError> {
@@ -78,19 +74,11 @@ export async function flushOutbox(transport: Transport): Promise<FlushResult> {
   const result = (offline: boolean): FlushResult => ({ sent, offline, staleRuns: [...staleRuns] });
 
   for (const queued of pending) {
-    let action = queued;
-    let res = await send(transport, action);
-
-    // loader_session_id is optional until L2, but an id the server does not
-    // know is a 404. A tap queued under one (an old mock id, a session removed
-    // on the server) is sent again once without it, so the tap is kept and
-    // only checked_by stays empty. The 404 stored nothing, so the same
-    // client_action_id is safe to reuse.
-    if (!(res instanceof NetworkError) && isUnknownSession(res) && action.payload.loader_session_id !== null) {
-      action = { ...action, payload: { ...action.payload, loader_session_id: null } as QueuedActionPayload };
-      await putOutboxAction(action);
-      res = await send(transport, action);
-    }
+    // A tap with no signed-in loader (422), a session the server does not
+    // know (404) and a run another loader holds (409 RUN_PICKED_BY_OTHER /
+    // RUN_NOT_PICKED) are all refused for good below: shown, never retried.
+    const action = queued;
+    const res = await send(transport, action);
 
     if (res instanceof NetworkError) {
       await putOutboxAction({ ...action, attempts: action.attempts + 1, last_error: res.message });

@@ -14,6 +14,7 @@ from app.services.loader_service import LoaderService
 from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     at,
     build_run_021,
+    hold,
     loader_client,
     make_issue,
     make_loader,
@@ -87,7 +88,9 @@ def figma_v3(db, run, acknowledged=True):
     if acknowledged:
         LoaderService.acknowledge_plan(
             db, RUN, 3,
-            AcknowledgePlanRequest(client_action_id=uuid.uuid4(), plan_version=3),
+            AcknowledgePlanRequest(
+                client_action_id=uuid.uuid4(), plan_version=3, loader_session_id=hold(db, run).id
+            ),
         )
         db.flush()
 
@@ -126,18 +129,16 @@ def test_acknowledge_unblocks_the_checklist(loader_client, db_session):
     assert entry.message == "Plan v3 received · Saman Jayawardena"
 
 
-def test_acknowledge_without_a_session_records_an_unknown_loader(loader_client, db_session):
-    """Optional until L2 sign-in lands; then it becomes required."""
+def test_acknowledge_without_a_session_is_refused(loader_client, db_session):
+    """A signed-in loader who picked the run is required: no session is a 422."""
     run, _ = build_run_021(db_session)
     publish(db_session, run, load_new_order_numbers=["ORD0092319"])
 
-    response = acknowledge(loader_client, 3)
+    response = acknowledge(loader_client, 3, loader_session_id=None)
 
-    assert response.status_code == 200, response.text
-    assert response.json()["plan"]["acknowledged_by"] is None
-    assert revision(db_session, run, 3).acknowledged_at is not None
-    [entry] = activity(db_session, run, "plan_acknowledged")
-    assert entry.message == "Plan v3 received · unknown loader"
+    assert response.status_code == 422, response.text
+    assert revision(db_session, run, 3).acknowledged_at is None
+    assert activity(db_session, run, "plan_acknowledged") == []
 
 
 def test_an_acknowledge_replay_returns_200_and_logs_once(loader_client, db_session):

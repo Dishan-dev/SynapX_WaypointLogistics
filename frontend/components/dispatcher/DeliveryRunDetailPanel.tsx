@@ -51,7 +51,8 @@ export function DeliveryRunDetailPanel({ run, onClose, onUpdate, onViewManifest,
         toast.success("Run published successfully");
         onUpdate();
       } else {
-        toast.error("Failed to publish run");
+        const errorData = await res.json().catch(() => ({}));
+        toast.error(errorData.detail || "Failed to publish run");
       }
     } catch {
       toast.error("Error connecting to server");

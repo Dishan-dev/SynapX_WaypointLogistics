@@ -67,6 +67,21 @@ async function fetchStoreSession(): Promise<StoreSession> {
 const storeSessionForRequest = cache(fetchStoreSession);
 let browserStoreSession: Promise<StoreSession> | null = null;
 
+export function clearStoreSessionCache(): void {
+  browserStoreSession = null;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("waypoint:auth-session-changed", () => {
+    clearStoreSessionCache();
+  });
+  window.addEventListener("storage", (e) => {
+    if (e.key?.includes("waypoint") || e.key?.includes("token")) {
+      clearStoreSessionCache();
+    }
+  });
+}
+
 /**
  * Who is signed in and which outlet they run. Every Store Manager read and write is scoped to this outlet.
  * Throws ApiError 401/403 when the user isn't a store manager or isn't assigned to an outlet yet.

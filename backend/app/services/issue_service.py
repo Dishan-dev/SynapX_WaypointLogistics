@@ -9,6 +9,8 @@ from app.models.order import Order
 from app.schemas.delivery_issue import DeliveryIssueCreate, DeliveryIssueUpdate
 from app.schemas.store_order import summarise_delivery
 from app.services.notification_service import notification_service
+from app.services.user_notification_service import notify_role
+from app.models.user import UserRole
 
 
 class IssueService:
@@ -52,10 +54,11 @@ class IssueService:
         if order is not None and payload.outlet_id is not None and order.outlet_id != payload.outlet_id:
             raise HTTPException(status_code=403, detail="That order belongs to another outlet.")
         delivery = summarise_delivery(order.allocation) if order is not None else None
+        resolved_outlet_id = payload.outlet_id or (order.outlet_id if order else None)
         issue = DeliveryIssue(
             order_id=payload.order_id,
             order_number=payload.order_number or (order.order_number if order else None),
-            outlet_id=payload.outlet_id,
+            outlet_id=resolved_outlet_id,
             issue_type=payload.issue_type,
             title=payload.title,
             affected_item=payload.affected_item,
@@ -73,6 +76,13 @@ class IssueService:
             status="open",
         )
         db.add(issue)
+        db.flush()
+        notify_role(
+            db, role=UserRole.DISPATCHER, depot=order.depot if order else None,
+            event_key=f"store-issue:{issue.id}", category="issue",
+            title=f"Store issue: {issue.order_number or issue.title}",
+            message=issue.description, target_url="/dispatcher/exceptions",
+        )
         db.commit()
         db.refresh(issue)
         if issue.outlet_id is not None:
@@ -80,7 +90,12 @@ class IssueService:
                 db,
                 issue.outlet_id,
                 NotificationType.ISSUE_LOGGED,
-                {"order_id": issue.order_id, "issue_code": f"ISS{issue.id:07d}", "note": issue.title},
+                {
+                    "order_id": issue.order_id,
+                    "order_number": issue.order_number,
+                    "issue_code": f"ISS{issue.id:07d}",
+                    "note": issue.title,
+                },
             )
         return issue
 
