@@ -2,22 +2,27 @@
 
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { RoleGuard } from "@/components/auth/role-guard";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useAuth } from "@/lib/auth-context";
 import { depotLabel, userLabel } from "@/lib/loader/format";
 import type { CachedQueue } from "@/lib/loader/offline/db";
 import { ISSUES_EVENT } from "@/lib/loader/offline/issues-cache";
 import { cachedQueue, QUEUE_EVENT } from "@/lib/loader/offline/queue-cache";
+import { createTransport, MOCK_TRANSPORT, NetworkError, SignInRefusedError } from "@/lib/loader/offline/transport";
 import {
   endReason,
   endSession,
   IDLE_SIGN_OUT_MS,
   IDLE_WARNING_MS,
   readSession,
+  saveSession,
   subscribeSession,
   type StoredSession,
 } from "@/lib/loader/session";
 import type { SessionEndReason } from "@/lib/loader/types";
 import { LoaderButton } from "./loader-button";
+import { LoaderGateScreen } from "./loader-gate-screen";
 import { LoaderShell } from "./loader-shell";
 import { useLoaderSync } from "./loader-sync-provider";
 
@@ -34,9 +39,24 @@ function useHydrated(): boolean {
 }
 
 /**
- * Loader screens need a signed-in loader. Without a session this goes to
- * sign-in: after a sign-out here it says why; otherwise (never signed in, or
- * signed out in another tab) it comes back to the same page afterwards.
+ * Loader screens need the shared Waypoint (Keycloak) sign-in with the loader
+ * role, like the dispatcher's. With NEXT_PUBLIC_LOADER_TRANSPORT=mock there is
+ * no server and no Keycloak, so the sample loader is let in.
+ */
+export function LoaderAuthGate({ children }: { children: React.ReactNode }) {
+  if (MOCK_TRANSPORT) return <>{children}</>;
+  return (
+    <RoleGuard allowedRoles={["loader"]} fallbackTitle="Loader Access Required">
+      {children}
+    </RoleGuard>
+  );
+}
+
+/**
+ * Loader screens need a tablet session. Without one it is opened at once for
+ * the signed-in account (POST /loader/session, no PIN). After a sign-out here
+ * it goes to /loader/sign-in instead, which says why; signed out in another
+ * tab, it opens a new one.
  */
 export function SessionGate({ children }: { children: React.ReactNode }) {
   const stored = useStoredSession();
@@ -44,16 +64,16 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
   const issueCount = useIssueCount(stored?.session.depot);
   const router = useRouter();
   const pathname = usePathname();
+  const reason = hydrated && !stored ? endReason() : undefined;
 
   React.useEffect(() => {
-    if (!hydrated || stored) return;
-    const reason = endReason();
-    router.replace(reason ? `/loader/sign-in?reason=${reason}` : `/loader/sign-in?next=${encodeURIComponent(pathname)}`);
-  }, [hydrated, stored, router, pathname]);
+    if (reason) router.replace(`/loader/sign-in?reason=${reason}&next=${encodeURIComponent(pathname)}`);
+  }, [reason, router, pathname]);
 
   const user = React.useMemo(() => (stored ? userLabel(stored.user) : undefined), [stored]);
 
   if (!stored || !user) {
+    if (hydrated && !reason) return <OpenSession />;
     return <div aria-busy className="min-h-dvh bg-background" />;
   }
   return (
@@ -68,6 +88,73 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
       <IdleSignOut />
     </LoaderShell>
   );
+}
+
+type Opening = { status: "opening" } | { status: "refused"; message: string } | { status: "offline" };
+
+/**
+ * Opens this account's loader session and saves it, which lets SessionGate
+ * show the loader. A missing or expired token goes back to the Waypoint
+ * sign-in; a refusal (no depot yet, not a loader, two loaders with the name)
+ * says why.
+ */
+function OpenSession() {
+  const { user: account, loginWithKeycloak, logout } = useAuth();
+  const transport = React.useMemo(() => createTransport(), []);
+  const [state, setState] = React.useState<Opening>({ status: "opening" });
+  const [attempt, setAttempt] = React.useState(0);
+  const name = account?.name;
+
+  React.useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const session = await transport.startSession({});
+        if (cancelled) return;
+        if (!session) {
+          void loginWithKeycloak("loader", window.location.pathname + window.location.search);
+          return;
+        }
+        const { id, short_name } = session.loader;
+        saveSession({ session, user: { id, short_name, full_name: name || short_name } });
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof SignInRefusedError) setState({ status: "refused", message: err.message });
+        else if (err instanceof NetworkError) setState({ status: "offline" });
+        else throw err;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [transport, attempt, name, loginWithKeycloak]);
+
+  const retry = () => {
+    setState({ status: "opening" });
+    setAttempt((n) => n + 1);
+  };
+  const signOut = MOCK_TRANSPORT ? null : (
+    <LoaderButton variant="secondary" onClick={() => void logout(true)}>
+      Sign out
+    </LoaderButton>
+  );
+
+  if (state.status === "refused") {
+    return (
+      <LoaderGateScreen title="Can't open the loader" message={state.message}>
+        <LoaderButton onClick={retry}>Try again</LoaderButton>
+        {signOut}
+      </LoaderGateScreen>
+    );
+  }
+  if (state.status === "offline") {
+    return (
+      <LoaderGateScreen title="Can't reach the server" message="Check the tablet's connection, then try again.">
+        <LoaderButton onClick={retry}>Try again</LoaderButton>
+      </LoaderGateScreen>
+    );
+  }
+  return <LoaderGateScreen title="Signing in…" message={name ? `Opening the loader for ${name}.` : undefined} />;
 }
 
 /**

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.core.config import settings
 from app.models.delivery_run import RunOrderState, RunStatus
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.reference import DockTablet
@@ -170,7 +171,8 @@ def test_loaded_units_handoff_and_quantity_sent_agree(loader_client, setup):
 
 
 @pytest.fixture
-def signed_in(loader_client, setup):
+def signed_in(loader_client, setup, monkeypatch):
+    monkeypatch.setattr(settings, "LOADER_PIN_SIGN_IN", True)  # signs in with the test PIN
     s = setup
     s.db.add(DockTablet(label="Dock tablet 3", dock_id=s.run.dock_id, is_active=True))
     s.db.flush()
