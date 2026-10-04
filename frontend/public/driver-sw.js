@@ -5,7 +5,7 @@
 //
 // Same approach as public/loader-sw.js.
 
-const VERSION = "driver-v1";
+const VERSION = "driver-v2"; // v2: no /driver/login (drivers use the shared /login)
 const PAGES = `${VERSION}-pages`;
 const STATIC = `${VERSION}-static`;
 
@@ -14,7 +14,6 @@ const STATIC = `${VERSION}-static`;
 // first trip. A trip page is saved the first time it is opened.
 const SHELL_PAGES = [
   "/driver",
-  "/driver/login",
   "/driver/profile",
   "/driver/trip",
   "/driver/trip/arrived",

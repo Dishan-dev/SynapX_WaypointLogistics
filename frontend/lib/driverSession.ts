@@ -9,12 +9,10 @@ import { clearToken } from "./auth";
 import { cachedGet, writeCache } from "./driverCache";
 import { claimQueue } from "./syncQueue";
 
-const SIGNED_OUT_KEY = "driver-signed-out"; // why the app sent the driver back to log in
-
 export type SignOutReason = "expired" | "inactive" | "not-driver";
 
 export const SIGN_OUT_MESSAGES: Record<SignOutReason, string> = {
-  expired: "You were logged out. Log in again to carry on.",
+  expired: "The Waypoint server didn't accept your sign-in. Try again, or ask your depot admin.",
   inactive: "This account is turned off. Ask your depot admin.",
   "not-driver": "This is not a driver account. Sign in with your driver account.",
 };
@@ -44,19 +42,9 @@ export function forgetScreens() {
  * logout). Unsent records stay and send when the same driver logs in again; if
  * a different driver logs in first, they are deleted.
  */
-export function signOut(reason?: SignOutReason) {
+export function signOut() {
   clearToken();
   forgetScreens();
-  if (reason) sessionStorage.setItem(SIGNED_OUT_KEY, reason);
-}
-
-/** Why the app logged the driver out, for the login screen. */
-export function signOutReason(): SignOutReason | null {
-  return sessionStorage.getItem(SIGNED_OUT_KEY) as SignOutReason | null;
-}
-
-export function clearSignOutReason() {
-  sessionStorage.removeItem(SIGNED_OUT_KEY);
 }
 
 /**
