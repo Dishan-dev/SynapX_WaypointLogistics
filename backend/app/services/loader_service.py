@@ -3347,18 +3347,6 @@ class LoaderService:
                     allocation = db.query(Allocation).filter(Allocation.id == trip.allocation_id).first()
                     if allocation:
                         allocation.status = AllocationStatus.DISPATCHED
-                        
-                    orders = db.query(Order).filter(
-                        Order.allocation_id == trip.allocation_id,
-                        Order.status.in_([OrderStatus.ALLOCATED, OrderStatus.PROCESSING, OrderStatus.READY_FOR_DISPATCH])
-                    ).all()
-                    for order in orders:
-                        if order.status == OrderStatus.ALLOCATED:
-                            order_service.update_order_status(db, order.id, OrderStatus.PROCESSING, commit=False)
-                        if order.status == OrderStatus.PROCESSING:
-                            order_service.update_order_status(db, order.id, OrderStatus.READY_FOR_DISPATCH, commit=False)
-                        if order.status == OrderStatus.READY_FOR_DISPATCH:
-                            order_service.update_order_status(db, order.id, OrderStatus.DISPATCHED, commit=False)
                             
         return run, False
 
