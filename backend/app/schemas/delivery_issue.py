@@ -28,6 +28,16 @@ class DeliveryIssueCreate(DeliveryIssueBase):
 
 
 class DeliveryIssueUpdate(BaseModel):
+    issue_type: Optional[str] = None
+    title: Optional[str] = None
+    affected_item: Optional[str] = None
+    sku: Optional[str] = None
+    expected_units: Optional[int] = None
+    received_units: Optional[int] = None
+    description: Optional[str] = None
+    photo_url: Optional[str] = None
+    photo_name: Optional[str] = None
+    photo_size: Optional[str] = None
     status: Optional[str] = None
     resolution_notes: Optional[str] = None
     claimed_amount: Optional[str] = None
