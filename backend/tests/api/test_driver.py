@@ -307,6 +307,19 @@ def test_start_is_the_gate_out(loader_client, released):
     assert dispatch_trip.loading_events[-1]["status"] == "ok"
 
 
+def test_deliveries_wait_for_start(loader_client, released):
+    driver = released["driver"]
+    trip = trip_detail(loader_client, driver, today(loader_client, driver)[0]["id"])
+    stop = trip["stops"][0]
+
+    arrive = loader_client.patch(f"{API}/stops/{stop['id']}/arrive", headers=auth(driver))
+    outcome = loader_client.patch(f"{API}/stops/{stop['id']}/outcome", headers=auth(driver), json={"outcome": "failed"})
+
+    assert (arrive.status_code, outcome.status_code) == (409, 409)
+    assert "Start the trip first" in arrive.json()["detail"]
+    assert trip_detail(loader_client, driver, trip["id"])["stops"][0]["status"] == "pending"
+
+
 def test_starting_twice_returns_the_same_trip(loader_client, released):
     trip = today(loader_client, released["driver"])[0]
     first = start(loader_client, released["driver"], trip["id"])

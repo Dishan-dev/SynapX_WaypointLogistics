@@ -56,7 +56,7 @@ import NavigationButton from "@/components/driver-map/NavigationButton";
 
 // ─── View modes & States ──────────────────────────────────────────────────────
 type ViewMode = "map" | "list";
-type MapState = "NO_ACTIVE_ROUTE" | "ACTIVE_ROUTE" | "COMPLETED_ROUTE" | "OFFLINE";
+type MapState = "NO_ACTIVE_ROUTE" | "NOT_STARTED" | "ACTIVE_ROUTE" | "COMPLETED_ROUTE" | "OFFLINE";
 
 export default function DriverRouteMapPage() {
   const router = useRouter();
@@ -94,7 +94,9 @@ export default function DriverRouteMapPage() {
   if (offline && !trip) {
     mapState = "OFFLINE";
   } else if (trip) {
-    if (allTerminal) {
+    if (trip.status === "assigned") {
+      mapState = "NOT_STARTED"; // a route preview: deliveries wait for Start
+    } else if (allTerminal) {
       mapState = "COMPLETED_ROUTE";
     } else {
       mapState = "ACTIVE_ROUTE";
@@ -365,7 +367,7 @@ export default function DriverRouteMapPage() {
             )}
 
             {/* Selected stop sheet (tap on marker) */}
-            {selectedStop && (
+            {selectedStop && mapState !== "NOT_STARTED" && (
               <DeliveryStopSheet
                 stop={selectedStop}
                 tripId={trip?.id ?? 0}
@@ -384,6 +386,10 @@ export default function DriverRouteMapPage() {
                 mapRef={mapRef}
                 gpsPosition={gpsPosition}
               />
+            )}
+
+            {!selectedStop && mapState === "NOT_STARTED" && trip && (
+              <TripNotStartedCard tripId={trip.id} runCode={trip.run_code} />
             )}
 
             {/* All stops done — complete trip */}
@@ -429,7 +435,7 @@ export default function DriverRouteMapPage() {
 
           {(mapState === "ACTIVE_ROUTE" || mapState === "COMPLETED_ROUTE") && stops.length > 0 && <DriverRouteProgress stops={stops} />}
 
-          {selectedStop && (
+          {selectedStop && mapState !== "NOT_STARTED" && (
             <DeliveryStopSheet
               stop={selectedStop}
               tripId={trip?.id ?? 0}
@@ -437,6 +443,10 @@ export default function DriverRouteMapPage() {
               mapRef={mapRef}
               gpsPosition={gpsPosition}
             />
+          )}
+
+          {!selectedStop && mapState === "NOT_STARTED" && trip && (
+            <TripNotStartedCard tripId={trip.id} runCode={trip.run_code} />
           )}
 
           {!selectedStop && mapState === "ACTIVE_ROUTE" && nextStop && (
@@ -576,6 +586,23 @@ function AllDoneCard({
           {completing ? "Completing…" : "Complete Trip"}
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Before Start the map is a route preview: deliveries open once the trip is under way. */
+function TripNotStartedCard({ tripId, runCode }: { tripId: number; runCode?: string | null }) {
+  return (
+    <div className="flex flex-col gap-2 p-4 rounded-2xl bg-white" style={{ border: "1px solid #D9E1E8" }}>
+      <span className="text-[14px] font-bold text-[#12202E]">{runCode ?? "Your trip"} hasn&apos;t started yet</span>
+      <span className="text-[12px] text-[#5D6A78]">
+        This is the route preview. Start the trip once the loader marks the truck ready, then deliver from here.
+      </span>
+      <Link href={`/driver/trip/${tripId}`}>
+        <button className="w-full h-[44px] rounded-xl font-bold text-white text-[14px]" style={{ backgroundColor: "#092C4C" }}>
+          Open trip
+        </button>
+      </Link>
     </div>
   );
 }

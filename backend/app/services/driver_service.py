@@ -569,6 +569,13 @@ def get_stop(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
     return stop
 
 
+def _require_started(stop: DeliveryStop) -> None:
+    """Deliveries happen on the road: a stop's arrival, outcome and proof wait for
+    Start, which is also the loader's gate-out."""
+    if stop.driver_trip.status != DriverTripStatus.STARTED:
+        raise HTTPException(status_code=409, detail="Start the trip first. Deliveries begin once you've left the depot.")
+
+
 def get_stop_detail(db: Session, stop_id: int, driver_id: int) -> dict:
     """Stop fields plus the order (and its items) delivered at this stop."""
     stop = get_stop(db, stop_id, driver_id)
@@ -658,6 +665,7 @@ def record_arrival(db: Session, stop_id: int, driver_id: int, at: Optional[datet
     # arrival replayed from the offline queue is never a conflict
     if stop.status != DeliveryStopStatus.PENDING:
         return stop
+    _require_started(stop)
 
     stop.status = DeliveryStopStatus.ARRIVED
     stop.arrived_at = _tap_time(at)
@@ -676,6 +684,7 @@ def record_outcome(db: Session, stop_id: int, outcome: DeliveryStopStatus, drive
     # Idempotent; the driver may also change the outcome until POD is submitted
     if stop.status == outcome:
         return stop
+    _require_started(stop)
     if stop.pod is not None:
         raise HTTPException(status_code=400, detail="Proof of delivery already submitted for this stop")
     # Orders already sent back to the dispatcher can't be delivered on this trip
@@ -704,6 +713,7 @@ def submit_pod(db: Session, stop_id: int, pod_data: dict, driver_id: int) -> Pro
     existing_pod = db.query(ProofOfDelivery).filter(ProofOfDelivery.stop_id == stop.id).first()
     if existing_pod:
         return existing_pod
+    _require_started(stop)
 
     # photo_url always holds a JSON array of URLs (a POD can have several photos)
     photo_url = pod_data.get("photo_url")
@@ -742,7 +752,10 @@ def submit_pod(db: Session, stop_id: int, pod_data: dict, driver_id: int) -> Pro
 
 def complete_stop(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
     stop = get_stop(db, stop_id, driver_id)
-    
+    if stop.completed_at is not None:
+        return stop  # a replayed complete from the offline queue
+    _require_started(stop)
+
     # If outcome is delivered, ensure POD exists
     if stop.status in [DeliveryStopStatus.DELIVERED, DeliveryStopStatus.PARTIAL]:
         if not stop.pod:
