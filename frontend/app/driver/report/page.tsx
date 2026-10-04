@@ -20,6 +20,8 @@ export default function ReportProblemPage() {
 
   const [selectedIssue, setSelectedIssue] = useState("Outlet closed");
   const [notes, setNotes] = useState("");
+  // How late the problem makes the truck: the stores still to come get a later ETA
+  const [delayMinutes, setDelayMinutes] = useState(0);
   const [activeTrip, setActiveTrip] = useState<any>(null);
   const [currentStop, setCurrentStop] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -32,6 +34,12 @@ export default function ReportProblemPage() {
     { label: "Access denied", icon: DoorClosed, backendType: "customer_unavailable" },
     { label: "Order mismatch", icon: PackageX, backendType: "other" }, // not damage; the label goes in the description
     { label: "Other", icon: Ellipsis, backendType: "other" },
+  ];
+  const delays = [
+    { label: "No delay", minutes: 0 },
+    { label: "15 min", minutes: 15 },
+    { label: "30 min", minutes: 30 },
+    { label: "1 hour", minutes: 60 },
   ];
 
   useEffect(() => {
@@ -81,6 +89,7 @@ export default function ReportProblemPage() {
       stop_id: currentStop ? currentStop.id : null,
       issue_type: issueConfig.backendType,
       description: notes.trim() ? `${selectedIssue}: ${notes.trim()}` : selectedIssue, // dispatch sees what the driver picked
+      ...(delayMinutes > 0 ? { delay_minutes: delayMinutes } : {}),
     };
     const action = {
       action_type: "issue" as const,
@@ -197,6 +206,38 @@ export default function ReportProblemPage() {
               );
             })}
           </div>
+        </div>
+
+        {/* Delay: the stores still to come are told the new time */}
+        <div className="flex flex-col gap-1.5 w-full mt-1">
+          <span className="font-semibold text-[12px]" style={{ color: "#12202E" }}>Will this make you late?</span>
+          <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Expected delay">
+            {delays.map((d) => {
+              const isSelected = delayMinutes === d.minutes;
+              return (
+                <button
+                  key={d.minutes}
+                  type="button"
+                  role="radio"
+                  aria-checked={isSelected}
+                  onClick={() => setDelayMinutes(d.minutes)}
+                  className={`h-[40px] rounded-lg text-[13px] ${isSelected ? "font-bold" : "font-medium"}`}
+                  style={{
+                    backgroundColor: isSelected ? "#EAF2FF" : "#FFFFFF",
+                    border: `1px solid ${isSelected ? "#2167D5" : "#D9E1E8"}`,
+                    color: "#12202E",
+                  }}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+          {delayMinutes > 0 && (
+            <p className="text-[11px]" style={{ color: "#5D6A78" }}>
+              The stores you haven&apos;t reached yet get a new arrival time.
+            </p>
+          )}
         </div>
 
         {/* Optional note */}
