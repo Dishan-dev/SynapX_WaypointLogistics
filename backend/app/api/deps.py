@@ -11,7 +11,22 @@ from app.models.user import User, UserRole
 from app.models.depot_dispatcher import DepotDispatcherAssignment
 from app.models.reference import Depot
 from app.schemas.auth import TokenPayload
+import requests
+from threading import Lock
 
+# JWKS Cache
+_jwks = None
+_jwks_lock = Lock()
+
+def get_jwks():
+    global _jwks
+    with _jwks_lock:
+        if _jwks is None:
+            jwks_url = f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}/protocol/openid-connect/certs"
+            response = requests.get(jwks_url, timeout=10)
+            response.raise_for_status()
+            _jwks = response.json()
+        return _jwks
 # Make token optional so KEYCLOAK_DEV_MODE endpoints don't require the header
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl=f"{settings.API_V1_STR}/auth/login",
@@ -66,10 +81,33 @@ def get_current_user(
     # 2. Try decoding Keycloak / OIDC JWT
     if not payload:
         try:
-            unverified = jwt.get_unverified_claims(token)
-            if "realm_access" in unverified or "iss" in unverified or "preferred_username" in unverified:
-                payload = unverified
-        except Exception:
+            unverified_header = jwt.get_unverified_header(token)
+            jwks = get_jwks()
+            
+            # Find the RSA public key that matches the 'kid' in the JWT header
+            rsa_key = {}
+            for key in jwks.get("keys", []):
+                if key["kid"] == unverified_header.get("kid"):
+                    rsa_key = {
+                        "kty": key["kty"],
+                        "kid": key["kid"],
+                        "use": key["use"],
+                        "n": key["n"],
+                        "e": key["e"]
+                    }
+                    break
+            
+            if rsa_key:
+                payload = jwt.decode(
+                    token,
+                    rsa_key,
+                    algorithms=[settings.KEYCLOAK_ALGORITHM],
+                    audience=settings.KEYCLOAK_AUDIENCE if settings.KEYCLOAK_AUDIENCE else None,
+                    issuer=f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}",
+                    options={"verify_aud": bool(settings.KEYCLOAK_AUDIENCE)}
+                )
+        except Exception as e:
+            print(f"Keycloak token validation failed: {e}")
             pass
 
     if not payload or not payload.get("sub"):

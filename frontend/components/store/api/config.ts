@@ -5,7 +5,7 @@ import { MOCK_NOW } from "@/components/store/mock-data";
 //   NEXT_PUBLIC_STORE_DATA_SOURCE=api            — the backend at NEXT_PUBLIC_API_URL
 // Stays on mock until the Store Manager migration is applied to the shared database.
 export const STORE_DATA_SOURCE: "mock" | "api" =
-  process.env.NEXT_PUBLIC_STORE_DATA_SOURCE === "api" ? "api" : "mock";
+  process.env.NEXT_PUBLIC_STORE_DATA_SOURCE === "mock" ? "mock" : "api";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000").replace(/\/$/, "");
 

@@ -177,10 +177,16 @@ def update_delivery_run(
         if run.allocation_id:
             orders = db.query(Order).filter(
                 Order.allocation_id == run.allocation_id,
-                Order.status == OrderStatus.ALLOCATED
+                Order.status.in_([OrderStatus.ALLOCATED, OrderStatus.PROCESSING, OrderStatus.READY_FOR_DISPATCH])
             ).all()
             for order in orders:
-                order_service.update_order_status(db, order.id, OrderStatus.DISPATCHED, commit=False)
+                # Fast-forward through missing physical states to satisfy the state machine
+                if order.status == OrderStatus.ALLOCATED:
+                    order_service.update_order_status(db, order.id, OrderStatus.PROCESSING, commit=False)
+                if order.status == OrderStatus.PROCESSING:
+                    order_service.update_order_status(db, order.id, OrderStatus.READY_FOR_DISPATCH, commit=False)
+                if order.status == OrderStatus.READY_FOR_DISPATCH:
+                    order_service.update_order_status(db, order.id, OrderStatus.DISPATCHED, commit=False)
 
     # Explicitly touch updated_at — onupdate lambda only fires on DB-level flush
     run.updated_at = datetime.now(timezone.utc)
