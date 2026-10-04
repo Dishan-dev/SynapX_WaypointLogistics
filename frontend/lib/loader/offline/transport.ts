@@ -1,10 +1,12 @@
 // How the tablet talks to the server: queued writes, run refetches and
-// sign-in. The mock transport stands in until the /loader endpoints are wired
-// up; set NEXT_PUBLIC_LOADER_TRANSPORT=api to use the real API at
-// NEXT_PUBLIC_API_URL.
+// sign-in. The real API at NEXT_PUBLIC_API_URL by default, with the signed-in
+// Waypoint (Keycloak) token on every request; the built-in sample data only
+// when NEXT_PUBLIC_LOADER_TRANSPORT=mock, so a deployed site never shows it by
+// accident.
 
 import { FLAGGABLE_STATES, ISSUE_TYPE_LABELS, planChangeAlert, UNDO_WINDOW_MS, withRecomputedCounts } from "../format";
 import { findMockRun, mockActivity, mockIssues, mockQueue, mockSession, mockSummary, mockUserPins, mockUsers } from "../mock-data";
+import { getAccessToken } from "@/lib/auth";
 import { currentSessionId } from "../session";
 import type {
   ActivityEntry,
@@ -80,9 +82,11 @@ export interface Transport {
   /** GET /loader/users?depot=: the loaders of the depot this tablet signs into. */
   fetchUsers(depot: string): Promise<LoaderUser[]>;
   /**
-   * POST /loader/session. Undefined for a wrong PIN (401); throws
-   * SignInRefusedError for a loader with no depot or another depot's (403),
-   * NetworkError when unreachable.
+   * POST /loader/session with the signed-in Waypoint account's token (no PIN).
+   * Undefined when the token is missing or expired (401): sign in again.
+   * Throws SignInRefusedError when the server refuses this account (403 no
+   * depot, not a loader account, switched off; 409 two loaders with the
+   * name), NetworkError when unreachable.
    */
   startSession(body: SessionRequest): Promise<LoaderSession | undefined>;
   /** DELETE /loader/session/{id}. Throws NetworkError when it has to be sent again later. */
@@ -107,12 +111,25 @@ export class RunPickedError extends Error {
   }
 }
 
-/** Sign-in refused for this loader (403): no depot yet, or another depot's loader. */
+/** Sign-in refused for this account: no depot yet, not a loader, switched off, or a name two loaders share. */
 export class SignInRefusedError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** The server's code, e.g. LOADER_NO_DEPOT. */
+    readonly code?: string,
+  ) {
     super(message);
     this.name = "SignInRefusedError";
   }
+}
+
+/** The signed-in Waypoint account's token, for every request to the API. */
+function withAuth(init: RequestInit = {}): RequestInit {
+  const token = getAccessToken();
+  if (!token) return init;
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${token}`);
+  return { ...init, headers };
 }
 
 /** What a pick or unpick came to. run is unset for a run the mock server has no detail for. */
@@ -158,11 +175,10 @@ export function apiTransport(baseUrl: string): Transport {
     async send({ method, path, body }) {
       let res: Response;
       try {
-        res = await fetch(`${api}${path}`, {
-          method,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
+        res = await fetch(
+          `${api}${path}`,
+          withAuth({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+        );
       } catch {
         throw new NetworkError();
       }
@@ -234,8 +250,9 @@ export function apiTransport(baseUrl: string): Transport {
         body: JSON.stringify(body),
       });
       if (res.status === 401) return undefined;
-      if (res.status === 403) {
-        throw new SignInRefusedError(String(errorBody(await res.json().catch(() => undefined)).message ?? "Sign-in refused."));
+      if (res.status === 403 || res.status === 409) {
+        const d = errorBody(await res.json().catch(() => undefined));
+        throw new SignInRefusedError(String(d.message ?? "Sign-in refused."), d.code ? String(d.code) : undefined);
       }
       if (!res.ok) throw new NetworkError(`HTTP ${res.status}`);
       return (await res.json()) as LoaderSession;
@@ -270,7 +287,7 @@ async function pickRequest(url: string, sessionId: number): Promise<PickResult> 
 
 async function request(url: string, init: RequestInit): Promise<Response> {
   try {
-    return await fetch(url, init);
+    return await fetch(url, withAuth(init));
   } catch {
     throw new NetworkError();
   }
@@ -778,10 +795,11 @@ export function mockTransport(latencyMs = 300): Transport {
     async startSession({ loader_user_id, pin, depot }) {
       if (!(await probeConnectivity())) throw new NetworkError();
       await new Promise((r) => setTimeout(r, latencyMs));
-      const user = mockUsers.find((u) => u.id === loader_user_id);
-      if (!user || mockUserPins[user.id] !== pin) return undefined;
+      // No PIN: the signed-in account is the mock session's loader.
+      const user = mockUsers.find((u) => u.id === (loader_user_id ?? mockSession.loader.id));
+      if (!user || (loader_user_id !== undefined && mockUserPins[user.id] !== pin)) return undefined;
       // Every mock loader works at the mock session's depot.
-      if (depot !== mockSession.depot) throw new SignInRefusedError(`${user.short_name} works at another depot.`);
+      if (depot && depot !== mockSession.depot) throw new SignInRefusedError(`${user.short_name} works at another depot.`);
 
       const rows = loadMockSessions();
       const id = Math.max(mockSession.session_id, ...Object.keys(rows).map(Number)) + 1;
@@ -1083,8 +1101,11 @@ export function simulateMockPlanChange(code: string): Run | undefined {
   return state[code];
 }
 
+/** True only when NEXT_PUBLIC_LOADER_TRANSPORT=mock: the built-in sample data, no server, no Keycloak. */
+export const MOCK_TRANSPORT = process.env.NEXT_PUBLIC_LOADER_TRANSPORT === "mock";
+
 export function createTransport(): Transport {
-  return process.env.NEXT_PUBLIC_LOADER_TRANSPORT === "api"
-    ? apiTransport(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000")
-    : mockTransport();
+  return MOCK_TRANSPORT
+    ? mockTransport()
+    : apiTransport(process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000");
 }
