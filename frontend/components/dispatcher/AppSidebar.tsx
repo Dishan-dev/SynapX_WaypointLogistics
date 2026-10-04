@@ -28,6 +28,9 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 
+import { getDispatcherDepot, DEPOT_CHANGE_EVENT, type DispatcherDepot } from "@/lib/dispatcher-depot";
+import { fetchWithFallback } from "@/lib/api";
+
 const navItems = [
   { name: "Dashboard", href: "/dispatcher", icon: LayoutDashboard },
   { name: "Orders", href: "/dispatcher/orders", icon: FileText },
@@ -46,6 +49,41 @@ export function AppSidebar() {
   const { user, logout } = useAuth();
   const displayName = user?.name || user?.username || "Dispatcher";
   const initials = displayName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+  const [userName, setUserName] = React.useState<string>("Dispatcher");
+  const [userRole, setUserRole] = React.useState<string>("DISPATCHER");
+  const [depot, setDepot] = React.useState<DispatcherDepot>(getDispatcherDepot());
+  const [isAssigned, setIsAssigned] = React.useState<boolean>(true);
+
+  React.useEffect(() => {
+    fetchWithFallback("/api/v1/auth/depot-scope", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.user_name) setUserName(data.user_name);
+        if (data.user_role) setUserRole(data.user_role);
+        if (data.depot) setDepot(data.depot);
+        if (data.is_assigned !== undefined) setIsAssigned(data.is_assigned);
+      })
+      .catch(() => {});
+
+    const onDepotChange = (e: Event) => {
+      const customEvent = e as CustomEvent<DispatcherDepot>;
+      if (customEvent.detail) setDepot(customEvent.detail);
+    };
+    window.addEventListener(DEPOT_CHANGE_EVENT, onDepotChange);
+    return () => window.removeEventListener(DEPOT_CHANGE_EVENT, onDepotChange);
+  }, []);
+
+  const getInitials = (name: string) => {
+    const parts = name.trim().split(" ");
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return name.slice(0, 2).toUpperCase();
+  };
+
+  const getDepotLabel = () => {
+    if (!isAssigned) return "Unassigned Hub";
+    return depot === "kandy" ? "Kandy Regional DC" : "Peliyagoda Central DC";
+  };
 
   return (
     <Sidebar variant="inset">
@@ -88,6 +126,17 @@ export function AppSidebar() {
           <div className="flex flex-col flex-1 overflow-hidden">
             <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
             <span className="text-xs text-sidebar-foreground/70 truncate">{user?.email || "Dispatch Portal"}</span>
+      <SidebarFooter className="p-3 border-t border-sidebar-border">
+        {/* Dynamic User Account Footer */}
+        <div className="flex items-center gap-2.5">
+          <div className="size-8 rounded-full bg-accent flex items-center justify-center text-accent-foreground font-semibold text-xs border border-border shrink-0">
+            {getInitials(userName)}
+          </div>
+          <div className="flex flex-col flex-1 overflow-hidden min-w-0">
+            <span className="text-xs font-semibold text-sidebar-foreground truncate">{userName}</span>
+            <span className={`text-[11px] truncate font-medium ${!isAssigned ? "text-amber-600 font-semibold" : "text-sidebar-foreground/70"}`}>
+              {getDepotLabel()}
+            </span>
           </div>
         </div>
         <SidebarMenu>

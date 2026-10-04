@@ -25,6 +25,10 @@ import {
   TARGET_ROLE_KEY,
 } from "@/lib/auth";
 
+// A Keycloak login code works once. React runs effects twice in development (and the effect can re-run when
+// the router updates), so remember which codes this page load already sent and never send one again.
+const exchangedCodes = new Set<string>();
+
 function CallbackHandler() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -53,6 +57,8 @@ function CallbackHandler() {
         setErrorMessage("No authorization code received from Keycloak");
         return;
       }
+      if (exchangedCodes.has(code)) return;
+      exchangedCodes.add(code);
 
       // Validate PKCE state if present in session
       const savedState = sessionStorage.getItem(PKCE_STATE_KEY);

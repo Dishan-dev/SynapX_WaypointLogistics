@@ -381,6 +381,19 @@ export function OrderDetailDrawer({
               </div>
             </div>
 
+            {/* Store Manager Notes */}
+            {order.notes && (
+              <div className="p-3.5 rounded-xl bg-amber-50/50 border border-amber-200/50 text-xs mt-3">
+                <div className="flex items-center gap-1.5 text-amber-700 font-medium mb-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>Store Manager Note</span>
+                </div>
+                <p className="text-amber-900 pl-5 leading-relaxed">
+                  {order.notes}
+                </p>
+              </div>
+            )}
+
             {/* Line Items Table without pricing */}
             <div>
               <div className="flex items-center justify-between mb-2.5">

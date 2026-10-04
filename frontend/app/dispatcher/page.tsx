@@ -27,6 +27,8 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { dispatcherDepotHeaders, getDispatcherDepot, setDispatcherDepot, type DispatcherDepot } from "@/lib/dispatcher-depot";
+import { fetchWithFallback } from "@/lib/api";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000").replace(/\/$/, "");
 
@@ -99,7 +101,8 @@ interface VehicleRecord {
 }
 
 export default function DispatcherDashboard() {
-  const [hubFilter, setHubFilter] = useState<"ALL" | "PELIYAGODA" | "KANDY">("ALL");
+  const [hubFilter, setHubFilter] = useState<DispatcherDepot>(() => getDispatcherDepot());
+  const [canSwitchDepot, setCanSwitchDepot] = useState(false);
   const [orders, setOrders] = useState<OrderRecord[]>([]);
   const [runs, setRuns] = useState<DeliveryRunRecord[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
@@ -108,15 +111,32 @@ export default function DispatcherDashboard() {
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
-  // Fetch all operational data
+  useEffect(() => {
+    void fetchWithFallback("/api/v1/auth/depot-scope", { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const scope = (await response.json()) as { depot?: DispatcherDepot; can_switch?: boolean };
+        if (scope.depot === "peliyagoda" || scope.depot === "kandy") {
+          setDispatcherDepot(scope.depot);
+          setHubFilter(scope.depot);
+        }
+        setCanSwitchDepot(scope.can_switch === true);
+      })
+      .catch(() => {
+        // The dashboard remains usable in local development before the API is running.
+      });
+  }, []);
+
+  // The depot is sent to the backend on every request; filtering here only
+  // refines the already-scoped response for display.
   const loadData = useCallback(async () => {
     setIsRefreshing(true);
     try {
       const [ordersRes, runsRes, vehiclesRes, outletsRes] = await Promise.allSettled([
-        fetch(`${API_BASE}/api/v1/orders/`, { cache: "no-store" }),
-        fetch(`${API_BASE}/api/v1/delivery-runs/`, { cache: "no-store" }),
-        fetch(`${API_BASE}/api/v1/fleet/vehicles`, { cache: "no-store" }),
-        fetch(`${API_BASE}/api/v1/outlets`, { cache: "no-store" }),
+        fetchWithFallback("/api/v1/orders/", { cache: "no-store" }),
+        fetchWithFallback("/api/v1/delivery-runs/", { cache: "no-store" }),
+        fetchWithFallback("/api/v1/fleet/vehicles", { cache: "no-store" }),
+        fetch(`${API_BASE}/api/v1/outlets?depot=${hubFilter}`, { cache: "no-store", headers: dispatcherDepotHeaders() }),
       ]);
 
       if (ordersRes.status === "fulfilled" && ordersRes.value.ok) {
@@ -142,29 +162,31 @@ export default function DispatcherDashboard() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [hubFilter]);
 
   useEffect(() => {
-    const initial = setTimeout(() => { void loadData(); }, 0);
+    // Defer the first pulse so the effect only subscribes to refresh work.
+    const initialLoad = window.setTimeout(() => void loadData(), 0);
     // Auto-refresh pulse every 45s
     const timer = setInterval(() => {
       void loadData();
     }, 45000);
-    return () => { clearTimeout(initial); clearInterval(timer); };
+    return () => {
+      window.clearTimeout(initialLoad);
+      clearInterval(timer);
+    };
   }, [loadData]);
 
   // Filtered runs & vehicles by selected Hub
   const filteredRuns = useMemo(() => {
-    if (hubFilter === "ALL") return runs;
     return runs.filter(
-      (r) => (r.depot_name || "").toLowerCase() === hubFilter.toLowerCase()
+      (r) => (r.depot_name || "").toLowerCase() === hubFilter
     );
   }, [runs, hubFilter]);
 
   const filteredVehicles = useMemo(() => {
-    if (hubFilter === "ALL") return vehicles;
     return vehicles.filter(
-      (v) => (v.depot_name || "").toLowerCase() === hubFilter.toLowerCase()
+      (v) => (v.depot_name || "").toLowerCase() === hubFilter
     );
   }, [vehicles, hubFilter]);
 
@@ -318,39 +340,34 @@ export default function DispatcherDashboard() {
 
         {/* Action Controls & Hub Toggle */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Hub Scope Selector */}
-          <div className="inline-flex rounded-lg border border-border bg-card p-1 text-xs font-medium">
-            <button
-              onClick={() => setHubFilter("ALL")}
-              className={`px-3 py-1 rounded-md transition-all ${
-                hubFilter === "ALL"
-                  ? "bg-primary text-primary-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              All Hubs
-            </button>
-            <button
-              onClick={() => setHubFilter("PELIYAGODA")}
-              className={`px-3 py-1 rounded-md transition-all ${
-                hubFilter === "PELIYAGODA"
-                  ? "bg-primary text-primary-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Peliyagoda
-            </button>
-            <button
-              onClick={() => setHubFilter("KANDY")}
-              className={`px-3 py-1 rounded-md transition-all ${
-                hubFilter === "KANDY"
-                  ? "bg-primary text-primary-foreground font-semibold shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Kandy
-            </button>
-          </div>
+          {canSwitchDepot ? (
+            <div className="inline-flex rounded-lg border border-border bg-card p-1 text-xs font-medium" aria-label="Depot scope">
+              <button
+                onClick={() => { setDispatcherDepot("peliyagoda"); setHubFilter("peliyagoda"); }}
+                className={`px-3 py-1 rounded-md transition-all ${
+                  hubFilter === "peliyagoda"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Peliyagoda
+              </button>
+              <button
+                onClick={() => { setDispatcherDepot("kandy"); setHubFilter("kandy"); }}
+                className={`px-3 py-1 rounded-md transition-all ${
+                  hubFilter === "kandy"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Kandy
+              </button>
+            </div>
+          ) : (
+            <Badge variant="outline" className="border-primary/30 bg-accent text-primary text-xs font-semibold">
+              {hubFilter === "peliyagoda" ? "Peliyagoda Depot" : "Kandy Depot"}
+            </Badge>
+          )}
 
           <Button
             variant="outline"

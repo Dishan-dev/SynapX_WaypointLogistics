@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Enum, Boolean, Text
 from sqlalchemy.orm import relationship
 from app.core.database import Base
-from app.models.reference import TemperatureClass
+from app.models.reference import Depot, TemperatureClass
 
 
 class OrderStatus(str, enum.Enum):
@@ -53,6 +53,10 @@ class Order(Base):
     # Loader order fields (Sachintha, migration 0003_order_loader_fields).
     # brand and weight_kg above are Nisith's (0a80c3e0353c); the loader reads those.
     outlet_id = Column(Integer, ForeignKey("outlets.id"), nullable=True)
+    # The depot that fulfils and dispatches this order.  Keep this directly on
+    # the order rather than deriving it from the outlet: an outlet relationship
+    # may be absent for legacy data, while dispatch scoping must always work.
+    depot = Column(Enum(Depot), default=Depot.PELIYAGODA, nullable=False, index=True)
     temperature_class = Column(Enum(TemperatureClass), nullable=True)
     units = Column(Integer, nullable=True)
     volume_m3 = Column(Float, nullable=True)

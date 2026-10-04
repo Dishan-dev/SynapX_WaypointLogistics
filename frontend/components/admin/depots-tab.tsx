@@ -11,11 +11,13 @@ import {
   Sun,
   CheckCircle2,
   RefreshCw,
+  UserRoundCheck,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -24,17 +26,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { DepotDetail } from "@/services/admin-service";
+import { AdminUser, DepotDetail } from "@/services/admin-service";
 
 interface DepotsTabProps {
   depotsData: { peliyagoda: DepotDetail; kandy: DepotDetail } | null;
+  users: AdminUser[];
   isLoading: boolean;
   onRefresh: () => void;
+  onAssignDispatcher: (depot: "peliyagoda" | "kandy", userId: number | string | null) => Promise<void>;
 }
 
-export function DepotsTab({ depotsData, isLoading, onRefresh }: DepotsTabProps) {
+export function DepotsTab({ depotsData, users, isLoading, onRefresh, onAssignDispatcher }: DepotsTabProps) {
   const [activeDepotKey, setActiveDepotKey] = useState<"peliyagoda" | "kandy">("peliyagoda");
   const [activeSubTab, setActiveSubTab] = useState<"vehicles" | "outlets" | "docks">("vehicles");
+  const [isSavingDispatcher, setIsSavingDispatcher] = useState(false);
+  const [dispatcherError, setDispatcherError] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   if (isLoading || !depotsData) {
     return (
@@ -47,6 +54,33 @@ export function DepotsTab({ depotsData, isLoading, onRefresh }: DepotsTabProps) 
   }
 
   const currentDepot = depotsData[activeDepotKey];
+  const dispatchers = users.filter(
+    (user) => user.role.toUpperCase() === "DISPATCHER" && user.is_active,
+  );
+
+  const updateDispatcher = async (value: string) => {
+    setIsSavingDispatcher(true);
+    setDispatcherError(null);
+    setNotification(null);
+    try {
+      const param = value === "unassigned" ? null : (/^\d+$/.test(value) ? Number(value) : value);
+      await onAssignDispatcher(activeDepotKey, param);
+      const assignedUser = dispatchers.find(
+        (d) => String(d.id) === value || d.keycloak_id === value || d.email === value
+      );
+      setNotification({
+        type: "success",
+        message: value === "unassigned"
+          ? `Cleared dispatcher assignment for ${currentDepot.name}.`
+          : `Assigned ${assignedUser?.full_name || "dispatcher"} to ${currentDepot.name}. Workspace scope active immediately.`,
+      });
+    } catch (error) {
+      setDispatcherError(error instanceof Error ? error.message : "Could not update the depot dispatcher.");
+    } finally {
+      setIsSavingDispatcher(false);
+    }
+  };
+
 
   return (
     <div className="space-y-6">
@@ -158,6 +192,85 @@ export function DepotsTab({ depotsData, isLoading, onRefresh }: DepotsTabProps) 
               </span>
             </div>
           </div>
+
+          <div className="rounded-lg border border-border bg-slate-50/70 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <UserRoundCheck className="size-4 text-primary" />
+                  <span>Assigned Dispatcher</span>
+                  {currentDepot.dispatcher && (
+                    <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-800 border-emerald-300 font-semibold">
+                      Live
+                    </Badge>
+                  )}
+                </div>
+                {currentDepot.dispatcher ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    <strong className="text-foreground">{currentDepot.dispatcher.full_name}</strong> &bull; {currentDepot.dispatcher.email}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-amber-700 font-medium">No dispatcher assigned. Orders and fleet operations are unmonitored for this hub.</p>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:items-end gap-1">
+                <Select
+                  value={
+                    currentDepot.dispatcher
+                      ? (currentDepot.dispatcher.id != null ? String(currentDepot.dispatcher.id) : (currentDepot.dispatcher.keycloak_id || "unassigned"))
+                      : "unassigned"
+                  }
+                  onValueChange={(value) => void updateDispatcher(value)}
+                  disabled={isSavingDispatcher}
+                >
+                  <SelectTrigger className="w-full bg-card sm:w-80 text-xs" aria-label={`Assigned dispatcher for ${currentDepot.name}`}>
+                    <SelectValue placeholder="Choose dispatcher" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Unassigned (No Dispatcher)</SelectItem>
+                    {dispatchers.map((user) => {
+                      const otherDepotKey = activeDepotKey === "peliyagoda" ? "kandy" : "peliyagoda";
+                      const otherDepot = depotsData[otherDepotKey];
+                      const isAtOther =
+                        (user.id != null && otherDepot?.dispatcher?.id === user.id) ||
+                        (Boolean(user.keycloak_id) && otherDepot?.dispatcher?.keycloak_id === user.keycloak_id);
+                      const isCurrent =
+                        (user.id != null && currentDepot.dispatcher?.id === user.id) ||
+                        (Boolean(user.keycloak_id) && currentDepot.dispatcher?.keycloak_id === user.keycloak_id);
+                      const userVal = user.id != null ? String(user.id) : (user.keycloak_id || user.email);
+
+                      return (
+                        <SelectItem key={userVal} value={userVal}>
+                          <span className="font-medium">{user.full_name}</span> &bull; {user.email}{" "}
+                          {isCurrent
+                            ? "✓ (Current)"
+                            : isAtOther
+                            ? `(Transfer from ${otherDepot.name.split(" ")[0]})`
+                            : ""}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+                {isSavingDispatcher && <span className="text-[11px] text-muted-foreground animate-pulse">Syncing assignment...</span>}
+              </div>
+            </div>
+            {dispatcherError && <p role="alert" className="mt-2 text-xs text-destructive">{dispatcherError}</p>}
+            {notification && (
+              <div
+                role="status"
+                className={`mt-2.5 p-2 rounded text-xs border ${
+                  notification.type === "success"
+                    ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                    : "bg-red-50 text-red-800 border-red-200"
+                }`}
+              >
+                {notification.message}
+              </div>
+            )}
+          </div>
+
 
           {/* Quick Metrics */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">

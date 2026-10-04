@@ -34,6 +34,22 @@ export function RouteOptimizationDialog({ run, onClose, onApply }: RouteOptimiza
       return next;
     });
   };
+  // Group stops: first by SLA urgency, then within groups by district-order
+  // Since stops don't directly carry district, use SLA as primary sort and
+  // cluster consecutive stops from the same name prefix (district approximation)
+
+  // Step 1: separate urgent (SLA failing) from passing
+  const passing = currentStops.filter(s => s.sla_ok);
+  const failing = currentStops.filter(s => !s.sla_ok);
+
+  // Step 2: cluster passing stops - sort alphabetically by name to group 
+  // nearby destinations (same district typically sorts together)
+  const sortedPassing = [...passing].sort((a, b) => a.name.localeCompare(b.name));
+
+  // Step 3: urgent stops go first, then clustered passing stops
+  const proposedStops: DeliveryRunStop[] = currentStops.length > 0
+    ? [...failing, ...sortedPassing]
+    : [];
 
   // Mark moved-earlier stops as "SLA recovered"
   const proposedWithSLA = proposedStops.map((stop, i) => {
@@ -91,7 +107,7 @@ export function RouteOptimizationDialog({ run, onClose, onApply }: RouteOptimiza
             <div>
               <DialogTitle className="text-xl font-bold text-slate-900 mb-1">Route Optimization Review</DialogTitle>
               <DialogDescription className="text-slate-500">
-                Compare current and proposed stop sequences before applying changes.
+                Proposed route clusters stops by destination area and prioritises urgent deliveries first.
               </DialogDescription>
             </div>
             <div className="bg-amber-50 border border-amber-200 text-amber-700 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 shrink-0 ml-4">
@@ -152,6 +168,11 @@ export function RouteOptimizationDialog({ run, onClose, onApply }: RouteOptimiza
                 {proposedWithSLA.length === 0 && <p className="text-sm text-slate-500 italic p-2">No stops</p>}
               </div>
             </div>
+          </div>
+          <div className="mt-4 p-3 bg-slate-50 rounded-[6px] border border-slate-200 text-xs text-slate-600">
+            <span className="font-semibold text-slate-700">How this works: </span>
+            SLA-at-risk deliveries are moved to the front of the route. Remaining stops are 
+            clustered alphabetically by destination to group nearby areas together.
           </div>
           
           <div className="flex justify-between gap-3 mt-6 pt-5 border-t border-slate-100">

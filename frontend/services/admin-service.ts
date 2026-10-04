@@ -9,15 +9,21 @@ function adminFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 export interface AdminUser {
-  id: number;
+  id?: number | null;
+  keycloak_id?: string;
+  username?: string;
   email: string;
   full_name: string;
   role: string;
   role_display: string;
+  assigned_depot?: string | null;
   is_active: boolean;
+  email_verified?: boolean;
+  is_keycloak_managed?: boolean;
   created_at?: string;
   updated_at?: string;
 }
+
 
 export interface RolePermission {
   id: string;
@@ -77,6 +83,13 @@ export interface OutletRecord {
   store_manager_phone?: string | null;
 }
 
+export interface DepotDispatcher {
+  id: number;
+  full_name: string;
+  email: string;
+  keycloak_id?: string | null;
+}
+
 export interface DepotDetail {
   key: string;
   name: string;
@@ -90,6 +103,7 @@ export interface DepotDetail {
   vehicles: Array<FleetVehicle>;
   outlet_count: number;
   outlets: Array<OutletRecord>;
+  dispatcher: DepotDispatcher | null;
 }
 
 export interface DepotSummary {
@@ -225,7 +239,7 @@ export const adminService = {
     return res.json();
   },
 
-  async createUser(payload: { email: string; full_name: string; password: string; role: string; is_active?: boolean }): Promise<AdminUser> {
+  async createUser(payload: { email: string; full_name: string; password: string; role: string; assigned_depot?: string | null; is_active?: boolean }): Promise<AdminUser> {
     const res = await adminFetch("/api/v1/admin/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -238,8 +252,8 @@ export const adminService = {
     return res.json();
   },
 
-  async updateUser(id: number, payload: Partial<AdminUser> & { password?: string }): Promise<AdminUser> {
-    const res = await adminFetch(`/api/v1/admin/users/${id}`, {
+  async updateUser(idOrKeycloakId: string | number, payload: Partial<AdminUser> & { password?: string; assigned_depot?: string | null }): Promise<AdminUser> {
+    const res = await adminFetch(`/api/v1/admin/users/${idOrKeycloakId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -251,8 +265,9 @@ export const adminService = {
     return res.json();
   },
 
-  async toggleUserStatus(id: number, isActive: boolean): Promise<AdminUser> {
-    const res = await adminFetch(`/api/v1/admin/users/${id}/status`, {
+
+  async toggleUserStatus(idOrKeycloakId: string | number, isActive: boolean): Promise<AdminUser> {
+    const res = await adminFetch(`/api/v1/admin/users/${idOrKeycloakId}/status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_active: isActive }),
@@ -260,6 +275,29 @@ export const adminService = {
     if (!res.ok) throw new Error("Failed to toggle user status");
     return res.json();
   },
+
+  async deleteUser(idOrKeycloakId: string | number): Promise<void> {
+    const res = await adminFetch(`/api/v1/admin/users/${idOrKeycloakId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to delete user");
+    }
+  },
+
+  async resetUserPassword(idOrKeycloakId: string | number, password: string, temporary: boolean = false): Promise<void> {
+    const res = await adminFetch(`/api/v1/admin/users/${idOrKeycloakId}/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password, temporary }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to reset password");
+    }
+  },
+
 
   // Roles & Access
   async getRoles(): Promise<RoleDetail[]> {
@@ -452,6 +490,32 @@ export const adminService = {
     if (!res.ok) throw new Error("Failed to fetch depot details");
     return res.json();
   },
+
+  async assignDepotDispatcher(depot: "peliyagoda" | "kandy", userIdOrKeycloakId: number | string | null): Promise<void> {
+    const payload: { user_id?: number | null; keycloak_id?: string | null } = {};
+    if (userIdOrKeycloakId === null || userIdOrKeycloakId === "unassigned") {
+      payload.user_id = null;
+    } else if (typeof userIdOrKeycloakId === "number") {
+      payload.user_id = userIdOrKeycloakId;
+    } else if (typeof userIdOrKeycloakId === "string") {
+      if (/^\d+$/.test(userIdOrKeycloakId)) {
+        payload.user_id = Number(userIdOrKeycloakId);
+      } else {
+        payload.keycloak_id = userIdOrKeycloakId;
+      }
+    }
+
+    const res = await adminFetch(`/api/v1/admin/depots/${depot}/dispatcher`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Failed to update the depot dispatcher");
+    }
+  },
+
 
   // Operational Configuration
   async getOperationalConfig(): Promise<OperationalConfigData> {
