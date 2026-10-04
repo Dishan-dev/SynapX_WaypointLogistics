@@ -92,7 +92,24 @@ Back as the store manager, open **Incoming Deliveries → Receive Delivery**. En
 
 ## Significant departures from the Designathon submission
 
-> **To do before submission:** list the departures here.
+The Designathon prototype covered four roles and a five-stage journey: Order, Plan, Load, Deliver, Receive. The built system keeps that journey. These are the changes we made while building it, and why.
+
+**1. A fifth role: System Administrator.** The prototype had no admin. A working system needs someone to create users, give them roles, and look after depots, outlets and the fleet. We added an admin workspace at `/admin`. Creating a user there also creates the account in Keycloak.
+
+**2. One sign-in for every role, including the loader.** The prototype had loaders pick their name and enter a PIN on a shared dock tablet. Every role now signs in through Waypoint Identity (Keycloak), so the system has one login, one session model and one audit trail. A user with several roles switches workspace at `/portal`. To keep the shared-tablet use the design aimed for, the loader workspace keeps **Switch user** and signs out automatically after 10 minutes of inactivity.
+
+**3. A dock hand-off between Plan and Load.** In the prototype, the dispatcher published the plan and the loader started loading. Two steps now come in between:
+
+- The dispatcher allocates the vehicle, then sends it to a dock (**Send to Dock**).
+- The driver confirms they have arrived at that dock (**I've arrived at Dock N**).
+
+Only then does the run appear in the loaders' queue. A loader takes the run with **Pick**, which locks it to them. This stops loading from starting before the truck is at the dock, and stops two loaders from working the same run.
+
+**4. Screens added beyond the prototype.**
+
+- **Loader:** an Issues list, an activity log and notifications. These were marked as not yet designed in the prototype.
+- **Dispatcher:** Analytics and Forecasts.
+- **Operational email** to dispatchers, store managers and admins, sent from a queue by a separate worker. See [Hosting](#hosting).
 
 ## Setup
 
