@@ -69,6 +69,7 @@ def test_active_store_delivery_issue_appears_with_outlet_and_order(db_session, c
         title="Two cartons missing",
         description="Only eight of ten cartons arrived.",
         affected_item="Cartons",
+        photo_url="https://pub-test.r2.dev/store/2026-10-04/sample.jpg",
         reported_by="Test Manager (Store Manager)",
         status="open",
     )
@@ -80,6 +81,7 @@ def test_active_store_delivery_issue_appears_with_outlet_and_order(db_session, c
     assert record["outlet_code"] == "STORE-EX"
     assert record["outlet_name"] == "Test Store"
     assert record["reported_by"] == "Test Manager (Store Manager)"
+    assert record["photo_url"] == "https://pub-test.r2.dev/store/2026-10-04/sample.jpg"
     response = client.get("/api/v1/operations/exceptions")
     assert response.status_code == 200
     assert any(row["id"] == record["id"] for row in response.json())
