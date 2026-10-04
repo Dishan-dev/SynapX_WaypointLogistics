@@ -182,9 +182,54 @@ export async function createStoreIssue(issue: NewStoreIssue): Promise<StoreIssue
       expected_units: issue.expectedUnits,
       received_units: issue.receivedUnits,
       description: issue.description,
-      // Photos are only kept on this device for now (no upload storage yet), so no link is sent.
+      photo_url: issue.photoUrl || null,
+      photo_name: issue.photoName || null,
+      photo_size: issue.photoSize || null,
       claimed_amount: issue.claimedAmount || null,
     }),
   });
   return fromApiIssue(created);
 }
+
+/** Updates an existing issue complaint. */
+export async function updateStoreIssue(
+  issueId: string | number,
+  updates: Partial<StoreIssue>
+): Promise<StoreIssue> {
+  if (STORE_DATA_SOURCE !== "api") {
+    throw new ApiError("Issue reporting needs the Waypoint server. Switch to live data.", 400);
+  }
+  const numericId = typeof issueId === "string" ? parseInt(issueId.replace(/^ISS/i, ""), 10) : issueId;
+  const payload: Record<string, unknown> = {};
+  if (updates.type !== undefined) payload.issue_type = updates.type;
+  if (updates.title !== undefined) payload.title = updates.title;
+  if (updates.affectedItem !== undefined) payload.affected_item = updates.affectedItem;
+  if (updates.sku !== undefined) payload.sku = updates.sku;
+  if (updates.expectedUnits !== undefined) payload.expected_units = updates.expectedUnits;
+  if (updates.receivedUnits !== undefined) payload.received_units = updates.receivedUnits;
+  if (updates.description !== undefined) payload.description = updates.description;
+  if (updates.photoUrl !== undefined) payload.photo_url = updates.photoUrl;
+  if (updates.photoName !== undefined) payload.photo_name = updates.photoName;
+  if (updates.photoSize !== undefined) payload.photo_size = updates.photoSize;
+  if (updates.status !== undefined) payload.status = updates.status;
+  if (updates.claimedAmount !== undefined) payload.claimed_amount = updates.claimedAmount;
+  if (updates.resolutionNotes !== undefined) payload.resolution_notes = updates.resolutionNotes;
+
+  const updated = await apiFetch<ApiDeliveryIssue>(`/issues/${numericId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return fromApiIssue(updated);
+}
+
+/** Deletes/withdraws a logged issue complaint. */
+export async function deleteStoreIssue(issueId: string | number): Promise<void> {
+  if (STORE_DATA_SOURCE !== "api") {
+    throw new ApiError("Issue reporting needs the Waypoint server. Switch to live data.", 400);
+  }
+  const numericId = typeof issueId === "string" ? parseInt(issueId.replace(/^ISS/i, ""), 10) : issueId;
+  await apiFetch<void>(`/issues/${numericId}`, {
+    method: "DELETE",
+  });
+}
+

@@ -87,15 +87,18 @@ class IssueService:
     @staticmethod
     def update_issue(db: Session, issue_id: int, payload: DeliveryIssueUpdate) -> DeliveryIssue:
         issue = IssueService.get_issue(db, issue_id)
-        if payload.status is not None:
-            issue.status = payload.status
-        if payload.resolution_notes is not None:
-            issue.resolution_notes = payload.resolution_notes
-        if payload.claimed_amount is not None:
-            issue.claimed_amount = payload.claimed_amount
+        update_data = payload.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(issue, key, value)
         db.commit()
         db.refresh(issue)
         return issue
+
+    @staticmethod
+    def delete_issue(db: Session, issue_id: int) -> None:
+        issue = IssueService.get_issue(db, issue_id)
+        db.delete(issue)
+        db.commit()
 
 
 issue_service = IssueService()

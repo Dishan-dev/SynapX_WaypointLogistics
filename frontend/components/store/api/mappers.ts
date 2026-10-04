@@ -4,6 +4,7 @@ import {
   type NotificationCategory,
   type NotificationType,
   type OrderStatus,
+  type StoreIssue as StoreDashboardIssue,
   type StoreNotification,
   type StoreOrder,
   type StoreManager,
@@ -340,6 +341,25 @@ export function toOutletSettings(api: ApiOutletSettings) {
     smsAlertsPriority: api.sms_alerts_priority,
     isVerified: api.is_verified,
     lastSyncedAt: api.last_synced_at ? new Date(api.last_synced_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "today at 14:31",
+  };
+}
+
+export interface ApiDeliveryIssueDashboard {
+  id: number;
+  order_id: number | null;
+  order_number: string | null;
+  issue_type: string;
+  title: string;
+  description: string;
+  status: string;
+}
+
+export function toStoreDashboardIssue(api: ApiDeliveryIssueDashboard): StoreDashboardIssue {
+  return {
+    code: `ISS${String(api.id).padStart(7, "0")}`,
+    orderNumber: api.order_number || (api.order_id ? `ORD${String(api.order_id).padStart(7, "0")}` : "ORD0000001"),
+    summary: `${api.title || api.issue_type}: ${api.description || "Review required."}`,
+    isOpen: api.status === "open" || api.status === "under_review",
   };
 }
 

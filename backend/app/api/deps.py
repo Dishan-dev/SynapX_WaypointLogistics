@@ -1,6 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Generator, Optional
-from zoneinfo import ZoneInfo
 from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -14,6 +13,8 @@ from app.models.store_manager import StoreManagerAssignment
 from app.schemas.auth import TokenPayload
 import requests
 from threading import Lock
+
+COLOMBO_TZ = timezone(timedelta(hours=5, minutes=30))
 
 # JWKS Cache
 _jwks = None
@@ -45,7 +46,8 @@ def get_db() -> Generator:
 
 def get_now() -> datetime:
     """Current Colombo time (naive), used for cutoffs. Tests override this to pin the clock."""
-    return datetime.now(ZoneInfo("Asia/Colombo")).replace(tzinfo=None)
+    return datetime.now(COLOMBO_TZ).replace(tzinfo=None)
+
 
 
 def get_current_user(
