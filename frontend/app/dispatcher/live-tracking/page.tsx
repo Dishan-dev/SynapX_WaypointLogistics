@@ -11,8 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001";
+import { apiFetch, ApiError } from "@/lib/api";
 
 export interface LiveRun {
   id: number;
@@ -56,17 +55,14 @@ export default function LiveTrackingPage() {
   const fetchRuns = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/delivery-runs/live`);
-      if (res.ok) {
-        const data: LiveRun[] = await res.json();
-        setRuns(data);
-        setLastRefreshed(new Date());
-        setSelectedRun(previous => previous ? data.find(r => r.id === previous.id) ?? previous : null);
-      } else {
-        toast.error("Failed to load live runs");
-      }
-    } catch {
-      toast.error("Network error loading live tracking");
+      const data = await apiFetch<LiveRun[]>("/delivery-runs/live");
+      setRuns(data);
+      setLastRefreshed(new Date());
+      setSelectedRun(previous => previous ? data.find(r => r.id === previous.id) ?? previous : null);
+    } catch (error) {
+      toast.error(error instanceof ApiError && error.status === 401
+        ? "Session expired. Sign in again to view live runs."
+        : error instanceof Error ? error.message : "Failed to load live runs");
     } finally {
       setIsLoading(false);
     }
@@ -99,16 +95,16 @@ export default function LiveTrackingPage() {
     if (!selectedRun) return;
     try {
       if (choice === "field") {
-        await fetch(`${API_BASE}/api/v1/delivery-runs/${selectedRun.id}/mark-stop-complete`, { method: "POST" });
+        await apiFetch(`/delivery-runs/${selectedRun.id}/mark-stop-complete`, { method: "POST" });
         toast.success("Conflict resolved — field outcome accepted");
       } else {
-        await fetch(`${API_BASE}/api/v1/delivery-runs/${selectedRun.id}/recall-run`, { method: "POST" });
+        await apiFetch(`/delivery-runs/${selectedRun.id}/recall-run`, { method: "POST" });
         toast.success("Conflict resolved — dispatcher plan applied");
       }
       setShowConflict(false);
-      fetchRuns();
-    } catch {
-      toast.error("Network error while resolving conflict");
+      void fetchRuns();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to resolve conflict");
     }
   };
 

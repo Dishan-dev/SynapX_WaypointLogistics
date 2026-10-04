@@ -44,14 +44,17 @@ let activeBaseUrl: string = API_URL;
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response | null = null;
-  const urlsToTry = Array.from(new Set([activeBaseUrl, ...apiBaseUrls(API_URL)].filter(Boolean)));
+  const browser = typeof window !== "undefined";
+  const urlsToTry = browser
+    ? ["/api/store-backend"]
+    : Array.from(new Set([activeBaseUrl, ...apiBaseUrls(API_URL)].filter(Boolean)));
   // The backend works out the store manager and their outlet from this token.
   const token = await sessionToken();
   const auth: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
   for (const baseUrl of urlsToTry) {
     try {
-      response = await fetch(`${baseUrl}/api/v1${path}`, {
+      response = await fetch(browser ? `${baseUrl}${path}` : `${baseUrl}/api/v1${path}`, {
         ...init,
         // File uploads (FormData) set their own multipart Content-Type.
         headers:
@@ -84,5 +87,9 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   }
 
   if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiError("Waypoint API returned an invalid response. Check NEXT_PUBLIC_API_URL.", 502);
+  }
 }

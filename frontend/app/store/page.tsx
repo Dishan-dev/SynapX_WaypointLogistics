@@ -11,9 +11,30 @@ import { getDashboardData } from "@/components/store/dashboard/dashboard-data";
 import { UpcomingDeliveries } from "@/components/store/dashboard/upcoming-deliveries";
 import { RecentRequests } from "@/components/store/dashboard/recent-requests";
 import { NeedsAttention } from "@/components/store/dashboard/needs-attention";
+import { ApiError } from "@/components/store/api/client";
+import { StoreAccessNotice } from "@/components/store/store-access-notice";
+import { StoreUnavailable } from "@/components/store/store-unavailable";
 
 // Figma: Desktop / 01 Dashboard and Mobile / 01 Dashboard.
 export default async function StoreDashboardPage() {
+  let orders: Awaited<ReturnType<typeof getStoreOrders>>;
+  let session: Awaited<ReturnType<typeof getStoreSession>>;
+  try {
+    session = await getStoreSession();
+    orders = await getStoreOrders();
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      return (
+        <StoreAccessNotice
+          title="Store Manager sign-in needed"
+          message="Sign in with a store manager account assigned to an outlet."
+        />
+      );
+    }
+    if (error instanceof ApiError) return <StoreUnavailable />;
+    throw error;
+  }
+
   const now = storeNow();
   // Open delivery issues for "Needs attention" (live: the outlet's issues from the API).
   const issues: DashboardIssue[] =
@@ -25,8 +46,7 @@ export default async function StoreDashboardPage() {
           isOpen: issue.status === "open" || issue.status === "under_review",
         }))
       : mockIssues;
-  const [orders, session] = await Promise.all([getStoreOrders(), getStoreSession().catch(() => null)]);
-  const outlet = session?.outlet ?? null;
+  const outlet = session.outlet;
   const data = getDashboardData(orders, issues);
   const next = data.nextDelivery;
   const nextEta = next?.eta ? formatTime(next.eta) : null;
@@ -41,7 +61,7 @@ export default async function StoreDashboardPage() {
           <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
             <span className="md:hidden">
               {greeting(now)}
-              {session ? `, ${session.manager.firstName}` : ""}
+              {`, ${session.manager.firstName}`}
             </span>
             <span className="hidden md:inline">Dashboard</span>
           </h1>

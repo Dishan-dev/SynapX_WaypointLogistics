@@ -11,6 +11,7 @@ import { StoreOutletProvider } from "@/components/store/outlet-context";
 import { ApiError } from "@/components/store/api/client";
 import { getStoreSession, type StoreSession } from "@/components/store/api/store-data";
 import { StoreAccessNotice } from "@/components/store/store-access-notice";
+import { StoreUnavailable } from "@/components/store/store-unavailable";
 
 // Store pages read live data when NEXT_PUBLIC_STORE_DATA_SOURCE=api, so render them per request.
 export const dynamic = "force-dynamic";
@@ -20,8 +21,7 @@ export const metadata: Metadata = {
 };
 
 export default async function StoreLayout({ children }: LayoutProps<"/store">) {
-  // The login decides the outlet. A missing or wrong login gets a sign-in screen, not the store; if the server
-  // is just unreachable the shell still renders and pages show their own error.
+  // The login decides the outlet. Expected auth and API failures render a useful state.
   let session: StoreSession | null = null;
   try {
     session = await getStoreSession();
@@ -39,6 +39,8 @@ export default async function StoreLayout({ children }: LayoutProps<"/store">) {
         />
       );
     }
+    if (error instanceof ApiError) return <StoreUnavailable />;
+    throw error;
   }
   const outlet = session?.outlet ?? null;
   const manager = session?.manager ?? null;

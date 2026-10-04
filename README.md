@@ -150,6 +150,12 @@ keycloak-theme/    Custom Keycloak login theme
 - [Store Manager contract](docs/reference/store-manager-contract.md)
 - [Loader documentation](docs/reference/loader/)
 
+## Continuous integration
+
+GitHub Actions runs the frontend build and allocation tests, plus backend unit tests, on pushes and pull requests. The workflow uses local SQLite for tests and needs no deployment credentials. Each Vercel project continues to handle deployment through its own Git integration when connected.
+
+The full frontend lint and backend API test suites are not CI gates yet: they currently fail on existing repository issues. Once those suites pass locally, add them to `.github/workflows/ci.yml` and make the CI jobs required in branch protection if deployments should wait for them.
+
 ## Production checklist
 
 - Disable `KEYCLOAK_DEV_MODE`.
