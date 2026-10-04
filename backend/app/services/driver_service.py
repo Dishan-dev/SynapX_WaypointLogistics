@@ -6,8 +6,8 @@ from typing import List, Optional, Tuple
 from datetime import date, datetime, time, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
-from sqlalchemy import and_, or_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, or_, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.core.exceptions import WaypointLogisticsError
@@ -615,7 +615,22 @@ def trigger_sos(db: Session, driver_id: int, sos_data: dict, at: Optional[dateti
     queue_sos(db, alert)
     db.commit()
     db.refresh(alert)
+    if sos_data.get("photo_url"):
+        _save_sos_photo(db, alert.id, sos_data["photo_url"])
     return alert
+
+
+def _save_sos_photo(db: Session, alert_id: int, photo_url: str) -> None:
+    """Remembers the SOS photo's link. On a database where migration 0016 hasn't
+    added sos_alerts.photo_url yet this fails; the SOS itself is already saved, so
+    it is only logged and the driver's alert still goes through."""
+    try:
+        with db.begin_nested():  # a failure here rolls back only this step, never the SOS
+            sos = SOSAlert.__table__
+            db.execute(update(sos).where(sos.c.id == alert_id).values(photo_url=photo_url))
+        db.commit()
+    except SQLAlchemyError as exc:
+        logger.warning("SOS %s: photo link not saved (run migration 0016_sos_photo): %s", alert_id, exc)
 
 
 def get_sos(db: Session, alert_id: int, driver_id: int) -> SOSAlert:
