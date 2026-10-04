@@ -177,6 +177,24 @@ export function NewRequestForm({
   const numbersPreview = STORE_DATA_SOURCE === "api" ? null : orderNumbers;
   const earliest = earliestDeliveryDate(now, isHighPriority, holidays);
 
+  // Days that already have an active order (shown with a dot), and whether this request may still use a day:
+  // Fresh outlets get one chilled and one ambient order per day, other brands one order per day.
+  const bookedDays = useMemo(
+    () =>
+      existingOrders
+        .filter((order) => order.status !== "cancelled" && order.status !== "draft")
+        .map((order) => parseISO(order.orderDate)),
+    [existingOrders]
+  );
+  const requestZones: TemperatureClass[] = groups.length
+    ? groups.map((group) => group.temperature)
+    : ["chilled", "ambient"];
+  const isFullyBooked = (date: Date) => {
+    const taken = findDuplicateOrders(existingOrders, outlet.brand, date, requestZones);
+    // With no items yet, a Fresh day is only full once both zones are taken.
+    return outlet.brand === "fresh" && groups.length === 0 ? taken.length >= 2 : taken.length > 0;
+  };
+
   // ── Validation (contract §6) ──
   const errors: { field: "items" | "date"; message: string }[] = [];
   if (lines.length === 0) errors.push({ field: "items", message: "Add at least one item to the request." });
@@ -691,7 +709,14 @@ export function NewRequestForm({
                       mode="single"
                       selected={deliveryDate}
                       defaultMonth={deliveryDate ?? earliest}
-                      disabled={(date) => !isSelectableDeliveryDate(date, now, isHighPriority, holidays)}
+                      disabled={(date) =>
+                        !isSelectableDeliveryDate(date, now, isHighPriority, holidays) || isFullyBooked(date)
+                      }
+                      modifiers={{ booked: bookedDays }}
+                      modifiersClassNames={{
+                        booked:
+                          "relative after:pointer-events-none after:absolute after:bottom-0.5 after:left-1/2 after:size-1.5 after:-translate-x-1/2 after:rounded-full after:bg-primary",
+                      }}
                       onSelect={(date) => {
                         setDeliveryDate(date);
                         if (date) setCalendarOpen(false);
@@ -699,7 +724,7 @@ export function NewRequestForm({
                       autoFocus
                     />
                     <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-                      No deliveries on Sundays or public holidays.
+                      No deliveries on Sundays or public holidays. A dot means you already have an order that day.
                     </p>
                   </PopoverContent>
                 </Popover>

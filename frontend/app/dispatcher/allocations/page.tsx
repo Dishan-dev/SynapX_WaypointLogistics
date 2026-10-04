@@ -4,10 +4,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { MetricCard } from "@/components/dispatcher/MetricCard";
 import { FilterBar } from "@/components/dispatcher/FilterBar";
 import { AllocationTable } from "@/components/dispatcher/AllocationTable";
-import { AllocationFormDrawer } from "@/components/dispatcher/AllocationFormDrawer";
 import { AllocationDetailDrawer } from "@/components/dispatcher/AllocationDetailDrawer";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
 import { type Allocation } from "@/components/dispatcher/AllocationTable";
 import { fetchWithFallback } from "@/lib/api";
 
@@ -34,9 +32,7 @@ export default function AllocationsPage() {
   const [fetchError, setFetchError] = useState(false);
 
   // Drawer states
-  const [isFormDrawerOpen, setIsFormDrawerOpen] = useState(false);
   const [selectedAllocation, setSelectedAllocation] = useState<Allocation | null>(null);
-  const [isReassignDrawerOpen, setIsReassignDrawerOpen] = useState(false);
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState("");
@@ -116,15 +112,6 @@ export default function AllocationsPage() {
             Review today&apos;s fleet assignments, capacity usage, drivers, and allocation readiness.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button 
-            onClick={() => setIsFormDrawerOpen(true)}
-            style={{ backgroundColor: "#1c355e", color: "#ffffff" }}
-            className="hover:opacity-90 transition-opacity border-transparent shadow-none"
-          >
-            <Plus className="mr-2 h-4 w-4" /> New Allocation
-          </Button>
-        </div>
       </div>
 
       {/* Metrics Row — counts computed live from data */}
@@ -147,34 +134,16 @@ export default function AllocationsPage() {
           onTypeChange={setTypeFilter}
         />
 
-        {isLoading ? (
-          <div className="flex items-center justify-center h-64 text-muted-foreground">
-            Loading allocations...
-          </div>
-        ) : fetchError ? (
+        {fetchError && !isLoading ? (
           <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
             <p className="text-sm font-medium text-destructive">Failed to load allocations from server.</p>
             <p className="text-xs text-muted-foreground">Check the backend is running, then retry.</p>
             <Button variant="outline" size="sm" onClick={fetchAllocations}>Retry</Button>
           </div>
         ) : (
-          <AllocationTable allocations={filteredData} onViewClick={handleViewClick} />
+          <AllocationTable allocations={filteredData} isLoading={isLoading} onViewClick={handleViewClick} />
         )}
       </div>
-
-      {/* New Allocation Form Drawer */}
-      <AllocationFormDrawer
-        open={isFormDrawerOpen}
-        onOpenChange={setIsFormDrawerOpen}
-        onSuccess={fetchAllocations}
-      />
-
-      {/* Reassign Driver quick-open */}
-      <AllocationFormDrawer
-        open={isReassignDrawerOpen}
-        onOpenChange={setIsReassignDrawerOpen}
-        onSuccess={fetchAllocations}
-      />
 
       {/* Detail Drawer — opens when View is clicked */}
       <AllocationDetailDrawer

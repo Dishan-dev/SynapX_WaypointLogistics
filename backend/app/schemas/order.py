@@ -110,4 +110,9 @@ class OrderRead(OrderBase):
     def temp_requirement(self) -> str:
         return self.temperature_zone or "Ambient"
 
+    @computed_field
+    @property
+    def requires_van(self) -> bool:
+        return getattr(self.outlet, "van_only", False) if getattr(self, "outlet", None) else False
+
     model_config = ConfigDict(from_attributes=True)
