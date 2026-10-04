@@ -44,11 +44,16 @@ def create_issue(
     current_user: User = Depends(deps.get_current_user),
 ):
     """Log a new discrepancy, damage report, or delivery exception. Store managers log it for their own outlet."""
+    outlet_id = payload.outlet_id
     if current_user.role in deps.STORE_ROLES:
         outlet = deps.resolve_store_outlet(db, current_user, payload.outlet_id)
-        payload = payload.model_copy(
-            update={"outlet_id": outlet.id, "reported_by": f"{current_user.full_name} (Store Manager)"}
-        )
+        outlet_id = outlet.id
+    payload = payload.model_copy(
+        update={
+            "outlet_id": outlet_id,
+            "reported_by": f"{current_user.full_name} (Store Manager)" if current_user.role in deps.STORE_ROLES else (payload.reported_by or current_user.full_name),
+        }
+    )
     return issue_service.create_issue(db, payload)
 
 

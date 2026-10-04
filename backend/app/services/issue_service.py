@@ -52,10 +52,11 @@ class IssueService:
         if order is not None and payload.outlet_id is not None and order.outlet_id != payload.outlet_id:
             raise HTTPException(status_code=403, detail="That order belongs to another outlet.")
         delivery = summarise_delivery(order.allocation) if order is not None else None
+        resolved_outlet_id = payload.outlet_id or (order.outlet_id if order else None)
         issue = DeliveryIssue(
             order_id=payload.order_id,
             order_number=payload.order_number or (order.order_number if order else None),
-            outlet_id=payload.outlet_id,
+            outlet_id=resolved_outlet_id,
             issue_type=payload.issue_type,
             title=payload.title,
             affected_item=payload.affected_item,
@@ -80,7 +81,12 @@ class IssueService:
                 db,
                 issue.outlet_id,
                 NotificationType.ISSUE_LOGGED,
-                {"order_id": issue.order_id, "issue_code": f"ISS{issue.id:07d}", "note": issue.title},
+                {
+                    "order_id": issue.order_id,
+                    "order_number": issue.order_number,
+                    "issue_code": f"ISS{issue.id:07d}",
+                    "note": issue.title,
+                },
             )
         return issue
 

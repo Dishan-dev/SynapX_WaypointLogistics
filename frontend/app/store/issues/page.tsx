@@ -54,7 +54,7 @@ function ExceptionsAndIssuesContent() {
   // Report & Edit Modal State
   const [showCreateModal, setShowCreateModal] = useState(autoOpenReport);
   const [editingIssue, setEditingIssue] = useState<StoreIssue | null>(null);
-  const [newOrderId, setNewOrderId] = useState(initialOrderParam || "ORD0000001");
+  const [newOrderId, setNewOrderId] = useState(initialOrderParam || "");
   const [newItemName, setNewItemName] = useState("");
   const [newItemSku, setNewItemSku] = useState("");
   const [newType, setNewType] = useState<"Damaged Goods" | "Missing Items" | "Quantity Mismatch" | "Temperature Breach">("Damaged Goods");
@@ -163,7 +163,7 @@ function ExceptionsAndIssuesContent() {
 
   const openCreateModal = () => {
     setEditingIssue(null);
-    setNewOrderId(initialOrderParam || "ORD0000001");
+    setNewOrderId(initialOrderParam || "");
     setNewItemName("");
     setNewItemSku("");
     setNewType("Damaged Goods");
