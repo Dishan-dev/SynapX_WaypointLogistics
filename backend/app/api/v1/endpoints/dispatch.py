@@ -1,15 +1,16 @@
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from app.api import deps
 from app.models.shipment import DispatchTrip
 from app.models.allocation import Allocation, AllocationStatus
 from app.models.fleet import DriverProfile
-from app.models.reference import Depot
+from app.models.reference import Depot, Outlet
 from app.schemas.shipment import DispatchTripCreate, DispatchTripRead, DeliveryRunResponse, DeliveryRunUpdate, LoadingEventIn
-from app.models.order import Order, OrderItem
+from app.models.order import Order, OrderItem, OrderStatus
 from app.services.loader_service import loader_service
+from app.services.order_service import order_service
 
 router = APIRouter()
 
@@ -163,6 +164,23 @@ def update_delivery_run(
     update_data = trip_in.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(run, field, value)
+
+    # Store Manager integration: When run goes en_route
+    if update_data.get("status") == "en_route":
+        # 1. Set ETA if not already set
+        if not run.estimated_arrival and run.departure_time:
+            minutes_per_stop = 30
+            eta_delta = timedelta(minutes=minutes_per_stop * max(run.stop_count or 1, 1))
+            run.estimated_arrival = run.departure_time + eta_delta
+
+        # 2. Update all orders for this allocation to DISPATCHED
+        if run.allocation_id:
+            orders = db.query(Order).filter(
+                Order.allocation_id == run.allocation_id,
+                Order.status == OrderStatus.ALLOCATED
+            ).all()
+            for order in orders:
+                order_service.update_order_status(db, order.id, OrderStatus.DISPATCHED, commit=False)
 
     # Explicitly touch updated_at — onupdate lambda only fires on DB-level flush
     run.updated_at = datetime.now(timezone.utc)
@@ -397,12 +415,38 @@ def mark_stop_complete(
         raise HTTPException(status_code=404, detail="Run not found")
 
     if run.stops_completed < run.stop_count:
+        completed_idx = run.stops_completed  # The 0-indexed stop that just finished
         run.stops_completed += 1
+
+        # Store Manager integration: Mark orders for this outlet as DELIVERED
+        if run.stop_sequence and completed_idx < len(run.stop_sequence):
+            stop = run.stop_sequence[completed_idx]
+            outlet_code = stop.get("outlet_code") if isinstance(stop, dict) else None
+            
+            if outlet_code and run.allocation_id:
+                outlet = db.query(Outlet).filter(Outlet.code == outlet_code).first()
+                if outlet:
+                    orders = db.query(Order).filter(
+                        Order.allocation_id == run.allocation_id,
+                        Order.outlet_id == outlet.id,
+                        Order.status == OrderStatus.DISPATCHED
+                    ).all()
+                    for order in orders:
+                        order_service.update_order_status(db, order.id, OrderStatus.DELIVERED, commit=False)
 
     # Auto-complete the run when all stops are done
     if run.stop_count > 0 and run.stops_completed >= run.stop_count:
         run.status = "completed"
         run.actual_arrival = datetime.now(timezone.utc)
+        
+        # Mark any remaining DISPATCHED orders as DELIVERED as a catch-all
+        if run.allocation_id:
+            remaining_orders = db.query(Order).filter(
+                Order.allocation_id == run.allocation_id,
+                Order.status == OrderStatus.DISPATCHED
+            ).all()
+            for order in remaining_orders:
+                order_service.update_order_status(db, order.id, OrderStatus.DELIVERED, commit=False)
 
     run.updated_at = datetime.now(timezone.utc)
     db.commit()
