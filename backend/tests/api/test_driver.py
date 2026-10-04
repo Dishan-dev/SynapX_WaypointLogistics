@@ -762,7 +762,7 @@ def test_photo_stays_local_without_r2_settings(loader_client, released, monkeypa
     assert (tmp_path / url.rsplit("/", 1)[-1]).exists()
 
 
-# ---- SOS photo (sos_alerts.photo_url, migration 0014) ------------------------------
+# ---- SOS photo (sos_alerts.photo_url, migration 0016) ------------------------------
 
 def sos_photo(db, alert_id):
     sos = SOSAlert.__table__
@@ -798,7 +798,7 @@ def test_offline_sos_keeps_its_photo_link(loader_client, released):
 
 
 def test_sos_goes_through_even_if_the_photo_link_cant_be_saved(loader_client, released, monkeypatch):
-    """Before migration 0014 the photo column is missing: the SOS must still be saved."""
+    """Before migration 0016 the photo column is missing: the SOS must still be saved."""
     from sqlalchemy.exc import OperationalError
     from app.services import driver_service
 

@@ -140,7 +140,7 @@ class IssueReport(Base):
 
 class SOSAlert(Base):
     __tablename__ = "sos_alerts"
-    # photo_url is in the table (migration 0014_sos_photo) but not mapped: saving and reading
+    # photo_url is in the table (migration 0016_sos_photo) but not mapped: saving and reading
     # an SOS never name it, so both keep working on a database where the migration hasn't
     # run yet. driver_service._save_sos_photo writes it through the table.
     __mapper_args__ = {"exclude_properties": ["photo_url"]}

@@ -621,7 +621,7 @@ def trigger_sos(db: Session, driver_id: int, sos_data: dict, at: Optional[dateti
 
 
 def _save_sos_photo(db: Session, alert_id: int, photo_url: str) -> None:
-    """Remembers the SOS photo's link. On a database where migration 0014 hasn't
+    """Remembers the SOS photo's link. On a database where migration 0016 hasn't
     added sos_alerts.photo_url yet this fails; the SOS itself is already saved, so
     it is only logged and the driver's alert still goes through."""
     try:
@@ -630,7 +630,7 @@ def _save_sos_photo(db: Session, alert_id: int, photo_url: str) -> None:
             db.execute(update(sos).where(sos.c.id == alert_id).values(photo_url=photo_url))
         db.commit()
     except SQLAlchemyError as exc:
-        logger.warning("SOS %s: photo link not saved (run migration 0014_sos_photo): %s", alert_id, exc)
+        logger.warning("SOS %s: photo link not saved (run migration 0016_sos_photo): %s", alert_id, exc)
 
 
 def get_sos(db: Session, alert_id: int, driver_id: int) -> SOSAlert:
