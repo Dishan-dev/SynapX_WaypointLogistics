@@ -493,8 +493,8 @@ class SessionRequest(BaseModel):
     optional now that tablets are not tied to a dock.
     """
 
-    loader_user_id: int
-    pin: str
+    loader_user_id: Optional[int] = None
+    pin: Optional[str] = None
     depot: Optional[Depot] = None
     dock_tablet_label: Optional[str] = None
 
