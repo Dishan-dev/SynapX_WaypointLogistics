@@ -1260,20 +1260,27 @@ def assign_depot_loader(
         }
 
     # Action is "assign"
+    is_any_dock = payload.dock_id is None or str(payload.dock_id).strip().lower() in ("any", "default", "")
     target_dock = None
-    if payload.dock_id is not None:
-        target_dock = db.query(Dock).filter(Dock.id == payload.dock_id, Dock.depot == depot).first()
+
+    if not is_any_dock:
+        target_dock = db.query(Dock).filter(Dock.id == int(payload.dock_id), Dock.depot == depot).first()
         if not target_dock:
             raise HTTPException(
                 status_code=400,
                 detail=f"Dock {payload.dock_id} does not belong to depot {depot.value.title()}.",
             )
     else:
-        target_dock = db.query(Dock).filter(Dock.depot == depot).first()
+        # Floating assignment: Assigned to depot, specific dock assigned later by dispatcher
+        any_dock_code = f"DCK-{depot.value[:3].upper()}-ANY"
+        target_dock = db.query(Dock).filter(
+            Dock.depot == depot,
+            (Dock.code == any_dock_code) | (Dock.name.ilike("%any dock%"))
+        ).first()
         if not target_dock:
             target_dock = Dock(
-                code=f"DCK-{depot.value[:3].upper()}-01",
-                name=f"{depot.value.title()} Bay 1",
+                code=any_dock_code,
+                name="Any Dock (Dispatcher Assigned)",
                 depot=depot,
             )
             db.add(target_dock)

@@ -74,7 +74,7 @@ export function DepotsTab({
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   const [allLoaders, setAllLoaders] = useState<DepotLoaderItem[]>([]);
   const [selectedLoaderId, setSelectedLoaderId] = useState<string>("");
-  const [selectedDockId, setSelectedDockId] = useState<string>("default");
+  const [selectedDockId, setSelectedDockId] = useState<string>("any");
   const [isAssigningLoader, setIsAssigningLoader] = useState(false);
   const [loaderModalError, setLoaderModalError] = useState<string | null>(null);
   const [unassigningLoaderId, setUnassigningLoaderId] = useState<number | null>(null);
@@ -136,7 +136,7 @@ export function DepotsTab({
 
   const handleOpenAssignModal = () => {
     setSelectedLoaderId("");
-    setSelectedDockId("default");
+    setSelectedDockId("any");
     setLoaderModalError(null);
     fetchAllLoaders();
     setIsAssignModalOpen(true);
@@ -147,7 +147,7 @@ export function DepotsTab({
     setIsAssigningLoader(true);
     setLoaderModalError(null);
     try {
-      const dockId = selectedDockId === "default" ? null : Number(selectedDockId);
+      const dockId = (selectedDockId === "any" || selectedDockId === "default") ? null : Number(selectedDockId);
       if (onAssignLoader) {
         await onAssignLoader(activeDepotKey, Number(selectedLoaderId), dockId);
       } else {
@@ -664,7 +664,7 @@ export function DepotsTab({
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {loader.dock_name ? (
+                          {loader.dock_name && !loader.dock_code?.includes("ANY") && !loader.dock_name.toLowerCase().includes("any") ? (
                             <div className="space-y-0.5">
                               <span className="font-semibold text-xs text-foreground">{loader.dock_name}</span>
                               {loader.dock_code && (
@@ -674,7 +674,9 @@ export function DepotsTab({
                               )}
                             </div>
                           ) : (
-                            <span className="text-xs text-muted-foreground italic">Depot General Bay</span>
+                            <Badge variant="outline" className="text-[11px] font-medium bg-amber-50 text-amber-900 border-amber-200">
+                              Any Dock (Assigned by Dispatcher)
+                            </Badge>
                           )}
                         </TableCell>
                         <TableCell>
@@ -832,23 +834,32 @@ export function DepotsTab({
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Home Dock / Loading Bay (Optional)</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Home Dock / Loading Bay</Label>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+                  Default: Any
+                </span>
+              </div>
               <Select value={selectedDockId} onValueChange={setSelectedDockId}>
                 <SelectTrigger className="w-full text-xs" aria-label="Select loading bay">
-                  <SelectValue placeholder="Select loading bay..." />
+                  <SelectValue placeholder="Any (Assigned to dock later by dispatcher)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="default">Default Hub Bay (Auto-assign)</SelectItem>
-                  {currentDepot.docks.map((dock) => (
-                    <SelectItem key={dock.id} value={String(dock.id)}>
-                      {dock.name} ({dock.code})
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="any">
+                    <span className="font-semibold text-primary">Any</span> &mdash; Assigned to dock later by dispatcher
+                  </SelectItem>
+                  {currentDepot.docks
+                    .filter((dock) => !dock.code?.includes("ANY") && !dock.name?.toLowerCase().includes("any dock"))
+                    .map((dock) => (
+                      <SelectItem key={dock.id} value={String(dock.id)}>
+                        Specific Bay: {dock.name} ({dock.code})
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-1">
                 <Info className="size-3 text-primary shrink-0" />
-                <span>Loaders can scan runs across any registered tablet terminal at this hub.</span>
+                <span>By default, loader is assigned to the depot as &quot;Any&quot; dock. The dispatcher will allocate them to a specific dock later during cargo staging.</span>
               </p>
             </div>
           </div>

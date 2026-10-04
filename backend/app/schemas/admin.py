@@ -173,7 +173,7 @@ class DepotLoaderItem(BaseModel):
 
 class DepotLoaderAssignRequest(BaseModel):
     loader_id: Union[int, str]
-    dock_id: Optional[int] = None
+    dock_id: Optional[Union[int, str]] = None
     action: Optional[str] = "assign"  # "assign" | "unassign"
 
 
