@@ -171,10 +171,11 @@ export function toTemperatureZone(temperature: TemperatureClass) {
   return temperature === "chilled" ? "Chilled" : "Ambient";
 }
 
-/** "6 unit Chilled Carton" -> "Cartons", "2 unit Shipping Pallet" -> "Pallets". */
+/** "6 unit Chilled Carton" -> "Items", "2 unit Shipping Pallet" -> "Pallets". */
 function unitLabelFor(pack: string | null) {
   const last = pack?.trim().split(/\s+/).pop();
-  return last ? `${last.charAt(0).toUpperCase()}${last.slice(1)}s` : "Units";
+  if (!last || last.toLowerCase().includes("carton")) return "Items";
+  return `${last.charAt(0).toUpperCase()}${last.slice(1)}s`;
 }
 
 export function toCatalogueItem(item: ApiCatalogueItem): CatalogueItem {
@@ -233,7 +234,7 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
         }
       : undefined,
     items: order.items.map((item) => {
-      // Order lines don't carry the pack label; every catalogue item ships by the carton, and an order is one
+      // Order lines don't carry the pack label; each item has a quantity, and an order is one
       // temperature zone, so the line shares the order's.
       return {
         sku: item.sku,
@@ -242,8 +243,18 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
         temperatureClass,
         quantity: item.quantity,
         quantitySent: item.quantity_sent ?? undefined,
+        dispatcherNote: item.dispatcher_note
+          ? {
+              reason: "Dispatcher Note",
+              message: item.dispatcher_note,
+              author: "Depot Dispatcher",
+              authorRole: "Dispatcher Team",
+              location: "Central Depot",
+              at: order.updated_at || order.created_at || new Date().toISOString(),
+            }
+          : undefined,
         depotNote: item.dispatcher_note ?? undefined,
-        unitLabel: "Cartons",
+        unitLabel: "Items",
       };
     }),
   };

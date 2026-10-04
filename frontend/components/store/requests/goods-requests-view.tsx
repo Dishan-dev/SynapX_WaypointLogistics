@@ -32,6 +32,7 @@ import { DateRangeFilter } from "@/components/store/requests/date-range-filter";
 import {
   applyRequestFilters,
   getRequestSummary,
+  isOrderDeferred,
   ordersInTab,
   requestTabs,
   totalUnits,
@@ -327,10 +328,10 @@ export function GoodsRequestsView({
                       </StoreTableCell>
                       <StoreTableCell>
                         <OrderStatusPill order={order} />
-                        {order.status === "deferred" && (
-                          <span className="mt-1 block max-w-xs truncate text-xs text-warning-muted-foreground" title={order.deferralReason}>
+                        {isOrderDeferred(order) && (
+                          <span className="mt-1 block max-w-xs truncate text-xs text-warning-muted-foreground" title={order.deferralReason ?? "Deferred / partial fulfillment by depot"}>
                             {order.deferralCount && order.deferralCount > 1 ? `(${order.deferralCount}×) ` : ""}
-                            {order.deferralReason ?? "Depot deferral"}
+                            {order.deferralReason ?? "Partial fulfillment / deferral"}
                           </span>
                         )}
                       </StoreTableCell>
@@ -359,10 +360,10 @@ export function GoodsRequestsView({
                       </Link>
                       <OrderStatusPill order={order} />
                     </div>
-                    {order.status === "deferred" && (
+                    {isOrderDeferred(order) && (
                       <div className="flex flex-col gap-0.5 rounded bg-warning-muted/50 p-2 text-xs text-warning-muted-foreground">
                         <span className="font-semibold">
-                          Deferred {order.deferralCount && order.deferralCount > 1 ? `(${order.deferralCount}×)` : ""}
+                          {order.status === "deferred" ? "Deferred" : "Partial Deferral"} {order.deferralCount && order.deferralCount > 1 ? `(${order.deferralCount}×)` : ""}
                         </span>
                         {order.deferralReason && <span>{order.deferralReason}</span>}
                       </div>

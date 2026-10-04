@@ -98,7 +98,7 @@ export function RequestDetailView({
   const partialCount = order.items.filter((item) => allocationFor(order, item) !== "full" && allocationFor(order, item) !== "pending").length;
   const message = deliveryMessage(order, now);
   const activity = order.activity ?? [{ at: order.submittedAt, text: `Request submitted by ${manager.fullName}` }];
-  const unit = (item: StoreOrderItem, count: number) => `${count} ${item.unitLabel.toLowerCase()}`;
+  const unit = (_item: StoreOrderItem, count: number) => `${count} ${count === 1 ? "item" : "items"}`;
 
   const stepTimeLabel = (index: number) => {
     const step = PROGRESS_STEPS[index];
@@ -192,7 +192,7 @@ export function RequestDetailView({
         </div>
       </div>
 
-      {order.status === "deferred" && (
+      {order.status === "deferred" ? (
         <Alert className="border-warning/30 bg-warning-muted" role="status">
           <CircleAlert className="text-warning" aria-hidden="true" />
           <AlertTitle className="font-bold text-warning-muted-foreground">This request was deferred</AlertTitle>
@@ -200,7 +200,15 @@ export function RequestDetailView({
             {order.deferralReason ?? "The depot couldn't fit this request into the delivery plan. You'll get a notification with the new date."}
           </AlertDescription>
         </Alert>
-      )}
+      ) : order.deferralReason ? (
+        <Alert className="border-warning/30 bg-warning-muted" role="status">
+          <CircleAlert className="text-warning" aria-hidden="true" />
+          <AlertTitle className="font-bold text-warning-muted-foreground">Partial Deferral by Depot</AlertTitle>
+          <AlertDescription className="text-foreground/80">
+            {order.deferralReason}
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {order.shortfall && <ShortfallNotice shortfall={order.shortfall} />}
       {order.status === "cancelled" && (
         <Alert role="status">

@@ -1,4 +1,5 @@
 import type { OrderStatus, StoreIssue, StoreOrder } from "@/components/store/mock-data";
+import { isOrderDeferred } from "@/components/store/requests/request-filters";
 
 // Statuses where the depot is still working on the request (Figma "Active Requests").
 const ACTIVE_STATUSES: OrderStatus[] = [
@@ -25,7 +26,7 @@ export function getDashboardData(orders: StoreOrder[], issues: StoreIssue[]) {
     .sort((a, b) => a.orderDate.localeCompare(b.orderDate) || a.id - b.id);
   const inTransit = upcomingDeliveries.filter((order) => order.status !== "delivered");
   const awaitingConfirmation = orders.filter((order) => order.status === "delivered");
-  const deferredOrders = orders.filter((order) => order.status === "deferred");
+  const deferredOrders = orders.filter(isOrderDeferred);
   const openIssues = issues.filter((issue) => issue.isOpen);
   const nextDelivery = inTransit.find((order) => order.eta);
   const recentRequests = orders

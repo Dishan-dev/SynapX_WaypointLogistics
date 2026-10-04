@@ -470,6 +470,7 @@ class OrderService:
             target_item.quantity_sent = quantity_sent
             target_item.dispatcher_note = reason
             order.deferral_reason = f"Partial fulfillment: {quantity_sent} of {target_item.quantity} assigned for {target_item.item_name} ({reason})"
+            order.deferral_count = (order.deferral_count or 0) + 1
             db.commit()
             db.refresh(order)
 
