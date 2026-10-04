@@ -188,9 +188,11 @@ def test_driver_at_the_dock_shows_in_the_loaders_and_dispatchers_logs(loader_cli
     assert again.json()["at_dock_at"] == res.json()["at_dock_at"]  # saying it twice changes nothing
     logged = db.query(LoaderActivity).filter(LoaderActivity.run_id == run.id, LoaderActivity.event_type == "driver_at_dock").all()
     assert len(logged) == 1
-    assert LoaderService._activity_summary(logged[0]) == "Driver at Dock 3 · Tharindu Fernando"  # as the tablet shows it
+    assert logged[0].message == "Driver at Dock 3 · Tharindu Fernando"  # as the tablet shows it
+    db.refresh(run)
+    assert run.arrived_at is not None and run.arrived_dock_id == run.dock_id  # the loader's queue sees the truck
     events = db.get(DispatchTrip, dispatched["dispatch_trip"].id).loading_events
-    assert [e["event"] for e in events].count("Driver at dock") == 1
+    assert [e["event"] for e in events].count("Truck at dock") == 1
 
 
 def test_at_the_dock_is_refused_once_the_trip_has_left(loader_client, released):

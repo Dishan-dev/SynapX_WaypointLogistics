@@ -21,20 +21,17 @@ import {
   type SignInOverview,
 } from "@/lib/loader/format";
 import { cachedQueue } from "@/lib/loader/offline/queue-cache";
-import { mockSession } from "@/lib/loader/mock-data";
-import { createTransport, NetworkError, probeConnectivity } from "@/lib/loader/offline/transport";
+import { createTransport, NetworkError, probeConnectivity, SignInRefusedError } from "@/lib/loader/offline/transport";
 import {
   cachedUsers,
   endSession,
   flushSessionEnds,
   IDLE_SIGN_OUT_MS,
-  lastPlace,
   readSession,
   saveSession,
   saveUsers,
   subscribeSession,
-  TABLET_LABEL,
-  type TabletPlace,
+  TABLET_DEPOT,
 } from "@/lib/loader/session";
 import type { LoaderUser, SessionEndReason } from "@/lib/loader/types";
 
@@ -53,9 +50,6 @@ function subscribeOnline(onChange: () => void) {
 }
 const IDLE_MINUTES = IDLE_SIGN_OUT_MS / 60_000;
 
-// Until the tablet has signed someone in once, show the mock dock.
-const DEFAULT_PLACE: TabletPlace = { dock: mockSession.dock, depot: mockSession.depot };
-
 // Not in Figma: a line saying why the tablet is back on sign-in.
 const REASON_NOTE: Record<SessionEndReason, string> = {
   idle_timeout: `Signed out after ${IDLE_MINUTES} min idle.`,
@@ -63,7 +57,7 @@ const REASON_NOTE: Record<SessionEndReason, string> = {
   sign_out: "Signed out.",
 };
 
-type PinStatus = "idle" | "checking" | "wrong";
+type PinStatus = "idle" | "checking" | "wrong" | "refused";
 
 /** Where to go after sign-in: a loader page, never back to sign-in. */
 function safeNext(next: string | null): string {
@@ -71,10 +65,12 @@ function safeNext(next: string | null): string {
   return next && isLoader && !next.startsWith("/loader/sign-in") ? next : "/loader";
 }
 
-function pinMessage(picked: LoaderUser | null, online: boolean, status: PinStatus): string {
+function pinMessage(picked: LoaderUser | null, online: boolean, status: PinStatus, refusal?: string): string {
   if (!picked) return "Pick your name to enter your PIN.";
   if (!online) return "Sign-in needs a connection.";
   if (status === "wrong") return "Incorrect PIN. Try again.";
+  // No depot yet, or another depot's loader (403): the shift lead sorts it out.
+  if (status === "refused") return refusal ?? "You can't sign in at this depot.";
   if (status === "checking") return "Checking…";
   return "Opens on the 4th digit, no submit button.";
 }
@@ -89,7 +85,7 @@ export function SignInView({
   plan,
   now,
 }: {
-  /** From the mock queue, until this tablet has loaded its dock's queue. */
+  /** From the mock queue, until this tablet has loaded its depot's queue. */
   overview: SignInOverview;
   plan: PlanSource;
   now: string;
@@ -100,20 +96,20 @@ export function SignInView({
   const next = safeNext(params.get("next"));
   const transport = React.useMemo(() => createTransport(), []);
 
-  const place = React.useSyncExternalStore(subscribeSession, lastPlace, () => null) ?? DEFAULT_PLACE;
-  const placeName = depotName(place.depot);
+  // The tablet signs into one depot; its loaders see every dock of it.
+  const placeName = depotName(TABLET_DEPOT);
 
-  // Tablet cards: this dock's last loaded queue, which also works offline.
+  // Tablet cards: this depot's last loaded queue, which also works offline.
   const [cachedOverview, setCachedOverview] = React.useState<SignInOverview>();
   React.useEffect(() => {
     let cancelled = false;
-    void cachedQueue(place.dock).then((cached) => {
+    void cachedQueue(TABLET_DEPOT).then((cached) => {
       if (!cancelled && cached) setCachedOverview(signInOverview(cached.queue, cached.summary, plan, now));
     });
     return () => {
       cancelled = true;
     };
-  }, [place.dock, plan, now]);
+  }, [plan, now]);
   const overview = cachedOverview ?? fallbackOverview;
 
   // Signed in (here or in another tab): go on to the loader. A link here to
@@ -151,6 +147,7 @@ export function SignInView({
     setPinState(value);
   };
   const [status, setStatus] = React.useState<PinStatus>("idle");
+  const [refusal, setRefusal] = React.useState<string>();
   // Set while a PIN is with the server, so extra taps are ignored.
   const checkingRef = React.useRef(false);
   const searchRef = React.useRef<HTMLInputElement>(null);
@@ -163,7 +160,7 @@ export function SignInView({
       void (async () => {
         try {
           await flushSessionEnds(transport);
-          const fresh = await transport.fetchUsers();
+          const fresh = await transport.fetchUsers(TABLET_DEPOT);
           if (cancelled) return;
           saveUsers(fresh);
           setUsers(fresh);
@@ -230,12 +227,18 @@ export function SignInView({
       const session = await transport.startSession({
         loader_user_id: user.id,
         pin: value,
-        dock_tablet_label: TABLET_LABEL,
+        depot: TABLET_DEPOT,
       });
       // Saving the session moves on to the loader (see signedIn above).
       if (session) return saveSession({ session, user });
       setStatus("wrong");
     } catch (err) {
+      if (err instanceof SignInRefusedError) {
+        setRefusal(err.message);
+        setStatus("refused");
+        setPin("");
+        return;
+      }
       if (!(err instanceof NetworkError)) throw err;
       setReachable(false);
       setStatus("idle");
@@ -278,7 +281,7 @@ export function SignInView({
     <div className="flex min-h-dvh flex-col bg-background">
       <LoaderAppBar
         title="Who’s loading"
-        subtitle={`Loader · ${placeName} · ${TABLET_LABEL}`}
+        subtitle={`Loader · ${placeName}`}
         showActions={false}
         className="sticky top-0 z-20"
       />
@@ -292,7 +295,7 @@ export function SignInView({
 
           <header className="flex flex-col gap-2">
             <p className="text-xs font-medium text-muted-foreground">
-              {TABLET_LABEL} · {shiftLabel(now)}
+              {placeName} · {shiftLabel(now)}
             </p>
             <h2 className="text-2xl font-semibold text-primary">Who’s loading?</h2>
             <InfoChip tone="primary" className="w-fit">
@@ -304,7 +307,7 @@ export function SignInView({
             </p>
           </header>
 
-          <section aria-label="This dock tonight" className="hidden flex-col gap-2 md:flex">
+          <section aria-label="This depot tonight" className="hidden flex-col gap-2 md:flex">
             <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{overview.heading}</h3>
             <div className="grid grid-cols-3 gap-3">
               <MetricTile
@@ -455,13 +458,13 @@ export function SignInView({
               </div>
 
               <p
-                role={status === "wrong" ? "alert" : "status"}
+                role={status === "wrong" || status === "refused" ? "alert" : "status"}
                 className={cn(
                   "text-xs",
-                  status === "wrong" ? "font-medium text-destructive" : "text-muted-foreground",
+                  status === "wrong" || status === "refused" ? "font-medium text-destructive" : "text-muted-foreground",
                 )}
               >
-                {pinMessage(picked, online, status)}
+                {pinMessage(picked, online, status, refusal)}
               </p>
             </section>
           </div>

@@ -40,9 +40,11 @@ class ReceiptService:
                 "so there's nothing to receive.",
             )
 
+        effective_outlet_id = payload.outlet_id or order.outlet_id
+
         receipt = DeliveryReceipt(
             order_id=payload.order_id,
-            outlet_id=payload.outlet_id,
+            outlet_id=effective_outlet_id,
             units_received=payload.units_received,
             weight_received_kg=payload.weight_received_kg,
             has_issues=payload.has_issues,
@@ -89,7 +91,7 @@ class ReceiptService:
                 delivery_issue = DeliveryIssue(
                     order_id=payload.order_id,
                     order_number=order_number,
-                    outlet_id=payload.outlet_id,
+                    outlet_id=effective_outlet_id,
                     issue_type=issue_type_formatted,
                     title=f"Delivery Discrepancy on {order_number} ({issue_type_formatted})",
                     received_units=payload.units_received,
@@ -103,16 +105,18 @@ class ReceiptService:
                 except Exception:
                     db.rollback()
 
-            notification_service.send(
-                db,
-                outlet_id=payload.outlet_id,
-                type=NotificationType.ISSUE_LOGGED,
-                meta={
-                    "order_id": payload.order_id,
-                    "issue_code": payload.issue_type or "ISSUE",
-                    "note": f"Issue type: {payload.issue_type}. {payload.issue_description or ''}".strip(),
-                },
-            )
+            if effective_outlet_id:
+                notification_service.send(
+                    db,
+                    outlet_id=effective_outlet_id,
+                    type=NotificationType.ISSUE_LOGGED,
+                    meta={
+                        "order_id": payload.order_id,
+                        "order_number": order_number,
+                        "issue_code": payload.issue_type or "ISSUE",
+                        "note": f"Issue type: {payload.issue_type}. {payload.issue_description or ''}".strip(),
+                    },
+                )
 
         return receipt
 

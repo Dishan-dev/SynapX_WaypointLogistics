@@ -60,13 +60,13 @@ function issueLine(issue: LoaderIssue): string {
  */
 export function IssueView({ id }: { id: number }) {
   const router = useRouter();
-  const { user, dockLabel } = useLoaderShell();
-  const dock = useStoredSession()?.session.dock;
-  const state = useIssue(id, dock);
+  const { user, depotLabel } = useLoaderShell();
+  const depot = useStoredSession()?.session.depot;
+  const state = useIssue(id, depot);
   const issue = state.status === "ready" ? state.issue : undefined;
   const offlineSince = state.status === "ready" && state.source === "cache" ? state.fetchedAt : undefined;
 
-  const subtitle = [issue?.run_code, dockLabel, user.shortName].filter(Boolean).join(" · ");
+  const subtitle = [issue?.run_code, depotLabel, user.shortName].filter(Boolean).join(" · ");
   const checklistHref = issue ? `/loader/runs/${encodeURIComponent(issue.run_code)}` : "/loader";
 
   return (

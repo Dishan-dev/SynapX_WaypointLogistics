@@ -13,6 +13,8 @@ interface LoaderBottomNavProps {
   logHref?: string;
   /** Open issues, shown as a count on the Issues tab. */
   issueCount?: number;
+  /** Trucks at a dock since this session last opened the queue, on the Queue tab. */
+  newArrivals?: number;
   className?: string;
 }
 
@@ -25,6 +27,7 @@ export function LoaderBottomNav({
   loadingHref = "/loader",
   logHref = "/loader/log",
   issueCount = 0,
+  newArrivals = 0,
   className,
 }: LoaderBottomNavProps) {
   const tabs: { id: LoaderTab; label: string; href: string; icon: React.ReactNode }[] = [
@@ -51,6 +54,12 @@ export function LoaderBottomNav({
           >
             {tab.icon}
             {tab.label}
+            {tab.id === "queue" && newArrivals > 0 && (
+              <span className="absolute top-2 left-1/2 ml-1.5 min-w-4 rounded-full bg-primary px-1 text-center text-[10px] leading-4 font-semibold text-primary-foreground">
+                {newArrivals}
+                <span className="sr-only"> new {newArrivals === 1 ? "arrival" : "arrivals"}</span>
+              </span>
+            )}
             {tab.id === "issues" && issueCount > 0 && (
               <span className="absolute top-2 left-1/2 ml-1.5 min-w-4 rounded-full bg-destructive px-1 text-center text-[10px] leading-4 font-semibold text-white">
                 {issueCount}

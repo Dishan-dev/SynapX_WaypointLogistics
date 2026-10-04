@@ -16,6 +16,7 @@ import { useLoaderSync, useOfflineRun } from "@/components/loader/loader-sync-pr
 import { openFlagSheet } from "@/components/loader/flag-issue-sheet";
 import { OrderRow } from "@/components/loader/order-row";
 import { AlertRow } from "@/components/loader/alert-row";
+import { PickBar, PickedByOther } from "@/components/loader/pick-bar";
 import { StopHeader } from "@/components/loader/stop-header";
 import {
   formatClock,
@@ -36,6 +37,7 @@ import { blockerSummary, displayOrder, pendingUnloads, releaseBlockers } from ".
 import { UnloadCard } from "./unload-card";
 import { usePlanPoll } from "./use-plan-poll";
 import { reviewHref } from "./routes";
+import { usePick } from "../../use-pick";
 
 // Same labels and tones as the queue's run card.
 const statusPill: Record<RunStatus, { tone: LoaderPillTone; label: string }> = {
@@ -86,12 +88,21 @@ export function ChecklistView({ code }: { code: string }) {
       </LoaderScreen>
     );
   }
+  if (result.kind === "picked") {
+    return (
+      <LoaderScreen title="Loading checklist">
+        <div className="mx-auto max-w-md">
+          <PickedByOther code={code} pickedBy={result.pickedBy} />
+        </div>
+      </LoaderScreen>
+    );
+  }
   if (result.kind !== "ok") {
     return (
       <LoaderScreen title="Loading checklist">
         <div className="mx-auto flex max-w-md flex-col gap-2 rounded-xl border border-dashed border-border bg-card p-6 text-center">
           <p className="text-base font-semibold text-primary">
-            {result.kind === "not_found" ? `${code} is not on this dock's queue.` : `${code} is not available offline.`}
+            {result.kind === "not_found" ? `${code} is not on this depot's queue.` : `${code} is not available offline.`}
           </p>
           <p className="text-sm text-muted-foreground">
             {result.kind === "not_found"
@@ -113,8 +124,10 @@ function Checklist({ initial, onNewPlan }: { initial: Run; onNewPlan: (run: Run)
   const { user } = useLoaderShell();
   // A fresh server run replaces `initial`; useOfflineRun then resolves it
   // against this tablet's queued actions, so local taps are never lost.
-  const { run, act } = useOfflineRun(initial, user.shortName);
+  const { run, act, rejected } = useOfflineRun(initial, user.shortName);
   usePlanPoll(run, onNewPlan);
+  // A run nobody holds (opened from a link, or the lock lapsed) is picked here.
+  const picker = usePick({ onPicked: (_code, picked) => picked && onNewPlan(picked) });
 
   const capacity = runCapacity(run);
   const stops = stopsInLoadOrder(run.stops);
@@ -246,7 +259,17 @@ function Checklist({ initial, onNewPlan }: { initial: Run; onNewPlan: (run: Run)
             </p>
           </header>
 
-          <WindowWarning stops={run.stops} />
+          <PickedByOther code={run.code} rejected={rejected} />
+          {!closed && run.picked_by === null && (
+            <PickBar
+              code={run.code}
+              picking={picker.picking === run.code}
+              notice={picker.notice}
+              onPick={() => void picker.pick(run.code)}
+            />
+          )}
+
+          <WindowWarning stops={run.stops} onFlag={closed ? undefined : (order) => openFlagSheet(run, order, act)} />
 
           <div className="flex flex-col gap-4 md:hidden">
             {unloadCards}
@@ -342,17 +365,23 @@ function WindowChip({ stop }: { stop: RunStop }) {
   return null;
 }
 
-/** On the run: stops the truck will reach after their window. Loading is not blocked. */
-function WindowWarning({ stops }: { stops: RunStop[] }) {
+/**
+ * On the run: stops the truck will reach after their window. Loading is not
+ * blocked; the Dispatcher hears about an order the loader flags.
+ */
+function WindowWarning({ stops, onFlag }: { stops: RunStop[]; onFlag?: (order: RunOrder) => void }) {
   const closed = [...stops]
     .filter((stop) => stop.window_status === "closed")
     .sort((a, b) => a.stop_sequence - b.stop_sequence);
   if (closed.length === 0) return null;
   const list = closed.map((stop) => `${stop.outlet.code} (${windowLabel(stop)})`).join(", ");
+  const first = closed.flatMap((stop) => stop.orders).find((o) => isActiveOrder(o) && o.state !== "flagged");
   return (
     <AlertRow
       tone="error"
-      message={`Delivery window closed for ${closed.length === 1 ? "1 stop" : `${closed.length} stops`}: ${list}. Keep loading and tell the Dispatcher.`}
+      message={`Delivery window closed for ${closed.length === 1 ? "1 stop" : `${closed.length} stops`}: ${list}. Keep loading; flag an order there that can't go.`}
+      actionLabel={onFlag && first ? "Flag" : undefined}
+      onAction={onFlag && first ? () => onFlag(first) : undefined}
     />
   );
 }

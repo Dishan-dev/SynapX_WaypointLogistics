@@ -62,6 +62,7 @@ function writeReadIds(ids: Set<string>) {
 // ── api mode: module-level cache shared by every component ──
 let apiState: NotificationsState = EMPTY;
 let loadStarted = false;
+let loadedOutletId: number | null = null;
 const listeners = new Set<() => void>();
 
 function setApiState(next: NotificationsState) {
@@ -69,14 +70,34 @@ function setApiState(next: NotificationsState) {
   listeners.forEach((listener) => listener());
 }
 
-async function load() {
+export function resetNotificationsCache() {
+  loadStarted = false;
+  loadedOutletId = null;
+  setApiState(EMPTY);
+}
+
+async function load(forceOutletId?: number) {
   loadStarted = true;
   setApiState({ ...apiState, status: apiState.items.length ? "ready" : "loading" });
   try {
-    setApiState({ items: await getNotifications(), status: "ready" });
+    const items = await getNotifications();
+    setApiState({ items, status: "ready" });
   } catch {
     setApiState({ ...apiState, status: "error" });
   }
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("waypoint:auth-session-changed", () => {
+    resetNotificationsCache();
+    void load();
+  });
+  window.addEventListener("storage", (e) => {
+    if (e.key?.includes("waypoint") || e.key?.includes("token")) {
+      resetNotificationsCache();
+      void load();
+    }
+  });
 }
 
 function subscribeApi(onChange: () => void) {

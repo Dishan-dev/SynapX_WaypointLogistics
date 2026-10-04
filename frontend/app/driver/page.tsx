@@ -10,6 +10,9 @@ import { cachedGet, keepPageOffline, writeCache } from "@/lib/driverCache";
 import { colomboNow, greeting, READY_CUTOFF_HOUR } from "@/lib/colomboTime";
 import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
 import SyncStatus from "@/components/driver/SyncStatus";
+import DockArrival from "@/components/driver/DockArrival";
+import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
+import { UserNotificationBell } from "@/components/notifications/user-notification-bell";
 import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
 import DockArrival from "@/components/driver/DockArrival";
 
@@ -162,11 +165,14 @@ export default function DriverDashboard() {
               {loading ? "Loading..." : `${greeting(clock)}, ${profile?.full_name?.split(' ')[0] || 'Driver'} · DRV-${profile?.id?.toString().padStart(4, '0') || '0000'}`}
             </p>
           </div>
+          <div className="flex items-center gap-1">
+          <UserNotificationBell />
           <Link href="/driver/profile">
             <div className="flex justify-center items-center w-10 h-10 rounded-full shrink-0" style={{ backgroundColor: "#EAF2FF" }}>
               <User size={20} color="#2167D5" />
             </div>
           </Link>
+          </div>
         </div>
       </div>
 
@@ -268,7 +274,7 @@ export default function DriverDashboard() {
                   {atDock && (
                     <DockArrival
                       trip={trip}
-                      onArrived={(updated) => setTrips((list) => list.map((t) => (t.id === updated.id ? updated : t)))}
+                      onArrived={(updated: any) => setTrips((list) => list.map((t) => (t.id === updated.id ? updated : t)))}
                     />
                   )}
 

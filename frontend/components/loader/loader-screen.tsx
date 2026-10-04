@@ -11,7 +11,7 @@ import { PlanSourceStrip } from "./plan-source-strip";
 
 interface LoaderScreenProps {
   title: string;
-  /** Defaults to "Loader · <depot> · <dock>". */
+  /** Defaults to "Loader · <depot>", e.g. "Loader · Peliyagoda DC". */
   subtitle?: string;
   plan?: PlanSource;
   /** Replaces the strip's "Plan from …" text, e.g. on Ready to depart. */
@@ -35,7 +35,7 @@ export function LoaderScreen({
   children,
 }: LoaderScreenProps) {
   const router = useRouter();
-  const { dockLabel } = useLoaderShell();
+  const { depotLabel } = useLoaderShell();
   const { sync } = useLoaderSync();
 
   return (
@@ -43,7 +43,7 @@ export function LoaderScreen({
       <div className="sticky top-0 z-20">
         <LoaderAppBar
           title={title}
-          subtitle={subtitle ?? `Loader · ${dockLabel}`}
+          subtitle={subtitle ?? `Loader · ${depotLabel}`}
           hasUnread={hasUnread}
           onMenu={() => router.push("/loader/more")}
         />
