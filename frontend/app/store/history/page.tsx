@@ -23,6 +23,7 @@ import { StoreMetricCard } from "@/components/store/store-cards";
 import { getStoreOrders } from "@/components/store/api/store-data";
 import { fetchStoreIssues, StoreIssue } from "@/services/issues-store";
 import { StoreOrder } from "@/components/store/mock-data";
+import { useStoreOutlet } from "@/components/store/outlet-context";
 
 interface HistoryRecord {
   orderId: string;
@@ -37,9 +38,12 @@ interface HistoryRecord {
   outcomeTitle: string;
   outcomeDetail: string;
   status: "completed" | "archived";
+  /** Arrived by the end of its delivery window; null when the arrival time isn't recorded. */
+  onTime: boolean | null;
 }
 
 export default function DeliveryHistoryPage() {
+  const outlet = useStoreOutlet();
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<"all" | "clean" | "issues">("all");
@@ -106,6 +110,10 @@ export default function DeliveryHistoryPage() {
             outcomeTitle,
             outcomeDetail,
             status: "completed",
+            onTime: ord.delivery?.actualArrival
+              ? ord.delivery.actualArrival.slice(0, 16) <=
+                `${ord.orderDate}T${(ord.deliveryWindow ?? outlet)?.windowEnd ?? "23:59"}`
+              : null,
           };
         });
 
@@ -119,7 +127,7 @@ export default function DeliveryHistoryPage() {
     }
 
     loadHistory();
-  }, []);
+  }, [outlet]);
 
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
@@ -127,7 +135,11 @@ export default function DeliveryHistoryPage() {
   const totalCount = historyRecords.length;
   const cleanCount = historyRecords.filter((r) => r.outcomeType === "clean").length;
   const issuesCount = historyRecords.filter((r) => r.outcomeType !== "clean").length;
-  const onTimePct = totalCount > 0 ? "96%" : "100%";
+  // Only deliveries with a recorded arrival count; "—" until there's one.
+  const timed = historyRecords.filter((r) => r.onTime !== null);
+  const onTimePct = timed.length
+    ? `${Math.round((timed.filter((r) => r.onTime).length / timed.length) * 100)}%`
+    : "—";
 
   const filtered = historyRecords.filter((rec) => {
     if (selectedTab === "clean" && rec.outcomeType !== "clean") return false;
