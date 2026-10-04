@@ -659,7 +659,7 @@ export function OutletsTab({ outlets, users = [], isLoading, onRefresh }: Outlet
                         onClick={() => {
                           setAssigningOutlet(outlet);
                           const matched = storeManagers.find(
-                            (m) => m.full_name.toLowerCase() === (outlet.store_manager || "").toLowerCase()
+                            (m) => m.id === outlet.store_manager_user_id
                           );
                           if (matched) {
                             setSelectedManagerUserId(String(matched.id));

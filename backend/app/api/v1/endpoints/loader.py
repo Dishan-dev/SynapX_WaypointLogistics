@@ -254,6 +254,8 @@ def flag_issue(payload: schemas.FlagIssueRequest, db: Session = Depends(deps.get
         issue = loader_service.flag_issue(db, payload)
     except FlagRequestError as exc:
         raise HTTPException(status_code=422, detail={"code": "INVALID_FLAG", "message": exc.message})
+    from app.email.service import queue_loader_issue
+    queue_loader_issue(db, issue)
     db.commit()
     return loader_service.build_issue_detail(db, issue)
 
