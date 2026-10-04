@@ -2,6 +2,7 @@
  * Resilient API client for Waypoint Logistics
  * Automatically resolves between port 8000 (uvicorn default) and port 5000 (custom port)
  */
+import { dispatcherDepotHeaders } from "./dispatcher-depot";
 
 const CANDIDATE_API_URLS = [
   process.env.NEXT_PUBLIC_API_URL,
@@ -52,7 +53,10 @@ export async function fetchWithFallback(
 
   for (const baseUrl of urlsToTry) {
     try {
-      const res = await fetch(`${baseUrl}${cleanEndpoint}`, init);
+      const res = await fetch(`${baseUrl}${cleanEndpoint}`, {
+        ...init,
+        headers: dispatcherDepotHeaders(init?.headers),
+      });
       // If we got any response (even 4xx/5xx), the server is alive on this port
       cachedApiUrl = baseUrl;
       return res;
@@ -97,15 +101,22 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
   const fullEndpoint = cleanPath.startsWith("/api/v1") ? cleanPath : `/api/v1${cleanPath}`;
 
+  const token = typeof window !== "undefined" ? localStorage.getItem("waypoint_access_token") || localStorage.getItem("driver_token") : null;
+  const headers = dispatcherDepotHeaders(init.headers);
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
   let response: Response;
   try {
     response = await fetchWithFallback(fullEndpoint, {
       ...init,
-      headers: { ...init.headers },
+      headers,
       cache: "no-store",
     });
-  } catch (err: any) {
-    throw new ApiError(err?.message || "Couldn't reach the Waypoint server.", 0);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Couldn't reach the Waypoint server.";
+    throw new ApiError(message, 0);
   }
 
   if (!response.ok) {

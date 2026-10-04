@@ -24,6 +24,7 @@ from app.models.reference import (
     TemperatureClass,
 )
 from app.models.loader_user import LoaderSession, LoaderUser, SessionEndReason
+from app.models.depot_dispatcher import DepotDispatcherAssignment
 from app.models.delivery_run import (
     DeliveryRun,
     RunOrderState,
@@ -83,6 +84,7 @@ __all__ = [
     "LoaderSession",
     "LoaderUser",
     "SessionEndReason",
+    "DepotDispatcherAssignment",
     # Delivery runs
     "DeliveryRun",
     "RunOrderState",

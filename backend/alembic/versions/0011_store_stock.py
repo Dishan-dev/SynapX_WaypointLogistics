@@ -1,7 +1,7 @@
 """store stock
 
-Revision ID: 0009_store_stock
-Revises: 0008_store_catalogue
+Revision ID: 0011_store_stock
+Revises: 0010_depot_assignments
 Create Date: 2026-10-03 21:00:00.000000
 
 store_stock: each outlet's on-hand quantities from the Store Manager's CSV import. Only creates a new table.
@@ -10,8 +10,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = '0009_store_stock'
-down_revision: Union[str, Sequence[str], None] = '0008_store_catalogue'
+revision: str = '0011_store_stock'
+down_revision: Union[str, Sequence[str], None] = '0010_depot_assignments'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
