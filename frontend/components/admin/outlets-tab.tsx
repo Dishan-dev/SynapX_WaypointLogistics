@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { TableLoading } from "@/components/ui/table-loading";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -564,7 +565,7 @@ export function OutletsTab({ outlets, users = [], isLoading, onRefresh }: Outlet
             {isLoading ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-center py-8 text-xs text-muted-foreground">
-                  Loading outlets...
+                  <TableLoading label="Loading outlets..." />
                 </TableCell>
               </TableRow>
             ) : filteredOutlets.length === 0 ? (
