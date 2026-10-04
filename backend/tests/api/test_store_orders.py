@@ -484,3 +484,41 @@ def test_dispatcher_run_moves_store_orders_on_the_way_then_delivered(client, clo
     assert client.get(f"/api/v1/orders/store/{jeans['order_number']}").json()["status"] == "DISPATCHED"
     types = [n["type"] for n in client.get("/api/v1/notifications/", params={"outlet_id": fresh.id}).json()]
     assert "delivered" in types
+
+
+def test_store_manager_edits_and_withdraws_only_open_issues_and_cannot_resolve_them(client, outlets, db_session, sign_in):
+    from app.models.store_manager import StoreManagerAssignment
+    from app.models.user import User, UserRole
+
+    manager = User(email="sm.issues@waypoint.com", full_name="Nadee Perera", role=UserRole.STORE_MANAGER, is_active=True)
+    db_session.add(manager)
+    db_session.flush()
+    db_session.add(StoreManagerAssignment(user_id=manager.id, outlet_id=outlets["fresh"].id))
+    db_session.commit()
+    sign_in(manager)
+
+    issue = client.post(
+        "/api/v1/issues", json={"issue_type": "Damaged Goods", "title": "Crushed cartons", "description": "2 cartons crushed"}
+    ).json()
+    assert issue["reported_by"] == "Nadee Perera (Store Manager)" and issue["outlet_id"] == outlets["fresh"].id
+
+    # The manager can correct details while it's open, but not resolve it or set a claim.
+    assert client.patch(f"/api/v1/issues/{issue['id']}", json={"received_units": 6}).status_code == 200
+    assert client.patch(f"/api/v1/issues/{issue['id']}", json={"status": "resolved"}).status_code == 403
+    assert client.patch(f"/api/v1/issues/{issue['id']}", json={"claimed_amount": "5000"}).status_code == 403
+
+    # Once the depot starts reviewing, it's locked for the store.
+    dispatcher = User(email="disp.issues@waypoint.com", full_name="Depot Dispatcher", role=UserRole.DISPATCHER, is_active=True)
+    db_session.add(dispatcher)
+    db_session.commit()
+    sign_in(dispatcher)
+    assert client.patch(f"/api/v1/issues/{issue['id']}", json={"status": "under_review"}).status_code == 200
+    sign_in(manager)
+    assert client.patch(f"/api/v1/issues/{issue['id']}", json={"received_units": 5}).status_code == 409
+    assert client.delete(f"/api/v1/issues/{issue['id']}").status_code == 409
+
+    # Oversized photos are refused.
+    too_big = "data:image/jpeg;base64," + "A" * 2_000_001
+    assert client.post(
+        "/api/v1/issues", json={"issue_type": "Other", "title": "Photo", "description": "x", "photo_url": too_big}
+    ).status_code == 422
