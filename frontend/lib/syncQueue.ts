@@ -13,6 +13,7 @@
 import { openDB, IDBPDatabase } from "idb";
 import { apiFetch, apiFetchUpload } from "./api";
 import { getToken } from "./auth";
+import { decodeJwt } from "./keycloak";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -166,8 +167,8 @@ export async function dequeue(action_id: string) {
 let _flushInFlight = false;
 
 export async function flush(): Promise<SyncResult | null> {
-  // Records go out only with a driver logged in, so they reach the server as theirs.
-  if (_flushInFlight || !getToken()) return null;
+  // Records go out only with the login of the driver who made them.
+  if (_flushInFlight || !ownsQueue()) return null;
   const pending = _queue.filter((a) => a.status === "pending");
   if (pending.length === 0) return null;
 
@@ -248,6 +249,47 @@ export async function dismissFailed(action_id: string) {
   const db = await getDB();
   await db.delete(STORE_QUEUE, action_id);
   await _loadQueue();
+}
+
+// ─── Owner: the driver these records belong to ──────────────────────────────
+// Phones are shared. The server says who is logged in (claimQueue, from the
+// driver session check); until then, and for anyone else, nothing is sent.
+
+const OWNER_KEY = "driver-queue-owner";
+
+interface QueueOwner {
+  userId: number;
+  sub: string | null; // the login token's subject, so the check works offline
+}
+
+function tokenSubject(): string | null {
+  const token = getToken();
+  return token ? decodeJwt<{ sub?: string }>(token)?.sub ?? null : null;
+}
+
+function readOwner(): QueueOwner | null {
+  try {
+    const raw = localStorage.getItem(OWNER_KEY);
+    return raw ? (JSON.parse(raw) as QueueOwner) : null;
+  } catch {
+    return null;
+  }
+}
+
+function ownsQueue(): boolean {
+  const sub = tokenSubject();
+  return sub !== null && readOwner()?.sub === sub;
+}
+
+/** The server says driver `userId` is logged in. Returns true when the records
+ *  on the phone were another driver's: they are deleted, never sent as this one. */
+export async function claimQueue(userId: number): Promise<boolean> {
+  const owner = readOwner();
+  const switched = owner !== null && owner.userId !== userId;
+  if (switched) await clearQueue();
+  localStorage.setItem(OWNER_KEY, JSON.stringify({ userId, sub: tokenSubject() }));
+  void flush();
+  return switched;
 }
 
 // ─── Forget everything (a different driver logged in on this phone) ─────────

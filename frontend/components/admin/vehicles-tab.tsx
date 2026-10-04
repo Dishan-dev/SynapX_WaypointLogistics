@@ -18,6 +18,8 @@ import {
   CheckCircle2,
   AlertCircle,
   FileText,
+  UserCheck,
+  User,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,10 +51,11 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FleetVehicle, adminService } from "@/services/admin-service";
+import { FleetVehicle, AdminUser, adminService } from "@/services/admin-service";
 
 interface VehiclesTabProps {
   vehicles: FleetVehicle[];
+  users?: AdminUser[];
   isLoading: boolean;
   onRefresh: () => void;
 }
@@ -69,12 +72,24 @@ interface CSVPreviewRow {
   depot: string;
 }
 
-export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps) {
+export function VehiclesTab({ vehicles, users = [], isLoading, onRefresh }: VehiclesTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("ALL");
   const [depotFilter, setDepotFilter] = useState("ALL");
   const [tempFilter, setTempFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
+
+  // Filter available drivers
+  const drivers = (users || []).filter(
+    (u) => u.role === "DRIVER" || u.role_display?.toLowerCase().includes("driver")
+  );
+
+  // Driver Assignment State
+  const [isAssignDriverOpen, setIsAssignDriverOpen] = useState(false);
+  const [assigningVehicle, setAssigningVehicle] = useState<FleetVehicle | null>(null);
+  const [selectedDriverUserId, setSelectedDriverUserId] = useState<string>("none");
+  const [isSubmittingAssign, setIsSubmittingAssign] = useState(false);
+  const [assignError, setAssignError] = useState("");
 
   // Export State
   const [isExporting, setIsExporting] = useState(false);
@@ -105,6 +120,7 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
     km_per_l: 5.5,
     weekly_fuel_quota_l: 450,
     status: "AVAILABLE" as FleetVehicle["status"],
+    assigned_driver_id: undefined as number | undefined,
   });
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -123,6 +139,7 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
     weekly_fuel_quota_l: 450,
     status: "AVAILABLE" as FleetVehicle["status"],
     maintenance_state: "",
+    assigned_driver_id: undefined as number | undefined,
   });
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [editError, setEditError] = useState("");
@@ -249,6 +266,7 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
         capacity_vol_m3: Number(createForm.capacity_vol_m3),
         km_per_l: Number(createForm.km_per_l),
         weekly_fuel_quota_l: Number(createForm.weekly_fuel_quota_l),
+        assigned_driver_id: createForm.assigned_driver_id ? Number(createForm.assigned_driver_id) : undefined,
       });
       setIsCreateOpen(false);
       setCreateForm({
@@ -262,6 +280,7 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
         km_per_l: 5.5,
         weekly_fuel_quota_l: 450,
         status: "AVAILABLE",
+        assigned_driver_id: undefined,
       });
       onRefresh();
     } catch (err: unknown) {
@@ -285,6 +304,7 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
       weekly_fuel_quota_l: vehicle.weekly_fuel_quota_l ?? 500,
       status: vehicle.status,
       maintenance_state: vehicle.maintenance_state || "",
+      assigned_driver_id: vehicle.assigned_driver_id || undefined,
     });
     setEditError("");
     setIsEditOpen(true);
@@ -309,6 +329,7 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
         weekly_fuel_quota_l: Number(editForm.weekly_fuel_quota_l),
         status: editForm.status,
         maintenance_state: editForm.maintenance_state ? editForm.maintenance_state : null,
+        assigned_driver_id: editForm.assigned_driver_id ? Number(editForm.assigned_driver_id) : null,
       });
       setIsEditOpen(false);
       onRefresh();
@@ -316,6 +337,25 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
       setEditError(err instanceof Error ? err.message : "Update failed");
     } finally {
       setIsSubmittingEdit(false);
+    }
+  };
+
+  // Handle Assign Driver Submit
+  const handleAssignDriverSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assigningVehicle) return;
+    setIsSubmittingAssign(true);
+    setAssignError("");
+    try {
+      const driverUserId = selectedDriverUserId === "none" ? null : Number(selectedDriverUserId);
+      await adminService.assignVehicleDriver(assigningVehicle.id, driverUserId);
+      setIsAssignDriverOpen(false);
+      setAssigningVehicle(null);
+      onRefresh();
+    } catch (err: unknown) {
+      setAssignError(err instanceof Error ? err.message : "Failed to assign driver");
+    } finally {
+      setIsSubmittingAssign(false);
     }
   };
 
@@ -476,6 +516,7 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
               <TableHead className="text-xs font-semibold">Type &amp; Depot</TableHead>
               <TableHead className="text-xs font-semibold">Refrigerated Capability</TableHead>
               <TableHead className="text-xs font-semibold">Weight &amp; Volume</TableHead>
+              <TableHead className="text-xs font-semibold">Assigned Driver</TableHead>
               <TableHead className="text-xs font-semibold">Fuel &amp; Efficiency</TableHead>
               <TableHead className="text-xs font-semibold">Availability / Status</TableHead>
               <TableHead className="text-xs font-semibold text-right">Actions</TableHead>
@@ -484,13 +525,13 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-xs text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-xs text-muted-foreground">
                   Loading fleet vehicles...
                 </TableCell>
               </TableRow>
             ) : filteredVehicles.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-xs text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-xs text-muted-foreground">
                   No vehicles found matching criteria.
                 </TableCell>
               </TableRow>
@@ -537,6 +578,38 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
                       </div>
                     </TableCell>
                     <TableCell className="py-3">
+                      {vehicle.assigned_driver_name ? (
+                        <div className="flex items-center gap-2">
+                          <div className="h-7 w-7 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs shrink-0">
+                            {vehicle.assigned_driver_name.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-foreground flex items-center gap-1">
+                              <span>{vehicle.assigned_driver_name}</span>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {vehicle.assigned_driver_phone || "Driver"}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setAssigningVehicle(vehicle);
+                            setSelectedDriverUserId("none");
+                            setAssignError("");
+                            setIsAssignDriverOpen(true);
+                          }}
+                          className="h-6 px-2 text-[11px] text-muted-foreground border-dashed hover:text-primary hover:border-primary"
+                        >
+                          <Plus className="size-3 mr-1" />
+                          <span>Assign Driver</span>
+                        </Button>
+                      )}
+                    </TableCell>
+                    <TableCell className="py-3">
                       <div className="text-xs text-foreground flex flex-col gap-0.5">
                         <span className="font-medium flex items-center gap-1">
                           <Fuel className="size-3 text-emerald-600" />
@@ -561,6 +634,21 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
                     </TableCell>
                     <TableCell className="py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setAssigningVehicle(vehicle);
+                            setSelectedDriverUserId(vehicle.assigned_driver_id ? String(vehicle.assigned_driver_id) : "none");
+                            setAssignError("");
+                            setIsAssignDriverOpen(true);
+                          }}
+                          className="text-xs gap-1 h-7 text-emerald-700 hover:bg-emerald-50"
+                          title="Assign Driver"
+                        >
+                          <UserCheck className="size-3" />
+                          <span className="hidden xl:inline">Driver</span>
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -892,6 +980,33 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <Label className="text-xs">Assigned Driver (Optional)</Label>
+              <Select
+                value={createForm.assigned_driver_id ? String(createForm.assigned_driver_id) : "none"}
+                onValueChange={(val) =>
+                  setCreateForm({
+                    ...createForm,
+                    assigned_driver_id: val === "none" ? undefined : Number(val),
+                  })
+                }
+              >
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Select Driver..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">
+                    <span className="text-muted-foreground italic">No Driver Assigned</span>
+                  </SelectItem>
+                  {drivers.map((d) => (
+                    <SelectItem key={d.id} value={String(d.id)}>
+                      {d.full_name} ({d.email})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <DialogFooter className="pt-2">
               <Button
                 type="button"
@@ -1075,6 +1190,33 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
             </div>
 
             <div className="space-y-1.5">
+              <Label className="text-xs">Assigned Driver</Label>
+              <Select
+                value={editForm.assigned_driver_id ? String(editForm.assigned_driver_id) : "none"}
+                onValueChange={(val) =>
+                  setEditForm({
+                    ...editForm,
+                    assigned_driver_id: val === "none" ? undefined : Number(val),
+                  })
+                }
+              >
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Select Driver..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">
+                    <span className="text-muted-foreground italic">No Driver Assigned</span>
+                  </SelectItem>
+                  {drivers.map((d) => (
+                    <SelectItem key={d.id} value={String(d.id)}>
+                      {d.full_name} ({d.email})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
               <Label className="text-xs">Maintenance State / Notes</Label>
               <Input
                 className="text-xs"
@@ -1101,6 +1243,92 @@ export function VehiclesTab({ vehicles, isLoading, onRefresh }: VehiclesTabProps
                 className="bg-primary text-primary-foreground text-xs font-semibold"
               >
                 {isSubmittingEdit ? "Saving..." : "Save Changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Driver Dialog */}
+      <Dialog open={isAssignDriverOpen} onOpenChange={setIsAssignDriverOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <UserCheck className="size-4 text-emerald-600" />
+              <span>Assign Driver to Vehicle {assigningVehicle?.code}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Select an active driver to operate this vehicle. Any previous vehicle assignment for this driver will be automatically updated.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleAssignDriverSubmit} className="space-y-4 py-2">
+            {assignError && (
+              <div className="p-2.5 rounded text-xs bg-red-50 text-red-800 border border-red-200">
+                {assignError}
+              </div>
+            )}
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-md text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Vehicle:</span>
+                <span className="font-mono font-bold text-foreground">{assigningVehicle?.code} ({assigningVehicle?.vehicle_type})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Depot:</span>
+                <span className="capitalize text-foreground">{assigningVehicle?.depot_name} Depot</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Currently Assigned:</span>
+                <span className="font-semibold text-foreground">
+                  {assigningVehicle?.assigned_driver_name || "None (Unassigned)"}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Select Driver</Label>
+              <Select
+                value={selectedDriverUserId}
+                onValueChange={setSelectedDriverUserId}
+              >
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Choose a driver..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">
+                    <span className="text-muted-foreground italic">None (Unassign Driver)</span>
+                  </SelectItem>
+                  {drivers.map((d) => (
+                    <SelectItem key={d.id} value={String(d.id)}>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{d.full_name}</span>
+                        <span className="text-muted-foreground text-[11px]">({d.email})</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setIsAssignDriverOpen(false)}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSubmittingAssign}
+                className="bg-primary text-primary-foreground text-xs font-semibold gap-1.5"
+              >
+                <UserCheck className="size-3.5" />
+                <span>{isSubmittingAssign ? "Saving..." : "Confirm Assignment"}</span>
               </Button>
             </DialogFooter>
           </form>

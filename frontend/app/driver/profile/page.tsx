@@ -9,7 +9,8 @@ import {
 } from "lucide-react";
 import { apiFetch, ApiError } from "@/lib/api";
 import { cachedGet, writeCache } from "@/lib/driverCache";
-import { signOut } from "@/lib/driverSession";
+import { forgetScreens } from "@/lib/driverSession";
+import { useAuth } from "@/lib/auth-context";
 import { useSyncContext } from "@/components/SyncProvider";
 import DeviceClock from "@/components/driver/DeviceClock";
 
@@ -56,6 +57,7 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const { queue, online, flush } = useSyncContext();
+  const { logout } = useAuth();
 
   useEffect(() => {
     async function loadProfile() {
@@ -128,8 +130,8 @@ export default function ProfilePage() {
       setConfirmLogout(true);
       return;
     }
-    signOut();
-    router.push("/driver/login");
+    forgetScreens();
+    void logout(true); // ends the shared (Keycloak) sign-in too, so the next driver must sign in
   }
 
   const setupNeeded = details !== null && !details.complete; // first login: phone and licence still missing

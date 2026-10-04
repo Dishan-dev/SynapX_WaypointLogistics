@@ -5,6 +5,7 @@ Built on the loader's trip_setup (VEH014, three Fresh outlets, four orders):
 the dispatcher's trip names the driver, the loader builds and releases the run.
 """
 import pytest
+from jose import jwt
 from sqlalchemy import select
 
 from app.core.security import create_access_token, get_password_hash
@@ -493,51 +494,58 @@ def test_profile_shows_the_truck_on_todays_trip(loader_client, released):
     assert truck and body["todays_vehicle"] == truck
 
 
-# ---- Login with the account Admin makes (email + password) -----------------------
-# The driver app shows its own messages for these exact server answers
+# ---- Sign-in through the shared Waypoint (Keycloak) login -------------------------
+# Admin makes the account in Keycloak; the driver app sends the Keycloak token.
+# The app shows its own messages for "Inactive user" and "Driver access only"
 # (frontend/lib/driverSession.ts), so the tests pin them.
 
-def admin_creates(client, email="kamal@waypoint.com", role="DRIVER", is_active=True):
-    res = client.post("/api/v1/admin/users", json={
-        "email": email, "full_name": "Kamal Perera", "password": "kamal-pass-1",
-        "role": role, "is_active": is_active,
-    })
-    assert res.status_code == 201, res.text
+def keycloak_token(email, roles=("driver",), sub="7f1c2d9e-0000-4000-8000-000000000001", name="Kasun Perera"):
+    """Shaped like the shared login's token: the server reads its claims."""
+    claims = {
+        "sub": sub, "email": email, "preferred_username": email, "name": name,
+        "iss": "https://auth.tenderease.me/realms/waypointlogistics",
+        "realm_access": {"roles": list(roles)},
+    }
+    return {"Authorization": f"Bearer {jwt.encode(claims, 'signed-by-keycloak', algorithm='HS256')}"}
 
 
-def login(client, email, password="kamal-pass-1"):
-    return client.post("/api/v1/auth/login", data={"username": email, "password": password})
+def test_keycloak_driver_signs_in_then_adds_phone_and_licence(loader_client):
+    headers = keycloak_token("kasun@waypoint.com")
 
+    me = loader_client.get(f"{API}/me", headers=headers)
 
-def test_driver_made_in_admin_logs_in_then_adds_phone_and_licence(loader_client):
-    admin_creates(loader_client)
-
-    res = login(loader_client, "kamal@waypoint.com")
-
-    assert res.status_code == 200, res.text
-    headers = {"Authorization": f"Bearer {res.json()['access_token']}"}
-    me = loader_client.get(f"{API}/me", headers=headers).json()
-    assert (me["email"], me["role"]) == ("kamal@waypoint.com", "DRIVER")
+    assert me.status_code == 200, me.text
+    assert (me.json()["email"], me.json()["role"]) == ("kasun@waypoint.com", "DRIVER")
     assert loader_client.get(f"{API}/profile", headers=headers).json()["complete"] is False
     saved = loader_client.put(f"{API}/profile", headers=headers, json={"phone": "0771234567", "license_type": "Light"})
     assert saved.json()["complete"] is True
+    drivers = loader_client.get("/api/v1/fleet/drivers").json()
+    assert any(driver["user_id"] == me.json()["id"] for driver in drivers)
 
 
-def test_login_refuses_a_wrong_password_and_a_turned_off_account(loader_client):
-    admin_creates(loader_client)
-    admin_creates(loader_client, email="off@waypoint.com", is_active=False)
+def test_keycloak_login_is_the_admin_made_driver(loader_client, db_session):
+    user = make_account(db_session, email="nimal@waypoint.com")
 
-    wrong = login(loader_client, "kamal@waypoint.com", password="not-it")
-    off = login(loader_client, "off@waypoint.com")
+    me = loader_client.get(f"{API}/me", headers=keycloak_token("nimal@waypoint.com", name="Nimal Silva")).json()
 
-    assert (wrong.status_code, wrong.json()["detail"]) == (400, "Incorrect email or password")
-    assert (off.status_code, off.json()["detail"]) == (400, "Inactive user")
+    assert me["id"] == user.id
+    db_session.refresh(user)
+    assert user.keycloak_id == "7f1c2d9e-0000-4000-8000-000000000001"
+
+
+def test_turned_off_driver_is_refused(loader_client, db_session):
+    user = make_account(db_session, email="off@waypoint.com")
+    user.is_active = False
+    db_session.flush()
+
+    res = loader_client.get(f"{API}/me", headers=keycloak_token("off@waypoint.com"))
+
+    assert (res.status_code, res.json()["detail"]) == (400, "Inactive user")
 
 
 def test_other_roles_cant_use_the_driver_app(loader_client):
-    admin_creates(loader_client, email="dispatch@waypoint.com", role="DISPATCHER")
-    token = login(loader_client, "dispatch@waypoint.com").json()["access_token"]
+    headers = keycloak_token("dispatch@waypoint.com", roles=("dispatcher",), sub="7f1c2d9e-0000-4000-8000-000000000002")
 
-    res = loader_client.get(f"{API}/me", headers={"Authorization": f"Bearer {token}"})
+    res = loader_client.get(f"{API}/me", headers=headers)
 
     assert (res.status_code, res.json()["detail"]) == (403, "Driver access only")
