@@ -1,7 +1,7 @@
 """Dock arrival, the pick lock, depot loaders and release notifications.
 
-Revision ID: 0017_dock_arrival_pick
-Revises: 0016_sos_photo
+Revision ID: 0021_dock_arrival_pick
+Revises: 0020_delivery_stop_outlet_eta
 
 The loader run is still built when the dispatcher dispatches the trip, but stays hidden from the loader queue
 until the driver taps "Arrived at dock". Loaders now belong to a depot and see every dock of it; one loader
@@ -43,8 +43,8 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 
-revision = "0017_dock_arrival_pick"
-down_revision = "0016_sos_photo"
+revision = "0021_dock_arrival_pick"
+down_revision = "0020_delivery_stop_outlet_eta"
 branch_labels = None
 depends_on = None
 
@@ -116,7 +116,7 @@ def _backfill_loader_depots(bind) -> None:
     ).fetchall()
     if missing:
         log.warning(
-            "0017: %d loader(s) have no depot and cannot sign in until it is set: %s",
+            "0021: %d loader(s) have no depot and cannot sign in until it is set: %s",
             len(missing),
             ", ".join(f"#{row[0]} {row[1]}" for row in missing),
         )

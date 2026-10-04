@@ -1,8 +1,8 @@
-"""Migration 0017_dock_arrival_pick on a throwaway SQLite copy of the tables it touches.
+"""Migration 0021_dock_arrival_pick on a throwaway SQLite copy of the tables it touches.
 
 Runs the migration's upgrade() through alembic Operations on its own in-memory
 engine: it never reads the app settings, so it cannot reach a real database.
-The tables are the pre-0017 columns the migration reads or changes.
+The tables are the pre-0021 columns the migration reads or changes.
 """
 import importlib.util
 import logging
@@ -13,9 +13,9 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-MIGRATION = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0017_dock_arrival_pick.py"
+MIGRATION = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0021_dock_arrival_pick.py"
 
-PRE_0017 = """
+PRE_0021 = """
 CREATE TABLE users (id INTEGER PRIMARY KEY);
 CREATE TABLE outlets (id INTEGER PRIMARY KEY);
 CREATE TABLE dispatch_trips (id INTEGER PRIMARY KEY);
@@ -42,7 +42,7 @@ CREATE TABLE notifications (id INTEGER PRIMARY KEY, outlet_id INTEGER NOT NULL R
 
 
 def load_migration():
-    spec = importlib.util.spec_from_file_location("m0017", MIGRATION)
+    spec = importlib.util.spec_from_file_location("m0021", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -51,7 +51,7 @@ def load_migration():
 def migrated(seed: str):
     engine = sa.create_engine("sqlite://")
     with engine.begin() as conn:
-        for statement in (PRE_0017 + seed).split(";"):
+        for statement in (PRE_0021 + seed).split(";"):
             if statement.strip():
                 conn.exec_driver_sql(statement)
         with Operations.context(MigrationContext.configure(conn)):
