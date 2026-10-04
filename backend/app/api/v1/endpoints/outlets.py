@@ -430,7 +430,10 @@ def update_outlet(outlet_id: int, data: OutletUpdate, db: Session = Depends(get_
         else:
             if data.store_manager is not None:
                 if data.store_manager != settings.store_manager:
+                    # A different manager name unlinks the old account everywhere: for emails (this column)
+                    # and for login (store_manager_assignments). Link the new one with assign-manager.
                     settings.store_manager_user_id = None
+                    db.query(StoreManagerAssignment).filter(StoreManagerAssignment.outlet_id == outlet.id).delete()
                 settings.store_manager = data.store_manager
             if data.store_manager_phone is not None:
                 settings.contact_phone = data.store_manager_phone
@@ -475,6 +478,10 @@ def assign_outlet_manager(
     if user_id is not None:
         db.query(StoreManagerAssignment).filter(StoreManagerAssignment.user_id == user_id).delete()
         db.add(StoreManagerAssignment(user_id=user_id, outlet_id=outlet.id))
+        # Moving a manager here unlinks them from the outlet they ran before, for emails too.
+        db.query(OutletSettings).filter(
+            OutletSettings.store_manager_user_id == user_id, OutletSettings.outlet_id != outlet.id
+        ).update({OutletSettings.store_manager_user_id: None, OutletSettings.store_manager: None})
     else:
         db.query(StoreManagerAssignment).filter(StoreManagerAssignment.outlet_id == outlet.id).delete()
 
