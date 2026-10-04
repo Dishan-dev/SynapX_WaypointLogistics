@@ -269,6 +269,14 @@ function AdminDashboardContent() {
                   await adminService.assignDepotDispatcher(depot, userId);
                   await loadAllData();
                 }}
+                onAssignLoader={async (depot, loaderId, dockId) => {
+                  await adminService.assignDepotLoader(depot, { loader_id: loaderId, dock_id: dockId, action: "assign" });
+                  await loadAllData();
+                }}
+                onUnassignLoader={async (depot, loaderId) => {
+                  await adminService.unassignDepotLoader(depot, loaderId);
+                  await loadAllData();
+                }}
               />
             )}
 

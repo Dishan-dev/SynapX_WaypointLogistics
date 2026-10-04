@@ -101,9 +101,14 @@ function CallbackHandler() {
         setUserName(user.name || user.username);
         setDetectedRoles(user.roles);
 
-        // Determine destination portal based on Keycloak role
+        // Determine destination portal based on Keycloak role or saved return URL
+        const savedReturnUrl = sessionStorage.getItem("waypoint_return_url");
+        sessionStorage.removeItem("waypoint_return_url");
+
         let targetPortal = getDefaultPortalForRoles(user.roles);
-        if (targetRole && user.roles.includes(targetRole)) {
+        if (savedReturnUrl) {
+          targetPortal = savedReturnUrl;
+        } else if (targetRole && user.roles.includes(targetRole)) {
           targetPortal = ROLE_CONFIGS[targetRole].route;
         }
 
@@ -115,7 +120,7 @@ function CallbackHandler() {
         sessionStorage.removeItem(PKCE_VERIFIER_KEY);
         sessionStorage.removeItem(TARGET_ROLE_KEY);
 
-        // Immediate direct redirect to role portal
+        // Immediate direct redirect to role portal or saved return URL
         router.replace(targetPortal);
       } catch (err: unknown) {
         setStatus("error");
