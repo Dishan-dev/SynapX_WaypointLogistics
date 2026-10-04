@@ -1,4 +1,4 @@
-// Loader module types, from docs/loader/API_CONTRACT.md (loader-sachintha).
+// Loader module types, from docs/reference/loader/API_CONTRACT.md (loader-sachintha).
 //
 // - "Built (L0, L4)" shapes are final: RunDetail, Vehicle, Outlet, RunStop,
 //   RunOrder, Issue, ActivityEntry, and the check / uncheck / recheck writes.
@@ -327,12 +327,16 @@ export interface LoaderSession {
   started_at: string;
 }
 
-/** POST /loader/session body. The PIN is checked on the server only. */
+/**
+ * POST /loader/session. The signed-in Waypoint account decides the loader and
+ * the depot, so the body is usually empty. loader_user_id + pin only work
+ * where the server allows the old PIN sign-in (tests, local demos).
+ */
 export interface SessionRequest {
-  loader_user_id: number;
-  pin: string;
-  /** The depot this tablet signs into; a loader of another depot is refused (403). */
-  depot: string;
+  loader_user_id?: number;
+  pin?: string;
+  /** When sent, the depot must be the loader's own (else 403). */
+  depot?: string;
 }
 
 /** end_reason of DELETE /loader/session/{id}. */

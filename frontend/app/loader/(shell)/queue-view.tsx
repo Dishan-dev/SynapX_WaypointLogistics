@@ -19,7 +19,7 @@ type BrandFilter = "fresh" | "style_tech";
 
 const FILTER_KEY = "waypoint-loader-queue-filter";
 // The mock scenario is set at 02:20 on 28 May; the API runs on the real clock.
-const MOCK_TRANSPORT = process.env.NEXT_PUBLIC_LOADER_TRANSPORT !== "api";
+const MOCK_TRANSPORT = process.env.NEXT_PUBLIC_LOADER_TRANSPORT === "mock";
 
 const inFilter = (run: RunSummary, filter: BrandFilter) =>
   filter === "fresh" ? run.brand === "fresh" : run.brand !== "fresh";

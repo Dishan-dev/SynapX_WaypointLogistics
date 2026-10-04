@@ -5,7 +5,10 @@ the depot it signs into, and a session sees every dock of that depot.
 """
 import uuid
 
+import pytest
 from sqlalchemy import select
+
+from app.core.config import settings
 
 from app.models.loader_activity import LoadingCheck
 from app.models.loader_user import LoaderSession, SessionEndReason
@@ -19,6 +22,13 @@ from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
 
 BASE = "/api/v1/loader"
 TABLET = "Dock tablet 3"
+
+
+@pytest.fixture(autouse=True)
+def pin_sign_in(monkeypatch):
+    """These tests use the name + PIN sign-in, which is off unless switched on
+    (loaders sign in with Keycloak: test_loader_keycloak_sign_in.py)."""
+    monkeypatch.setattr(settings, "LOADER_PIN_SIGN_IN", True)
 
 
 def register_tablet(db, dock, label=TABLET, active=True):

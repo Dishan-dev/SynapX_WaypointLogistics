@@ -35,7 +35,7 @@ import type { OrderState, RunOrder } from "@/lib/loader/types";
 
 // The plan-change button drives the mock server only; on the API use
 // POST /loader/dev/runs/{code}/plan-change instead.
-const MOCK_TRANSPORT = process.env.NEXT_PUBLIC_LOADER_TRANSPORT !== "api";
+const MOCK_TRANSPORT = process.env.NEXT_PUBLIC_LOADER_TRANSPORT === "mock";
 
 const states: OrderState[] = ["to_load", "loaded", "flagged", "re_check", "take_off", "moved", "new"];
 

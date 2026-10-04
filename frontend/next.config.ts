@@ -15,7 +15,7 @@ if (process.env.VERCEL_ENV === "production" || process.env.VERCEL_ENV === "previ
 }
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  output: "standalone",
 };
 
 export default nextConfig;

@@ -1,7 +1,7 @@
 // This tablet's loader session, kept in localStorage so a reload or an
-// offline restart stays signed in. The PIN is never stored: sign-in needs the
-// server. Also keeps the last user list (names work offline) and session ends
-// that could not be sent yet.
+// offline restart stays signed in. It is opened for the signed-in Waypoint
+// (Keycloak) account; no PIN. Also keeps session ends that could not be sent
+// yet.
 
 import { clearSessionCaches } from "./offline/run-pages";
 import { NetworkError, type Transport } from "./offline/transport";
@@ -12,15 +12,9 @@ export const IDLE_SIGN_OUT_MS = 10 * 60_000;
 /** "Still there?" shows this long before the idle sign-out. Not in Figma. */
 export const IDLE_WARNING_MS = 30_000;
 
-/**
- * The depot this tablet signs into; its loaders see every dock of it. Set per
- * device (tablets are no longer tied to a dock).
- */
-export const TABLET_DEPOT = process.env.NEXT_PUBLIC_LOADER_DEPOT ?? "peliyagoda";
-
 export interface StoredSession {
   session: LoaderSession;
-  /** The user picked at sign-in, for the full name and initials. */
+  /** The signed-in loader, for the full name and initials. */
   user: LoaderUser;
 }
 
@@ -30,7 +24,6 @@ export interface TabletPlace {
 
 const SESSION_KEY = "waypoint-loader-session";
 const PLACE_KEY = "waypoint-loader-place";
-const USERS_KEY = "waypoint-loader-users";
 const ENDS_KEY = "waypoint-loader-session-ends";
 const CHANGE_EVENT = "waypoint-loader-session";
 
@@ -127,17 +120,6 @@ export function lastPlace(): TabletPlace | null {
     cachedPlace = parse<TabletPlace>(raw) ?? null;
   }
   return cachedPlace;
-}
-
-// ---- Users ----------------------------------------------------------------
-
-/** The last GET /loader/users response, so names can be searched offline. */
-export function cachedUsers(): LoaderUser[] {
-  return parse<LoaderUser[]>(read(USERS_KEY)) ?? [];
-}
-
-export function saveUsers(users: LoaderUser[]) {
-  write(USERS_KEY, JSON.stringify(users));
 }
 
 // ---- Ending a session ---------------------------------------------------------

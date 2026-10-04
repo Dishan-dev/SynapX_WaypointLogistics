@@ -11,7 +11,7 @@ A loader belongs to a depot and sees every dock of it. Tablet reads name the
 session in the X-Loader-Session header; tablet writes carry loader_session_id,
 and only the loader who picked the run may write to it.
 
-Every backend route here is owned by Sachintha (docs/loader/API_CONTRACT.md).
+Every backend route here is owned by Sachintha (docs/reference/loader/API_CONTRACT.md).
 """
 from typing import List, Optional
 from uuid import UUID
@@ -61,7 +61,7 @@ def _depot_dock(db: Session, session: LoaderSession, dock: Optional[str]) -> Opt
     if dock is None:
         return None
     found = loader_service.resolve_dock(db, dock)
-    if found.depot != session.loader_user.depot:
+    if found.depot != loader_service.loader_depot(session.loader_user):
         raise NotFoundError(f"Dock '{dock}' not found.", entity="Dock", entity_id=dock)
     return found
 
@@ -85,15 +85,33 @@ def list_users(
 
 
 @router.post("/session", response_model=schemas.LoaderSessionRead)
-def start_session(payload: schemas.SessionRequest, db: Session = Depends(deps.get_db)):
-    """Sign a loader in at their depot: 200 with the session, 401 for a wrong
-    PIN (or a loader who cannot sign in), 403 LOADER_NO_DEPOT / LOADER_OTHER_DEPOT,
-    404 for a tablet label that is not registered."""
-    try:
-        session = loader_service.start_session(db, payload)
-    except IncorrectPinError as exc:
+def start_session(
+    payload: schemas.SessionRequest,
+    db: Session = Depends(deps.get_db),
+    token: Optional[str] = Depends(deps.reusable_oauth2),
+):
+    """Sign a loader in with their Keycloak token (Authorization: Bearer): 200
+    with the session. The account's loader record is found by its full name
+    and created on the first sign-in (LoaderService.loader_for_account).
+    403 NOT_A_LOADER / LOADER_INACTIVE / LOADER_NO_DEPOT / LOADER_OTHER_DEPOT,
+    409 LOADER_ACCOUNT_AMBIGUOUS, 404 for a tablet label that is not registered.
+
+    Without a token, name + PIN (loader_user_id, pin) works only when
+    settings.LOADER_PIN_SIGN_IN is on (tests, local demos); a wrong PIN is 401.
+    """
+    if token:
+        user = deps.get_current_user(db=db, token=token)
+        session = loader_service.start_account_session(db, user, payload)
+    elif settings.LOADER_PIN_SIGN_IN and payload.loader_user_id is not None:
+        try:
+            session = loader_service.start_session(db, payload)
+        except IncorrectPinError as exc:
+            raise HTTPException(
+                status_code=401, detail={"code": "AUTHORIZATION_FAILED", "message": exc.message}
+            )
+    else:
         raise HTTPException(
-            status_code=401, detail={"code": "AUTHORIZATION_FAILED", "message": exc.message}
+            status_code=401, detail={"code": "NOT_AUTHENTICATED", "message": "Sign in with your Waypoint account."}
         )
     db.commit()
     return loader_service.session_read(session)
@@ -420,7 +438,7 @@ def get_issue(
     issue at another depot."""
     _catch_up(db)
     issue = loader_service.get_issue(db, issue_id)
-    if loader_service.run_depot(issue.run) != session.loader_user.depot:
+    if loader_service.run_depot(issue.run) != loader_service.loader_depot(session.loader_user):
         raise NotFoundError(f"Issue '{issue_id}' not found.", entity="LoaderIssue", entity_id=issue_id)
     detail = loader_service.build_issue_detail(db, issue)
     db.commit()
@@ -428,7 +446,7 @@ def get_issue(
 
 
 # ---------------------------------------------------------------------------
-# Integration slice 1: dispatch trips (docs/loader/INTEGRATION_DESIGN.md)
+# Integration slice 1: dispatch trips (docs/reference/loader/INTEGRATION_DESIGN.md)
 #
 # The dispatcher's own from-allocation endpoint should call
 # loader_service.create_run_for_dispatch_trip inside its transaction; these

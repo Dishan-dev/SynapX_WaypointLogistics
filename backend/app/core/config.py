@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     KEYCLOAK_ALGORITHM: str = "RS256"
     KEYCLOAK_AUDIENCE: str = ""
     KEYCLOAK_DEV_MODE: bool = False  # Explicit opt-in for local development only
+    # Loaders sign in with Keycloak. The old name + PIN sign-in is for tests and
+    # local demos only; keep it off anywhere real.
+    LOADER_PIN_SIGN_IN: bool = False
 
     # Temporary operational scope while Keycloak depot claims are being wired.
     # Requests without an explicit depot scope stay in Peliyagoda, never a

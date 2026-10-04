@@ -111,6 +111,15 @@ export async function flushOutbox(transport: Transport): Promise<FlushResult> {
         current_plan_version: typeof d?.current_plan_version === "number" ? d.current_plan_version : undefined,
         last_error: detail(res.body, code),
       });
+    } else if (res.status === 401) {
+      // The Waypoint sign-in expired: keep it and everything after it queued,
+      // in order, and send again once the token is refreshed.
+      await putOutboxAction({
+        ...action,
+        attempts: action.attempts + 1,
+        last_error: "Signed out of Waypoint: sends again after sign-in.",
+      });
+      return result(false);
     } else if (res.status >= 500) {
       // Server trouble: keep order, retry on the next flush.
       await putOutboxAction({

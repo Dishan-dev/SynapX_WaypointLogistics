@@ -3,6 +3,7 @@
 Endpoints stay thin; anything that decides something lives here.
 """
 import logging
+import secrets
 from collections import Counter
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -18,7 +19,7 @@ from app.core.exceptions import (
     InvalidStateTransitionError,
     NotFoundError,
 )
-from app.core.security import verify_password
+from app.core.security import get_password_hash, verify_password
 from app.models.delivery_run import (
     DeliveryRun,
     RunOrderState,
@@ -43,7 +44,7 @@ from app.models.notification import NotificationType
 from app.models.order import Order, OrderStatus
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
 from app.models.shipment import DispatchTrip
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.reference import (
     Brand,
     CalendarDay,
@@ -168,6 +169,15 @@ def _day_label(day: date) -> str:
     return f"{_DAYS[day.weekday()]} {day.day} {_MONTHS[day.month - 1]}"
 
 
+def _short_name(full_name: str) -> str:
+    """What the tablet shows for a loader: "Saman Jayawardena" -> "Saman J."."""
+    parts = full_name.split()
+    if not parts:
+        return "Loader"
+    short = f"{parts[0]} {parts[-1][0]}." if len(parts) > 1 else parts[0]
+    return short[:50]
+
+
 def _ordinal(n: int) -> str:
     suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
     return f"{n}{suffix}"
@@ -175,7 +185,7 @@ def _ordinal(n: int) -> str:
 
 logger = logging.getLogger(__name__)
 
-# Order lifecycle as the loader drives it (order_service, docs/store-manager-contract.md):
+# Order lifecycle as the loader drives it (order_service, docs/reference/store-manager-contract.md):
 # ALLOCATED -> PROCESSING on the first tick, -> READY_FOR_DISPATCH once a release
 # can no longer be undone.
 PROCESSING_OR_LATER = {
@@ -657,12 +667,44 @@ class RunNotPickedError(InvalidStateTransitionError):
 
 
 class LoaderNoDepotError(AuthorizationError):
-    """A loader with no depot on record cannot sign in. 403."""
+    """A loader with no depot on record (nor a home dock) cannot sign in. 403."""
 
     def __init__(self, user: LoaderUser):
-        super().__init__(f"{user.short_name} has no depot yet. Ask the admin to set it.")
+        super().__init__("Your account isn't assigned to a depot yet. Ask the admin to set it.")
         self.code = "LOADER_NO_DEPOT"
         self.details = {"loader_user_id": user.id}
+
+
+class NotALoaderError(AuthorizationError):
+    """Keycloak sign-in by an account without the loader role. 403."""
+
+    def __init__(self, user: User):
+        super().__init__("This account isn't a loader account.", required_role="LOADER")
+        self.code = "NOT_A_LOADER"
+        self.details = {"user_id": user.id}
+
+
+class LoaderInactiveError(AuthorizationError):
+    """The loader record of this account is switched off. 403."""
+
+    def __init__(self, loader: LoaderUser):
+        super().__init__("Your loader account is switched off. Ask the admin.")
+        self.code = "LOADER_INACTIVE"
+        self.details = {"loader_user_id": loader.id}
+
+
+class LoaderAccountAmbiguousError(InvalidStateTransitionError):
+    """More than one loader record has this account's name: no guessing. 409."""
+
+    def __init__(self, name: str, loaders: List[LoaderUser]):
+        super().__init__(
+            f"More than one loader is called '{name}'. Ask the admin to rename one.",
+            current_state="ambiguous",
+            target_state="signed_in",
+            entity="LoaderUser",
+        )
+        self.code = "LOADER_ACCOUNT_AMBIGUOUS"
+        self.details = {"name": name, "loader_user_ids": [loader.id for loader in loaders]}
 
 
 class LoaderOtherDepotError(AuthorizationError):
@@ -1376,7 +1418,7 @@ class LoaderService:
         depot_runs = (
             select(DeliveryRun.id)
             .join(Dock, DeliveryRun.dock_id == Dock.id)
-            .where(Dock.depot == session.loader_user.depot, DeliveryRun.arrived_at.is_not(None))
+            .where(Dock.depot == LoaderService.loader_depot(session.loader_user), DeliveryRun.arrived_at.is_not(None))
         )
         if dock is not None:
             depot_runs = depot_runs.where(DeliveryRun.dock_id == dock.id)
@@ -1415,9 +1457,13 @@ class LoaderService:
 
     @staticmethod
     def loader_depot(user: LoaderUser) -> Depot:
-        if user.depot is None:
-            raise LoaderNoDepotError(user)
-        return user.depot
+        """The loader's depot; else, read-only, their home dock's (Admin's
+        depot assignment sets only the home dock). Neither: 403."""
+        if user.depot is not None:
+            return user.depot
+        if user.home_dock is not None and user.home_dock.depot is not None:
+            return user.home_dock.depot
+        raise LoaderNoDepotError(user)
 
     @staticmethod
     def open_session(db: Session, session_id: int) -> LoaderSession:
@@ -1445,7 +1491,7 @@ class LoaderService:
         run = db.execute(select(DeliveryRun).filter_by(code=code)).scalars().first()
         if (
             run is None
-            or LoaderService.run_depot(run) != session.loader_user.depot
+            or LoaderService.run_depot(run) != LoaderService.loader_depot(session.loader_user)
             or run.arrived_at is None
         ):
             raise NotFoundError(f"Run '{code}' not found.", entity="DeliveryRun", entity_id=code)
@@ -1488,7 +1534,7 @@ class LoaderService:
                 f"Loader session {session_id} not found.", entity="LoaderSession", entity_id=session_id
             )
         user = session.loader_user
-        if LoaderService.run_depot(run) != user.depot or run.arrived_at is None:
+        if LoaderService.run_depot(run) != LoaderService.loader_depot(user) or run.arrived_at is None:
             raise NotFoundError(f"Run '{run.code}' not found.", entity="DeliveryRun", entity_id=run.code)
         holder = LoaderService.pick_holder(run)
         if holder is not None:
@@ -1758,8 +1804,45 @@ class LoaderService:
         return list(db.execute(query.order_by(LoaderUser.full_name, LoaderUser.id)).scalars())
 
     @staticmethod
+    def loader_for_account(db: Session, user: User) -> LoaderUser:
+        """The loader record of a Keycloak account: the one loader_users row
+        whose full name, trimmed, is the account's. More than one is 409
+        LOADER_ACCOUNT_AMBIGUOUS (no guessing); none is created now, on the
+        first sign-in, with an unusable PIN. Not a loader account: 403."""
+        if user.role != UserRole.LOADER:
+            raise NotALoaderError(user)
+        name = (user.full_name or "").strip()
+        matches = list(db.execute(
+            select(LoaderUser).where(func.trim(LoaderUser.full_name) == name).order_by(LoaderUser.id)
+        ).scalars()) if name else []
+        if len(matches) > 1:
+            raise LoaderAccountAmbiguousError(name, matches)
+        if matches:
+            return matches[0]
+        loader = LoaderUser(
+            full_name=name or user.email,
+            short_name=_short_name(name or user.email),
+            pin_hash=get_password_hash(secrets.token_urlsafe(24)),
+            is_active=True,
+        )
+        db.add(loader)
+        db.flush()
+        return loader
+
+    @staticmethod
+    def start_account_session(db: Session, user: User, payload: schemas.SessionRequest) -> LoaderSession:
+        """POST /loader/session with the Keycloak token: the account's loader
+        record (see loader_for_account) signs in at their depot. Nothing is
+        written but the session and, on a first sign-in, the loader row."""
+        loader = LoaderService.loader_for_account(db, user)
+        if not loader.is_active:
+            raise LoaderInactiveError(loader)
+        return LoaderService._open_session_for(db, loader, payload)
+
+    @staticmethod
     def start_session(db: Session, payload: schemas.SessionRequest) -> LoaderSession:
-        """Sign a loader in at their depot.
+        """Sign a loader in at their depot with name + PIN (tests and local
+        demos only: settings.LOADER_PIN_SIGN_IN).
 
         The loader's depot decides what they see (every dock of it). A
         loader with no depot is 403 LOADER_NO_DEPOT; signing in at another
@@ -1769,6 +1852,15 @@ class LoaderService:
         must be a registered tablet (404 otherwise) and is recorded. Other
         sessions on the tablet are left alone: the tablet ends the old one.
         """
+        user = db.get(LoaderUser, payload.loader_user_id) if payload.loader_user_id is not None else None
+        if user is None or not user.is_active or not verify_password(payload.pin or "", user.pin_hash):
+            raise IncorrectPinError()
+        return LoaderService._open_session_for(db, user, payload)
+
+    @staticmethod
+    def _open_session_for(db: Session, user: LoaderUser, payload: schemas.SessionRequest) -> LoaderSession:
+        """A new session for this loader at their depot. A tablet label, when
+        sent, must be registered (404); a depot, when sent, must be theirs."""
         tablet = None
         label = (payload.dock_tablet_label or "").strip()
         if label:
@@ -1779,9 +1871,6 @@ class LoaderService:
                 raise NotFoundError(
                     f"Dock tablet '{label}' is not registered.", entity="DockTablet", entity_id=label
                 )
-        user = db.get(LoaderUser, payload.loader_user_id)
-        if user is None or not user.is_active or not verify_password(payload.pin, user.pin_hash):
-            raise IncorrectPinError()
         depot = LoaderService.loader_depot(user)
         if payload.depot is not None and payload.depot != depot:
             raise LoaderOtherDepotError(user, payload.depot)
@@ -1825,7 +1914,7 @@ class LoaderService:
             session_id=session.id,
             loader=schemas.SessionLoaderRead(id=user.id, short_name=user.short_name),
             dock=None,
-            depot=user.depot.value if user.depot else "",
+            depot=LoaderService.loader_depot(user).value,
             started_at=session.started_at,
             ended_at=session.ended_at,
             end_reason=session.end_reason,
@@ -1865,17 +1954,19 @@ class LoaderService:
         dock: Optional[Dock] = None,
         brand: Optional[Brand] = None,
     ) -> schemas.RunQueueRead:
-        """GET /loader/runs: every dock of the loader's depot (or the one
-        asked for), each with its arrived runs in arrival order. Docks with no
-        truck are listed too, so the tablet can say so."""
-        depot = session.loader_user.depot
+        """GET /loader/runs: the docks of the loader's depot that have a
+        truck in, each with its arrived runs in arrival order. Docks with no
+        runs are left out (Admin's "Any Dock" rows among them); the one dock
+        asked for with ?dock= is always listed, so the tablet can say so."""
+        depot = LoaderService.loader_depot(session.loader_user)
         docks = [dock] if dock is not None else LoaderService.list_docks(db, depot)
         groups = {
             d.id: schemas.DockQueueRead(dock=d.name, dock_code=d.code, runs=[]) for d in docks
         }
         for run in LoaderService.queue_runs(db, depot, dock, brand):
             groups[run.dock_id].runs.append(LoaderService.run_card(db, run, session))
-        return schemas.RunQueueRead(depot=depot.value, docks=list(groups.values()))
+        listed = [g for g in groups.values() if g.runs or dock is not None]
+        return schemas.RunQueueRead(depot=depot.value, docks=listed)
 
     @staticmethod
     def run_card(
@@ -2035,7 +2126,7 @@ class LoaderService:
         The day is the depot date of the first departure (a night wave leaving
         03:30 belongs to that date), or today when no truck is in.
         """
-        depot = session.loader_user.depot
+        depot = LoaderService.loader_depot(session.loader_user)
         runs = LoaderService.queue_runs(db, depot, dock)
         cards = [LoaderService.run_card(db, run, session) for run in runs]
         day = _depot_date(runs[0].departs_at if runs else datetime.now(timezone.utc))
@@ -2220,7 +2311,7 @@ class LoaderService:
             select(LoaderIssue)
             .join(DeliveryRun, LoaderIssue.run_id == DeliveryRun.id)
             .join(Dock, DeliveryRun.dock_id == Dock.id)
-            .where(Dock.depot == session.loader_user.depot)
+            .where(Dock.depot == LoaderService.loader_depot(session.loader_user))
         )
         if dock is not None:
             query = query.where(DeliveryRun.dock_id == dock.id)
