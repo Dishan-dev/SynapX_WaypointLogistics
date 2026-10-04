@@ -464,7 +464,8 @@ def test_dispatcher_run_moves_store_orders_on_the_way_then_delivered(client, clo
     trip = DispatchTrip(
         trip_code="TRIP-T1", allocation_id=allocation.id, vehicle_id=vehicle.id, vehicle_number="VEH099",
         driver_name="Saman Kumara", origin="peliyagoda", destination="multiple stops", status="scheduled",
-        stop_count=2, stop_sequence=[{"id": str(fresh.id)}, {"id": str(style.id)}],
+        stop_count=2,
+        stop_sequence=[{"id": str(fresh.id), "outlet_code": "OUT005"}, {"id": str(style.id), "outlet_code": "OUT015"}],
     )
     db_session.add(trip)
     db_session.commit()
