@@ -3,11 +3,10 @@ from fastapi.testclient import TestClient
 
 
 def test_list_and_create_issue(client: TestClient):
-    # 1. Fetch initial seed issues
+    # 1. No demo issues are seeded: a fresh database starts empty
     res = client.get("/api/v1/issues")
     assert res.status_code == 200
-    issues = res.json()
-    assert len(issues) >= 3
+    assert res.json() == []
 
     # 2. Create new delivery issue
     new_issue_payload = {

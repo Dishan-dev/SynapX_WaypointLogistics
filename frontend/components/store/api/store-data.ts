@@ -112,31 +112,58 @@ export async function importStoreStock(file: File): Promise<ApiStockImportResult
   return apiFetch<ApiStockImportResult>(`/outlets/${await outletId()}/stock/import`, { method: "POST", body });
 }
 
+// Live data never falls back to the demo data: an outlet with no orders shows none, and a server error
+// surfaces (the store error page offers a retry) instead of showing another store's demo orders.
 export async function getStoreOrders(): Promise<StoreOrder[]> {
-  if (live()) {
-    try {
-      const orders = await apiFetch<ApiStoreOrder[]>(`/orders/store?outlet_id=${await outletId()}&limit=200`);
-      if (orders && orders.length > 0) {
-        return orders.map(toStoreOrder);
-      }
-    } catch {
-      // Fallback to mock data if backend query fails or is empty
-    }
-  }
-  return mockOrders;
+  if (!live()) return mockOrders;
+  const orders = await apiFetch<ApiStoreOrder[]>(`/orders/store?outlet_id=${await outletId()}&limit=200`);
+  return orders.map(toStoreOrder);
 }
 
 /** null when the order doesn't exist. */
 export async function getStoreOrder(orderNumber: string): Promise<StoreOrder | null> {
-  if (live()) {
-    try {
-      const data = await apiFetch<ApiStoreOrder>(`/orders/store/${encodeURIComponent(orderNumber)}`);
-      if (data) return toStoreOrder(data);
-    } catch {
-      // Fallback to mock order if present
-    }
+  if (!live()) {
+    return mockOrders.find((order) => order.orderNumber.toLowerCase() === orderNumber.toLowerCase()) ?? null;
   }
-  return mockOrders.find((order) => order.orderNumber.toLowerCase() === orderNumber.toLowerCase()) ?? null;
+  try {
+    return toStoreOrder(await apiFetch<ApiStoreOrder>(`/orders/store/${encodeURIComponent(orderNumber)}`));
+  } catch (error) {
+    // Unknown, or another outlet's order: both read as "not found" to this store.
+    if (error instanceof ApiError && (error.status === 404 || error.status === 403)) return null;
+    throw error;
+  }
+}
+
+export interface StoreReceipt {
+  unitsReceived: number | null;
+  hasIssues: boolean;
+  issueType: string | null;
+  issueDescription: string | null;
+  confirmedAt: string | null;
+}
+
+/** The receipt the store confirmed for an order; null before it's received. */
+export async function getOrderReceipt(orderId: number): Promise<StoreReceipt | null> {
+  if (!live()) return null;
+  try {
+    const receipt = await apiFetch<{
+      units_received: number | null;
+      has_issues: boolean;
+      issue_type: string | null;
+      issue_description: string | null;
+      confirmed_at: string | null;
+    }>(`/receipts/${orderId}`);
+    return {
+      unitsReceived: receipt.units_received,
+      hasIssues: receipt.has_issues,
+      issueType: receipt.issue_type,
+      issueDescription: receipt.issue_description,
+      confirmedAt: receipt.confirmed_at,
+    };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
 }
 
 export interface GoodsRequestInput {
@@ -183,17 +210,9 @@ export async function cancelStoreOrder(orderId: number): Promise<void> {
 }
 
 export async function getNotifications(): Promise<StoreNotification[]> {
-  if (live()) {
-    try {
-      const notifications = await apiFetch<ApiNotification[]>(`/notifications/?outlet_id=${await outletId()}`);
-      if (notifications && notifications.length > 0) {
-        return notifications.map(toStoreNotification);
-      }
-    } catch {
-      // Fallback
-    }
-  }
-  return mockNotifications;
+  if (!live()) return mockNotifications;
+  const notifications = await apiFetch<ApiNotification[]>(`/notifications/?outlet_id=${await outletId()}`);
+  return notifications.map(toStoreNotification);
 }
 
 export async function markNotificationRead(id: string): Promise<void> {
@@ -220,43 +239,33 @@ export async function getHolidays(from: Date, days = 90): Promise<{ date: string
         .filter((day) => day.getDay() !== 0 && !operating.has(format(day, "yyyy-MM-dd")))
         .map((day) => ({ date: format(day, "yyyy-MM-dd"), name: "Holiday" }));
     } catch {
-      // Fallback
+      // Without the calendar the picker only blocks Sundays; the server still rejects holidays on submit.
+      return [];
     }
   }
   return mockHolidays;
 }
 
 export async function getOutletSettings(): Promise<OutletSettings> {
-  if (live()) {
-    try {
-      const res = await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings`);
-      if (res) return toOutletSettings(res);
-    } catch {
-      // Fallback to mock settings
-    }
-  }
-  return mockOutletSettings;
+  if (!live()) return mockOutletSettings;
+  return toOutletSettings(await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings`));
 }
 
 export async function updateOutletSettings(payload: Partial<OutletSettings>): Promise<OutletSettings> {
   if (live()) {
-    try {
-      const apiPayload = {
+    // A failed save throws, so the Settings page shows the error instead of pretending it saved.
+    const res = await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings`, {
+      method: "PATCH",
+      body: JSON.stringify({
         contact_phone: payload.contactPhone,
         emergency_contact: payload.emergencyContact,
         driver_check_in_call: payload.driverCheckInCall,
         share_dock_gate_code: payload.shareDockGateCode,
         email_alerts_issues: payload.emailAlertsIssues,
         sms_alerts_priority: payload.smsAlertsPriority,
-      };
-      const res = await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings`, {
-        method: "PATCH",
-        body: JSON.stringify(apiPayload),
-      });
-      if (res) return toOutletSettings(res);
-    } catch {
-      // Handled locally
-    }
+      }),
+    });
+    return toOutletSettings(res);
   }
   return {
     ...mockOutletSettings,
@@ -266,16 +275,9 @@ export async function updateOutletSettings(payload: Partial<OutletSettings>): Pr
 }
 
 export async function resetOutletSettings(): Promise<OutletSettings> {
-  if (live()) {
-    try {
-      const res = await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings/reset`, {
-        method: "POST",
-      });
-      if (res) return toOutletSettings(res);
-    } catch {
-      // Handled locally
-    }
-  }
-  return mockOutletSettings;
+  if (!live()) return mockOutletSettings;
+  return toOutletSettings(
+    await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings/reset`, { method: "POST" })
+  );
 }
 

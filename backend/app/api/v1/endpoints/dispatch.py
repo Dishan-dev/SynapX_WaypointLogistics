@@ -11,6 +11,7 @@ from app.schemas.shipment import DispatchTripCreate, DispatchTripRead, DeliveryR
 from app.models.order import Order, OrderItem
 from app.services.loader_service import loader_service
 
+from app.services.order_service import order_service
 router = APIRouter()
 
 def _with_loader(db: Session, trips: List[DispatchTrip]) -> List[DeliveryRunResponse]:
@@ -161,6 +162,7 @@ def update_delivery_run(
         raise HTTPException(status_code=404, detail="Delivery run not found")
 
     update_data = trip_in.model_dump(exclude_unset=True)
+    previous_status = run.status
     for field, value in update_data.items():
         setattr(run, field, value)
 
@@ -169,6 +171,14 @@ def update_delivery_run(
 
     db.add(run)
     db.commit()
+
+    # Tell the stores: the truck leaving makes its orders "On the way", finishing the run makes them delivered.
+    if run.status != previous_status:
+        if run.status == "en_route":
+            order_service.mark_trip_departed(db, run.allocation_id)
+        elif run.status == "completed":
+            order_service.mark_trip_delivered(db, run.allocation_id)
+
     db.refresh(run)
     return run
 
@@ -406,6 +416,14 @@ def mark_stop_complete(
 
     run.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+    # The stop just completed is that outlet's delivery: its orders become delivered for the store.
+    stops = run.stop_sequence or []
+    if 0 < run.stops_completed <= len(stops):
+        stop_outlet = stops[run.stops_completed - 1].get("id")
+        if str(stop_outlet).isdigit():
+            order_service.mark_trip_delivered(db, run.allocation_id, int(stop_outlet))
+
     db.refresh(run)
     return run
 

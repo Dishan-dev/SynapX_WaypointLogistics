@@ -3,7 +3,8 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StoreMetricCard } from "@/components/store/store-cards";
 import { formatTime, greeting } from "@/components/store/format";
-import { mockIssues } from "@/components/store/mock-data";
+import { mockIssues, type StoreIssue as DashboardIssue } from "@/components/store/mock-data";
+import { fetchStoreIssues } from "@/services/issues-store";
 import { STORE_DATA_SOURCE, storeNow } from "@/components/store/api/config";
 import { getStoreOrders, getStoreSession } from "@/components/store/api/store-data";
 import { getDashboardData } from "@/components/store/dashboard/dashboard-data";
@@ -14,8 +15,16 @@ import { NeedsAttention } from "@/components/store/dashboard/needs-attention";
 // Figma: Desktop / 01 Dashboard and Mobile / 01 Dashboard.
 export default async function StoreDashboardPage() {
   const now = storeNow();
-  // Delivery issues belong to Dev B's receipts flow; there's no API for them yet.
-  const issues = STORE_DATA_SOURCE === "api" ? [] : mockIssues;
+  // Open delivery issues for "Needs attention" (live: the outlet's issues from the API).
+  const issues: DashboardIssue[] =
+    STORE_DATA_SOURCE === "api"
+      ? (await fetchStoreIssues().catch(() => [])).map((issue) => ({
+          code: issue.id,
+          orderNumber: issue.orderId,
+          summary: issue.title,
+          isOpen: issue.status === "open" || issue.status === "under_review",
+        }))
+      : mockIssues;
   const [orders, session] = await Promise.all([getStoreOrders(), getStoreSession().catch(() => null)]);
   const outlet = session?.outlet ?? null;
   const data = getDashboardData(orders, issues);

@@ -439,3 +439,47 @@ def test_outside_dev_mode_only_store_managers_and_admins_open_a_store(client, ou
     sign_in(admin)
     assert client.get("/api/v1/store/me", params={"outlet_id": fresh_id}).json()["outlet"]["code"] == "OUT005"
     assert client.get("/api/v1/store/me").status_code == 422  # an admin has to say which store
+
+
+def test_dispatcher_run_moves_store_orders_on_the_way_then_delivered(client, clock, outlets, db_session):
+    from app.models.allocation import Allocation, AllocationStatus
+    from app.models.fleet import Vehicle
+    from app.models.order import Order, OrderStatus
+    from app.models.shipment import DispatchTrip
+
+    fresh, style = outlets["fresh"], outlets["style"]
+    chilled = place(client, fresh.id, "2026-09-30", [item("SKU-063", "Chilled")]).json()[0]
+    jeans = place(client, style.id, "2026-09-30", [item("SKU-501", "Ambient")]).json()[0]
+
+    vehicle = Vehicle(code="VEH099", vehicle_type="truck", capacity_kg=5000, capacity_vol_m3=30)
+    db_session.add(vehicle)
+    db_session.flush()
+    allocation = Allocation(vehicle_id=vehicle.id, status=AllocationStatus.READY)
+    db_session.add(allocation)
+    db_session.flush()
+    for number in (chilled["order_number"], jeans["order_number"]):
+        order = db_session.query(Order).filter_by(order_number=number).one()
+        order.allocation_id = allocation.id
+        order.status = OrderStatus.READY_FOR_DISPATCH  # loaded and released by the loader
+    trip = DispatchTrip(
+        trip_code="TRIP-T1", allocation_id=allocation.id, vehicle_id=vehicle.id, vehicle_number="VEH099",
+        driver_name="Saman Kumara", origin="peliyagoda", destination="multiple stops", status="scheduled",
+        stop_count=2, stop_sequence=[{"id": str(fresh.id)}, {"id": str(style.id)}],
+    )
+    db_session.add(trip)
+    db_session.commit()
+
+    detail = client.get(f"/api/v1/orders/store/{chilled['order_number']}").json()
+    assert detail["delivery"]["vehicle_code"] == "VEH099" and detail["delivery"]["trip_status"] == "scheduled"
+
+    # The truck leaves: both stores see "On the way".
+    assert client.patch(f"/api/v1/delivery-runs/{trip.id}", json={"status": "en_route"}).status_code == 200
+    statuses = {o["order_number"]: o["status"] for o in client.get("/api/v1/orders/store", params={"outlet_id": fresh.id}).json()}
+    assert statuses[chilled["order_number"]] == "DISPATCHED"
+
+    # First stop (Fresh) completed: only that store's order is delivered.
+    assert client.post(f"/api/v1/delivery-runs/{trip.id}/mark-stop-complete").status_code == 200
+    assert client.get(f"/api/v1/orders/store/{chilled['order_number']}").json()["status"] == "DELIVERED"
+    assert client.get(f"/api/v1/orders/store/{jeans['order_number']}").json()["status"] == "DISPATCHED"
+    types = [n["type"] for n in client.get("/api/v1/notifications/", params={"outlet_id": fresh.id}).json()]
+    assert "delivered" in types

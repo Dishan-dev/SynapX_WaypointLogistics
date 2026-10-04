@@ -63,6 +63,45 @@ def summarise_shortfall(issues) -> Optional[OrderShortfall]:
     )
 
 
+class OrderDelivery(BaseModel):
+    """Who is bringing the order and where the trip is: from the Dispatcher's allocation and delivery run."""
+
+    vehicle_code: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    temperature_mode: Optional[str] = None
+    driver_name: Optional[str] = None
+    driver_phone: Optional[str] = None
+    trip_code: Optional[str] = None
+    # scheduled / en_route / completed / recalled; null until the Dispatcher creates the run
+    trip_status: Optional[str] = None
+    departure_time: Optional[datetime] = None
+    estimated_arrival: Optional[datetime] = None
+    actual_arrival: Optional[datetime] = None
+
+
+def summarise_delivery(allocation) -> Optional[OrderDelivery]:
+    """None until the Dispatcher allocates the order to a vehicle."""
+    if allocation is None:
+        return None
+    trips = sorted(allocation.dispatch_trips or [], key=lambda trip: trip.id)
+    trip = trips[-1] if trips else None
+    vehicle = allocation.vehicle
+    driver = allocation.driver
+    driver_name = (trip.driver_name if trip else None) or (driver.user.full_name if driver and driver.user else None)
+    return OrderDelivery(
+        vehicle_code=(trip.vehicle_number if trip else None) or (vehicle.code if vehicle else None),
+        vehicle_type=vehicle.vehicle_type if vehicle else None,
+        temperature_mode=vehicle.temperature_mode if vehicle else None,
+        driver_name=driver_name,
+        driver_phone=driver.phone if driver else None,
+        trip_code=trip.trip_code if trip else None,
+        trip_status=trip.status if trip else None,
+        departure_time=(trip.departure_time if trip else None) or allocation.departure_time,
+        estimated_arrival=trip.estimated_arrival if trip else None,
+        actual_arrival=trip.actual_arrival if trip else None,
+    )
+
+
 class StoreOrderRead(BaseModel):
     id: int
     order_number: str
@@ -83,10 +122,16 @@ class StoreOrderRead(BaseModel):
     deferral_count: int
     items: List[OrderItemRead] = []
     shortfall: Optional[OrderShortfall] = Field(default=None, validation_alias="loader_issues")
+    delivery: Optional[OrderDelivery] = Field(default=None, validation_alias="allocation")
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("delivery", mode="before")
+    @classmethod
+    def delivery_from_allocation(cls, value):
+        return value if value is None or isinstance(value, (dict, OrderDelivery)) else summarise_delivery(value)
 
     @field_validator("shortfall", mode="before")
     @classmethod

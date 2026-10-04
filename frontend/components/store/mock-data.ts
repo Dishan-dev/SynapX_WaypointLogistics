@@ -126,6 +126,8 @@ export interface StoreOrderItem {
   quantitySent?: number;
   /** order_items.dispatcher_note (Figma 04b). */
   dispatcherNote?: DispatcherNote;
+  /** The depot's plain-text note on this line (live order_items.dispatcher_note), e.g. why it was sent short. */
+  depotNote?: string;
 }
 
 export interface OrderVehicle {
@@ -166,6 +168,22 @@ export interface StoreOrder {
   deliveryWindow?: { windowStart: string; windowEnd: string };
   /** Order-level shortfall from the loader (the loader flags per order, not per item). */
   shortfall?: OrderShortfall;
+  /** Vehicle, driver and trip once the Dispatcher allocates the order. */
+  delivery?: OrderDelivery;
+}
+
+export interface OrderDelivery {
+  vehicleCode?: string;
+  vehicleType?: string;
+  temperatureMode?: string;
+  driverName?: string;
+  driverPhone?: string;
+  tripCode?: string;
+  /** scheduled / en_route / completed / recalled; undefined until the Dispatcher creates the run. */
+  tripStatus?: string;
+  departureTime?: string;
+  estimatedArrival?: string;
+  actualArrival?: string;
 }
 
 export interface OrderShortfall {

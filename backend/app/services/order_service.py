@@ -4,6 +4,8 @@ from typing import Dict, List, Optional, Set
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 from app.core.exceptions import InvalidStateTransitionError, NotFoundError, OrderRuleError
+from app.models.allocation import Allocation
+from app.models.fleet import DriverProfile
 from app.models.notification import NotificationType
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.reference import Depot, Outlet
@@ -92,6 +94,17 @@ def _requested_window(outlet: Outlet, request: GoodsRequestCreate) -> Optional[s
             details={"outlet_window": usual},
         )
     return _window_label(start, end)
+
+
+# What the Store Manager order views read: items, the loader's shortfalls, and the delivery (allocation ->
+# vehicle, driver, Dispatcher trip), loaded together so a list is a few queries, not one per order.
+STORE_ORDER_LOADS = (
+    selectinload(Order.items),
+    selectinload(Order.loader_issues),
+    selectinload(Order.allocation).selectinload(Allocation.vehicle),
+    selectinload(Order.allocation).selectinload(Allocation.driver).selectinload(DriverProfile.user),
+    selectinload(Order.allocation).selectinload(Allocation.dispatch_trips),
+)
 
 
 class OrderService:
@@ -283,7 +296,7 @@ class OrderService:
         """Order history for Goods Requests (Figma 02). Dates filter on when the request was submitted."""
         query = (
             db.query(Order)
-            .options(selectinload(Order.items), selectinload(Order.loader_issues))
+            .options(*STORE_ORDER_LOADS)
             .filter(Order.outlet_id == outlet_id)
         )
         if statuses:
@@ -308,7 +321,7 @@ class OrderService:
     def get_order_by_number(db: Session, order_number: str) -> Order:
         order = (
             db.query(Order)
-            .options(selectinload(Order.items), selectinload(Order.loader_issues))
+            .options(*STORE_ORDER_LOADS)
             .filter(Order.order_number == order_number.upper())
             .first()
         )
@@ -373,6 +386,50 @@ class OrderService:
                 meta["delivery_label"] = f"{label}, {order.delivery_window}" if order.delivery_window else label
             notification_service.send(db, order.outlet_id, notification_type, meta)
         return order
+
+    # ── Delivery progress from the Dispatcher's runs and the Driver app ──
+    # Each moves the orders on a trip forward through update_order_status, so the store is notified. Orders
+    # not at the expected step (e.g. still being loaded, or deferred) are left alone.
+
+    @staticmethod
+    def _advance(db: Session, orders: List[Order], target: OrderStatus, from_status: OrderStatus) -> List[Order]:
+        moved = []
+        for order in orders:
+            if order.status == from_status:
+                try:
+                    moved.append(OrderService.update_order_status(db, order.id, target))
+                except InvalidStateTransitionError:
+                    db.rollback()
+        return moved
+
+    @staticmethod
+    def _trip_orders(db: Session, allocation_id: Optional[int], outlet_id: Optional[int] = None) -> List[Order]:
+        if allocation_id is None:
+            return []
+        query = db.query(Order).filter(Order.allocation_id == allocation_id)
+        if outlet_id is not None:
+            query = query.filter(Order.outlet_id == outlet_id)
+        return query.all()
+
+    @staticmethod
+    def mark_trip_departed(db: Session, allocation_id: Optional[int]) -> List[Order]:
+        """The truck left the depot: loaded orders on the trip become DISPATCHED ("On the way")."""
+        orders = OrderService._trip_orders(db, allocation_id)
+        return OrderService._advance(db, orders, OrderStatus.DISPATCHED, OrderStatus.READY_FOR_DISPATCH)
+
+    @staticmethod
+    def mark_trip_delivered(db: Session, allocation_id: Optional[int], outlet_id: Optional[int] = None) -> List[Order]:
+        """The truck reached the store (one outlet's stop, or the whole trip): its orders become DELIVERED."""
+        orders = OrderService._trip_orders(db, allocation_id, outlet_id)
+        return OrderService._advance(db, orders, OrderStatus.DELIVERED, OrderStatus.DISPATCHED)
+
+    @staticmethod
+    def mark_order_delivered(db: Session, order_id: Optional[int]) -> List[Order]:
+        """One order delivered (the Driver app's stop is linked to it through a shipment)."""
+        if order_id is None:
+            return []
+        order = db.query(Order).filter(Order.id == order_id).first()
+        return OrderService._advance(db, [order] if order else [], OrderStatus.DELIVERED, OrderStatus.DISPATCHED)
 
     @staticmethod
     def defer_order(
@@ -471,7 +528,7 @@ class OrderService:
         """Contract (§3): the loader builds its loading lists from this."""
         return (
             db.query(Order)
-            .options(selectinload(Order.items), selectinload(Order.loader_issues))
+            .options(*STORE_ORDER_LOADS)
             .join(Outlet, Order.outlet_id == Outlet.id)
             .filter(
                 Order.operating_date == day.isoformat(),

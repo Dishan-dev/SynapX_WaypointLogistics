@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus
 from app.models.shipment import DispatchTrip
+from app.services.order_service import order_service
 
 
 def get_today_trips(db: Session, driver_id: int) -> List[DriverTrip]:
@@ -32,6 +33,9 @@ def start_trip(db: Session, trip_id: int, driver_id: int) -> DriverTrip:
     trip.status = DriverTripStatus.STARTED
     trip.started_at = datetime.now(timezone.utc)
     db.commit()
+    # The truck has left: the stores see their orders as "On the way".
+    if trip.dispatch_trip is not None:
+        order_service.mark_trip_departed(db, trip.dispatch_trip.allocation_id)
     db.refresh(trip)
     return trip
 
@@ -130,6 +134,9 @@ def complete_stop(db: Session, stop_id: int, driver_id: int) -> DeliveryStop:
         
     stop.completed_at = datetime.now(timezone.utc)
     db.commit()
+    # A delivered (or partly delivered) stop tells the store its order arrived; it then confirms receipt.
+    if stop.status in (DeliveryStopStatus.DELIVERED, DeliveryStopStatus.PARTIAL) and stop.shipment is not None:
+        order_service.mark_order_delivered(db, stop.shipment.order_id)
     db.refresh(stop)
     return stop
 

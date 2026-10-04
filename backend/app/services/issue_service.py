@@ -4,66 +4,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, select
 from fastapi import HTTPException
 from app.models.delivery_issue import DeliveryIssue
+from app.models.notification import NotificationType
+from app.models.order import Order
 from app.schemas.delivery_issue import DeliveryIssueCreate, DeliveryIssueUpdate
-
-INITIAL_SEED_ISSUES = [
-    {
-        "order_number": "ORD0000001",
-        "outlet_id": 5,
-        "issue_type": "Damaged Goods",
-        "title": "Crushed Packaging on Paper Cups",
-        "affected_item": "Paper Cups 8oz (500ct)",
-        "sku": "SKU-032",
-        "expected_units": 5,
-        "received_units": 5,
-        "description": "Two boxes of paper cups were damaged during transit with crushed outer cartons and broken inner sleeves.",
-        "photo_url": "/images/damaged_cups_evidence.jpg",
-        "photo_name": "damaged_paper_cups.jpg",
-        "photo_size": "2.4 MB • Captured today",
-        "reported_by": "Sarah Jenkins (Store Manager)",
-        "status": "under_review",
-        "driver_name": "Marcus Vance",
-        "vehicle_id": "VEH001",
-        "claimed_amount": "LKR 4,200.00",
-    },
-    {
-        "order_number": "ORD0000006",
-        "outlet_id": 5,
-        "issue_type": "Missing Items",
-        "title": "2 Cases Short Delivery",
-        "affected_item": "Soft Drinks 1L (12pk)",
-        "sku": "SKU-014",
-        "expected_units": 8,
-        "received_units": 6,
-        "description": "Vehicle manifest indicated 8 cases loaded, but dock count only identified 6 intact cases. Loader shortage at depot.",
-        "photo_url": "/images/missing_items_manifest.jpg",
-        "photo_name": "shortage_manifest_dock.jpg",
-        "photo_size": "1.8 MB • Captured 19 Sep",
-        "reported_by": "Sarah Jenkins (Store Manager)",
-        "status": "open",
-        "driver_name": "Kamal Perera",
-        "vehicle_id": "VEH009",
-        "claimed_amount": "LKR 3,600.00",
-    },
-    {
-        "order_number": "ORD0000005",
-        "outlet_id": 5,
-        "issue_type": "Quantity Mismatch",
-        "title": "1 Case Over-Delivery (Bottled Water)",
-        "affected_item": "Bottled Water 500ml (24pk)",
-        "sku": "SKU-001",
-        "expected_units": 20,
-        "received_units": 21,
-        "description": "Received 21 cases instead of 20 ordered. Extra case retained at dock awaiting dispatch reconciliation.",
-        "photo_name": "excess_stock_pallet.jpg",
-        "photo_size": "1.1 MB • Captured 23 Sep",
-        "reported_by": "Sarah Jenkins (Store Manager)",
-        "status": "resolved",
-        "driver_name": "Elena Ramos",
-        "vehicle_id": "VEH037",
-        "resolution_notes": "Discrepancy reconciled with Peliyagoda inventory ledger.",
-    },
-]
+from app.schemas.store_order import summarise_delivery
+from app.services.notification_service import notification_service
 
 
 class IssueService:
@@ -75,17 +20,9 @@ class IssueService:
         search: Optional[str] = None,
         limit: int = 100,
     ) -> List[DeliveryIssue]:
-        # If table is completely empty, seed standard records
-        count = db.query(DeliveryIssue).count()
-        if count == 0:
-            for seed in INITIAL_SEED_ISSUES:
-                issue = DeliveryIssue(**seed)
-                db.add(issue)
-            db.commit()
-
         query = db.query(DeliveryIssue)
         if outlet_id is not None:
-            query = query.filter(or_(DeliveryIssue.outlet_id == outlet_id, DeliveryIssue.outlet_id.is_(None)))
+            query = query.filter(DeliveryIssue.outlet_id == outlet_id)
         if status and status != "all":
             query = query.filter(DeliveryIssue.status == status)
         if search:
@@ -110,9 +47,14 @@ class IssueService:
 
     @staticmethod
     def create_issue(db: Session, payload: DeliveryIssueCreate) -> DeliveryIssue:
+        # Fill the order number, driver and vehicle from the order when the form only sent its id.
+        order = db.query(Order).filter(Order.id == payload.order_id).first() if payload.order_id else None
+        if order is not None and payload.outlet_id is not None and order.outlet_id != payload.outlet_id:
+            raise HTTPException(status_code=403, detail="That order belongs to another outlet.")
+        delivery = summarise_delivery(order.allocation) if order is not None else None
         issue = DeliveryIssue(
             order_id=payload.order_id,
-            order_number=payload.order_number,
+            order_number=payload.order_number or (order.order_number if order else None),
             outlet_id=payload.outlet_id,
             issue_type=payload.issue_type,
             title=payload.title,
@@ -124,15 +66,22 @@ class IssueService:
             photo_url=payload.photo_url,
             photo_name=payload.photo_name,
             photo_size=payload.photo_size,
-            reported_by=payload.reported_by or "Sarah Jenkins (Store Manager)",
-            driver_name=payload.driver_name,
-            vehicle_id=payload.vehicle_id,
+            reported_by=payload.reported_by or "Store Manager",
+            driver_name=payload.driver_name or (delivery.driver_name if delivery else None),
+            vehicle_id=payload.vehicle_id or (delivery.vehicle_code if delivery else None),
             claimed_amount=payload.claimed_amount,
             status="open",
         )
         db.add(issue)
         db.commit()
         db.refresh(issue)
+        if issue.outlet_id is not None:
+            notification_service.send(
+                db,
+                issue.outlet_id,
+                NotificationType.ISSUE_LOGGED,
+                {"order_id": issue.order_id, "issue_code": f"ISS{issue.id:07d}", "note": issue.title},
+            )
         return issue
 
     @staticmethod

@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { brandLabels, type StoreManager, type StoreOutlet } from "@/components/store/mock-data";
 import { NotificationBell } from "@/components/store/notifications/notification-bell";
+import { StoreUserMenu } from "@/components/store/store-user-menu";
 
 // Desktop top bar (Figma: Components / Top Bar). Hidden on mobile, where StoreMobileAppBar takes over.
 export function StoreTopBar({ outlet, manager }: { outlet: StoreOutlet | null; manager: StoreManager | null }) {
@@ -38,15 +39,7 @@ export function StoreTopBar({ outlet, manager }: { outlet: StoreOutlet | null; m
 
         <NotificationBell />
 
-        {manager && (
-          <span
-            className="flex size-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground"
-            title={manager.fullName}
-          >
-            <span aria-hidden="true">{manager.initials}</span>
-            <span className="sr-only">Signed in as {manager.fullName}</span>
-          </span>
-        )}
+        {manager && <StoreUserMenu manager={manager} outlet={outlet} />}
       </div>
     </header>
   );

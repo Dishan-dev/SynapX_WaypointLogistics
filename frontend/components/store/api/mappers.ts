@@ -1,5 +1,4 @@
 import {
-  mockCatalogue,
   type Brand,
   type CatalogueItem,
   type NotificationCategory,
@@ -22,6 +21,7 @@ export interface ApiOrderItem {
   item_name: string;
   quantity: number;
   quantity_sent?: number | null;
+  dispatcher_note?: string | null;
   unit_price: number;
 }
 
@@ -46,8 +46,22 @@ export interface ApiStoreOrder {
   deferral_count: number;
   items: ApiOrderItem[];
   shortfall: ApiOrderShortfall | null;
+  delivery: ApiOrderDelivery | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ApiOrderDelivery {
+  vehicle_code: string | null;
+  vehicle_type: string | null;
+  temperature_mode: string | null;
+  driver_name: string | null;
+  driver_phone: string | null;
+  trip_code: string | null;
+  trip_status: string | null;
+  departure_time: string | null;
+  estimated_arrival: string | null;
+  actual_arrival: string | null;
 }
 
 export interface ApiOrderShortfall {
@@ -147,7 +161,6 @@ export interface ApiOperatingDays {
   earliest_high_priority: string;
 }
 
-const catalogueBySku = new Map(mockCatalogue.map((item) => [item.sku, item]));
 
 export function toTemperatureClass(zone: string): TemperatureClass {
   return zone.toLowerCase() === "chilled" ? "chilled" : "ambient";
@@ -192,6 +205,23 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
     notes: order.notes ?? undefined,
     deferralReason: order.deferral_reason ?? undefined,
     deliveryWindow: parseWindow(order.delivery_window),
+    delivery: order.delivery
+      ? {
+          vehicleCode: order.delivery.vehicle_code ?? undefined,
+          vehicleType: order.delivery.vehicle_type ?? undefined,
+          temperatureMode: order.delivery.temperature_mode ?? undefined,
+          driverName: order.delivery.driver_name ?? undefined,
+          driverPhone: order.delivery.driver_phone ?? undefined,
+          tripCode: order.delivery.trip_code ?? undefined,
+          tripStatus: order.delivery.trip_status ?? undefined,
+          departureTime: order.delivery.departure_time ?? undefined,
+          estimatedArrival: order.delivery.estimated_arrival ?? undefined,
+          actualArrival: order.delivery.actual_arrival ?? undefined,
+        }
+      : undefined,
+    eta: order.delivery?.estimated_arrival ?? undefined,
+    arrivedAt: order.delivery?.actual_arrival ?? undefined,
+    vehicleCode: order.delivery?.vehicle_code ?? undefined,
     statusTimes: order.submitted_at ? { submitted: order.submitted_at } : undefined,
     shortfall: order.shortfall
       ? {
@@ -201,16 +231,17 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
         }
       : undefined,
     items: order.items.map((item) => {
-      // Order items don't carry pack details; the mock catalogue fills them in for the demo SKUs.
-      const catalogue = catalogueBySku.get(item.sku);
+      // Order lines don't carry the pack label; every catalogue item ships by the carton, and an order is one
+      // temperature zone, so the line shares the order's.
       return {
         sku: item.sku,
         itemName: item.item_name,
-        category: catalogue?.packLabel ?? "",
-        temperatureClass: catalogue?.temperatureClass ?? temperatureClass,
+        category: "",
+        temperatureClass,
         quantity: item.quantity,
         quantitySent: item.quantity_sent ?? undefined,
-        unitLabel: catalogue?.unitLabel ?? "Units",
+        depotNote: item.dispatcher_note ?? undefined,
+        unitLabel: "Cartons",
       };
     }),
   };

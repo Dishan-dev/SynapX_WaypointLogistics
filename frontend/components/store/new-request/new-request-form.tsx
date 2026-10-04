@@ -52,6 +52,7 @@ import { QuantityStepper } from "@/components/store/new-request/quantity-stepper
 import { clearDraft, saveDraft, type RequestDraft } from "@/components/store/new-request/draft-storage";
 import { ApiError } from "@/components/store/api/client";
 import { placeGoodsRequest } from "@/components/store/api/store-data";
+import { STORE_DATA_SOURCE } from "@/components/store/api/config";
 import {
   cutoffFor,
   dateKey,
@@ -170,7 +171,10 @@ export function NewRequestForm({
     .map((temperature) => ({ temperature, lines: lines.filter((line) => line.item.temperatureClass === temperature) }))
     .filter((group) => group.lines.length > 0);
   const totalUnits = lines.reduce((sum, line) => sum + line.quantity, 0);
+  // Mock mode predicts the numbers; live numbers are assigned by the server on submit (one sequence for all
+  // outlets), so the screen doesn't guess them.
   const orderNumbers = nextOrderNumbers(existingOrders, Math.max(1, groups.length));
+  const numbersPreview = STORE_DATA_SOURCE === "api" ? null : orderNumbers;
   const earliest = earliestDeliveryDate(now, isHighPriority, holidays);
 
   // ── Validation (contract §6) ──
@@ -399,7 +403,9 @@ export function NewRequestForm({
       {submitState === "failed" && (
         <Alert className="border-destructive/30 bg-destructive-muted" role="alert">
           <CircleAlert className="text-destructive" aria-hidden="true" />
-          <AlertTitle className="font-bold text-destructive">Couldn&apos;t submit {orderNumbers.join(" and ")}</AlertTitle>
+          <AlertTitle className="font-bold text-destructive">
+            Couldn&apos;t submit {numbersPreview ? numbersPreview.join(" and ") : "your request"}
+          </AlertTitle>
           <AlertDescription className="flex flex-col gap-3 text-foreground/80 md:flex-row md:items-center md:justify-between">
             <span>
               The connection to central dispatch dropped while sending. Your request is saved as a draft on this device,
@@ -634,9 +640,15 @@ export function NewRequestForm({
 
               {groups.length > 1 && (
                 <p className="rounded-lg bg-info-muted p-4 text-sm text-foreground/80">
-                  Chilled and ambient items ship on different vehicles, so this request will be submitted as two orders:{" "}
-                  <strong className="font-semibold">{orderNumbers[0]}</strong> (chilled) and{" "}
-                  <strong className="font-semibold">{orderNumbers[1]}</strong> (ambient).
+                  Chilled and ambient items ship on different vehicles, so this request will be submitted as two orders
+                  {numbersPreview ? (
+                    <>
+                      : <strong className="font-semibold">{numbersPreview[0]}</strong> (chilled) and{" "}
+                      <strong className="font-semibold">{numbersPreview[1]}</strong> (ambient).
+                    </>
+                  ) : (
+                    ": one chilled and one ambient."
+                  )}
                 </p>
               )}
 
@@ -794,7 +806,9 @@ export function NewRequestForm({
         <StoreSectionCard title="Request Summary" description="Review before submitting" className="xl:sticky xl:top-6">
           <div className="flex flex-col gap-4 text-sm">
             <dl className="flex flex-col gap-4">
-              <SummaryRow label={groups.length > 1 ? "Order IDs" : "Order ID"}>{orderNumbers.join(", ")}</SummaryRow>
+              <SummaryRow label={groups.length > 1 ? "Order IDs" : "Order ID"}>
+                {numbersPreview ? numbersPreview.join(", ") : "Assigned when you submit"}
+              </SummaryRow>
               <SummaryRow label="Outlet">
                 {outlet.code} · {outlet.name}
               </SummaryRow>
@@ -855,7 +869,7 @@ export function NewRequestForm({
         catalogue={catalogue}
         onHand={onHand}
         selected={selectedMap}
-        requestLabel={orderNumbers.join(" / ")}
+        requestLabel={numbersPreview ? numbersPreview.join(" / ") : "this request"}
         onConfirm={(next) => {
           // Keep existing order of lines, append new ones.
           setItems((current) => {

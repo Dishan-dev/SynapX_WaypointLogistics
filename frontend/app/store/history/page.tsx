@@ -21,8 +21,8 @@ import { Input } from "@/components/ui/input";
 import { StorePill } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
 import { getStoreOrders } from "@/components/store/api/store-data";
-import { fetchStoreIssues, getStoredIssues, StoreIssue } from "@/services/issues-store";
-import { StoreOrder, mockOrders } from "@/components/store/mock-data";
+import { fetchStoreIssues, StoreIssue } from "@/services/issues-store";
+import { StoreOrder } from "@/components/store/mock-data";
 
 interface HistoryRecord {
   orderId: string;
@@ -51,18 +51,14 @@ export default function DeliveryHistoryPage() {
     async function loadHistory() {
       setLoading(true);
       try {
-        const [orders, remoteIssues] = await Promise.all([
+        const [orders, allIssues] = await Promise.all([
           getStoreOrders(),
-          fetchStoreIssues().catch(() => getStoredIssues()),
+          // Without issues the history still shows; outcomes just read as clean.
+          fetchStoreIssues().catch((): StoreIssue[] => []),
         ]);
 
-        const allIssues = remoteIssues && remoteIssues.length > 0 ? remoteIssues : getStoredIssues();
-        const baseOrders = orders && orders.length > 0 ? orders : mockOrders;
-
-        // Filter for completed/delivered orders
-        const relevantOrders = baseOrders.filter(
-          (o) => o.status === "completed" || o.status === "delivered" || o.statusTimes?.delivered
-        );
+        // Deliveries that reached the store: received (completed) or at the dock awaiting receipt.
+        const relevantOrders = orders.filter((o) => o.status === "completed" || o.status === "delivered");
 
         const records: HistoryRecord[] = relevantOrders.map((ord) => {
           const matchingIssues = allIssues.filter(
@@ -96,10 +92,14 @@ export default function DeliveryHistoryPage() {
           return {
             orderId: ord.orderNumber,
             deliveryDate: dateStr,
-            arrivalInfo: "Arrived • Rear dock",
-            vehicleId: ord.vehicle?.code || ord.vehicleCode || "VEH001",
-            vehicleType: ord.vehicle?.description || "Truck • Ambient",
-            driverName: ord.vehicle?.driverName || "Marcus Vance",
+            arrivalInfo: ord.delivery?.actualArrival
+              ? `Arrived ${format(parseISO(ord.delivery.actualArrival), "HH:mm")}`
+              : ord.status === "completed"
+                ? "Received"
+                : "At your dock",
+            vehicleId: ord.delivery?.vehicleCode ?? "—",
+            vehicleType: [ord.delivery?.vehicleType, ord.delivery?.temperatureMode].filter(Boolean).join(" • ") || "—",
+            driverName: ord.delivery?.driverName ?? "—",
             itemCount: ord.items.length,
             unitCount: totalUnits,
             outcomeType,
@@ -109,53 +109,6 @@ export default function DeliveryHistoryPage() {
           };
         });
 
-        // Ensure we always show history records even if only a few orders are marked completed
-        if (records.length === 0) {
-          records.push(
-            {
-              orderId: "ORD0000001",
-              deliveryDate: "Today, 26 Sep 2026",
-              arrivalInfo: "Arrived 06:08 • Rear dock",
-              vehicleId: "VEH001",
-              vehicleType: "Truck • Reefer",
-              driverName: "Marcus Vance",
-              itemCount: 3,
-              unitCount: 33,
-              outcomeType: "clean",
-              outcomeTitle: "Clean delivery",
-              outcomeDetail: "Verified in full • zero defects",
-              status: "completed",
-            },
-            {
-              orderId: "ORD0000005",
-              deliveryDate: "23 Sep 2026",
-              arrivalInfo: "Arrived 04:50 • Rear dock",
-              vehicleId: "VEH037",
-              vehicleType: "Van • Ambient",
-              driverName: "Elena Ramos",
-              itemCount: 6,
-              unitCount: 28,
-              outcomeType: "issue_resolved",
-              outcomeTitle: "1 issue • resolved",
-              outcomeDetail: "ISS0000003 • 1 case over",
-              status: "completed",
-            },
-            {
-              orderId: "ORD0000006",
-              deliveryDate: "19 Sep 2026",
-              arrivalInfo: "Arrived 05:10 • Rear dock",
-              vehicleId: "VEH009",
-              vehicleType: "Truck • Ambient",
-              driverName: "Marcus Vance",
-              itemCount: 12,
-              unitCount: 75,
-              outcomeType: "issue_under_review",
-              outcomeTitle: "1 issue • under review",
-              outcomeDetail: "ISS0000002 • 2 cases short",
-              status: "completed",
-            }
-          );
-        }
 
         setHistoryRecords(records);
       } catch {

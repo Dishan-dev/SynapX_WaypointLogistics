@@ -28,7 +28,7 @@ import { Input } from "@/components/ui/input";
 import { StoreMetricCard } from "@/components/store/store-cards";
 import { StorePill, StorePillTone } from "@/components/store/status-pill";
 import { getStoreOrders } from "@/components/store/api/store-data";
-import { StoreOrder, StoreOrderItem, mockOrders } from "@/components/store/mock-data";
+import { StoreOrder, StoreOrderItem } from "@/components/store/mock-data";
 
 interface ShortfallRecord {
   id: string;
@@ -59,77 +59,50 @@ export default function ShortfallsAndBackordersPage() {
         const orders = await getStoreOrders();
         const records: ShortfallRecord[] = [];
 
-        (orders && orders.length > 0 ? orders : mockOrders).forEach((ord: StoreOrder) => {
-          ord.items.forEach((item: StoreOrderItem, idx: number) => {
-            const sent = item.quantitySent;
-            const isShort = sent !== undefined && sent < item.quantity;
-            const hasShortfallFlag = ord.shortfall !== undefined;
-
-            if (isShort || hasShortfallFlag) {
-              const diff = item.quantity - (sent ?? 0);
-              const noteText = item.dispatcherNote
-                ? `${item.dispatcherNote.reason}: ${item.dispatcherNote.message}`
-                : undefined;
-
-              records.push({
-                id: `${ord.orderNumber}-${item.sku}-${idx}`,
-                orderNumber: ord.orderNumber,
-                sku: item.sku,
-                itemName: item.itemName,
-                category: item.category,
-                requestedQty: item.quantity,
-                sentQty: sent ?? 0,
-                shortfallQty: diff > 0 ? diff : 2,
-                unitLabel: item.unitLabel,
-                orderDate: ord.orderDate,
-                status:
-                  ord.shortfall?.state === "under_review"
-                    ? "under_review"
-                    : diff > 0 && (sent === 0 || sent === undefined)
-                    ? "back_ordered"
-                    : "short_delivered",
-                restockEta: "Next Delivery (Tomorrow, 04:00)",
-                dispatcherNote: noteText,
-              });
-            }
-          });
-        });
-
-        // Ensure we display meaningful items if no live shortfalls found in fresh order states
-        if (records.length === 0) {
-          records.push(
-            {
-              id: "sf-1",
-              orderNumber: "ORD0000002",
-              sku: "SKU-001",
-              itemName: "Fresh Milk 1L Whole Cream",
-              category: "Dairy & Chilled",
-              requestedQty: 30,
-              sentQty: 25,
-              shortfallQty: 5,
-              unitLabel: "cartons",
-              orderDate: "2026-09-26",
-              status: "back_ordered",
-              restockEta: "27 Sep 2026 (Depot Restock)",
-              dispatcherNote: "Limited stock at Peliyagoda depot. Remaining 5 cartons queued for next run.",
-            },
-            {
-              id: "sf-2",
-              orderNumber: "ORD0000006",
-              sku: "SKU-014",
-              itemName: "Greek Style Yogurt 500g",
-              category: "Dairy & Chilled",
-              requestedQty: 20,
-              sentQty: 18,
-              shortfallQty: 2,
-              unitLabel: "cases",
-              orderDate: "2026-09-19",
-              status: "under_review",
-              restockEta: "Pending Dispatcher Review",
-              dispatcherNote: "Temperature check discrepancy at picking stage.",
-            }
+        orders.forEach((ord: StoreOrder) => {
+          // Lines the depot sent short (order_items.quantity_sent, set by the Dispatcher or Loader).
+          const shortLines = ord.items.filter(
+            (item: StoreOrderItem) => item.quantitySent !== undefined && item.quantitySent < item.quantity
           );
-        }
+          shortLines.forEach((item: StoreOrderItem, idx: number) => {
+            const sent = item.quantitySent ?? 0;
+            records.push({
+              id: `${ord.orderNumber}-${item.sku}-${idx}`,
+              orderNumber: ord.orderNumber,
+              sku: item.sku,
+              itemName: item.itemName,
+              category: item.category,
+              requestedQty: item.quantity,
+              sentQty: sent,
+              shortfallQty: item.quantity - sent,
+              unitLabel: item.unitLabel,
+              orderDate: ord.orderDate,
+              status: ord.shortfall?.state === "under_review" ? "under_review" : sent === 0 ? "back_ordered" : "short_delivered",
+              restockEta: "Not scheduled yet",
+              dispatcherNote: item.depotNote ?? ord.deferralReason,
+            });
+          });
+          // The loader flags shortfalls per order, not per item: show those as one order-level row.
+          if (shortLines.length === 0 && ord.shortfall) {
+            const requested = ord.items.reduce((sum, item) => sum + item.quantity, 0);
+            const short = ord.shortfall.unitsShort;
+            records.push({
+              id: `${ord.orderNumber}-order`,
+              orderNumber: ord.orderNumber,
+              sku: "",
+              itemName: "Whole order (the depot flagged it as short)",
+              category: "",
+              requestedQty: ord.shortfall.unitsTotal ?? requested,
+              sentQty: short !== undefined ? (ord.shortfall.unitsTotal ?? requested) - short : 0,
+              shortfallQty: short ?? 0,
+              unitLabel: "units",
+              orderDate: ord.orderDate,
+              status: ord.shortfall.state === "under_review" ? "under_review" : "short_delivered",
+              restockEta: "Not scheduled yet",
+              dispatcherNote: ord.deferralReason,
+            });
+          }
+        });
 
         setShortfalls(records);
       } catch {
