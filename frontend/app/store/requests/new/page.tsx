@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { currentManager, OUTLET_UNLOADING } from "@/components/store/mock-data";
+import { OUTLET_UNLOADING } from "@/components/store/mock-data";
 import { storeNow } from "@/components/store/api/config";
 import {
   getCatalogue,
-  getCurrentOutlet,
   getHolidays,
   getStoreOrder,
   getStoreOrders,
+  getStoreSession,
   getStoreStock,
 } from "@/components/store/api/store-data";
 import { NewRequestForm } from "@/components/store/new-request/new-request-form";
@@ -20,10 +20,10 @@ export default async function NewGoodsRequestPage({ searchParams }: PageProps<"/
   const now = storeNow();
   // ?repeat=ORD0000003 starts the request with that order's items and quantities.
   const { repeat } = await searchParams;
-  const [existingOrders, holidays, outlet, catalogue, stock, repeatOrder] = await Promise.all([
+  const [existingOrders, holidays, { outlet, manager }, catalogue, stock, repeatOrder] = await Promise.all([
     getStoreOrders(),
     getHolidays(now),
-    getCurrentOutlet(),
+    getStoreSession(),
     getCatalogue(),
     // On-hand counts are a help, not a requirement: the form works without them.
     getStoreStock().catch(() => null),
@@ -48,7 +48,7 @@ export default async function NewGoodsRequestPage({ searchParams }: PageProps<"/
       repeatFrom={repeatFrom}
       holidays={holidays}
       outlet={outlet}
-      manager={currentManager}
+      manager={manager}
       unloading={OUTLET_UNLOADING}
       now={now}
     />

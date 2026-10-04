@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from app.api.v1.endpoints import health, auth, orders, inventory, dispatch, tracking, fleet, allocations, driver
 from app.api.v1.endpoints import store_orders, notifications, calendar, loader, outlets, operation_exceptions, admin, issues
-from app.api.v1.endpoints import catalogue, store_stock
+from app.api.v1.endpoints import catalogue, store, store_stock
 from app.routers.receipts import router as receipts_router
 
 api_router = APIRouter()
@@ -19,6 +19,7 @@ api_router.include_router(allocations.router, prefix="/allocations", tags=["Allo
 api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 api_router.include_router(calendar.router, prefix="/calendar", tags=["Calendar"])
 api_router.include_router(catalogue.router, prefix="/catalogue", tags=["Catalogue"])
+api_router.include_router(store.router, prefix="/store", tags=["Store Manager"])
 api_router.include_router(driver.router, prefix="/driver", tags=["Driver"])
 api_router.include_router(loader.router, prefix="/loader", tags=["Loader"])
 api_router.include_router(outlets.router, prefix="/outlets", tags=["Outlets"])

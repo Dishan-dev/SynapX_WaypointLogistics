@@ -2,8 +2,8 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from app.api import deps
-from app.core.exceptions import NotFoundError
 from app.models.reference import Outlet
+from app.models.user import User
 from app.schemas.store_stock import StoreStockImportResult, StoreStockRead
 from app.services.store_stock_service import store_stock_service
 
@@ -12,17 +12,12 @@ router = APIRouter()
 MAX_UPLOAD_BYTES = 1_000_000
 
 
-def _outlet(db: Session, outlet_id: int) -> Outlet:
-    outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
-    if outlet is None:
-        raise NotFoundError("Outlet not found", entity="Outlet", entity_id=outlet_id)
-    return outlet
-
-
 @router.get("/{outlet_id}/stock", response_model=StoreStockRead)
-def get_store_stock(outlet_id: int, db: Session = Depends(deps.get_db)):
+def get_store_stock(
+    outlet_id: int, db: Session = Depends(deps.get_db), current_user: User = Depends(deps.get_current_user)
+):
     """The store's on-hand quantities from its last CSV import."""
-    outlet = _outlet(db, outlet_id)
+    outlet: Outlet = deps.resolve_store_outlet(db, current_user, outlet_id)
     rows = store_stock_service.get_stock(db, outlet)
     names = store_stock_service.names_for(db, outlet, [row.sku for row in rows])
     return {
@@ -45,9 +40,10 @@ async def import_store_stock(
     file: UploadFile = File(...),
     db: Session = Depends(deps.get_db),
     now: datetime = Depends(deps.get_now),
+    current_user: User = Depends(deps.get_current_user),
 ):
     """Replace the store's on-hand list with a CSV of sku + quantity_on_hand. Unusable rows are reported, not saved."""
-    outlet = _outlet(db, outlet_id)
+    outlet = deps.resolve_store_outlet(db, current_user, outlet_id)
     content = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="The CSV is larger than 1 MB.")

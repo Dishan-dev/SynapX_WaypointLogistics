@@ -13,13 +13,14 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { isStoreNavActive, storeSidebarItems } from "@/components/store/store-nav";
-import { brandLabels, currentManager } from "@/components/store/mock-data";
-import { useStoreOutlet } from "@/components/store/outlet-context";
+import { brandLabels } from "@/components/store/mock-data";
+import { useStoreManager, useStoreOutlet } from "@/components/store/outlet-context";
 
 export function StoreSidebar() {
   const pathname = usePathname();
   const { setOpenMobile } = useSidebar();
   const outlet = useStoreOutlet();
+  const manager = useStoreManager();
 
   return (
     <Sidebar>
@@ -67,10 +68,9 @@ export function StoreSidebar() {
                 {brandLabels[outlet.brand]} · {outlet.district}
               </span>
             )}
-            <span className="text-primary-foreground/70">
-              {/* TODO(keycloak): the signed-in user's name once the login lands on dev. */}
-              {currentManager.fullName} · Store Manager
-            </span>
+            {manager && (
+              <span className="text-primary-foreground/70">{manager.fullName} · Store Manager</span>
+            )}
           </div>
         </SidebarFooter>
       </div>

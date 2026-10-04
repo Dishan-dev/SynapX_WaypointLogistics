@@ -3,9 +3,9 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StoreMetricCard } from "@/components/store/store-cards";
 import { formatTime, greeting } from "@/components/store/format";
-import { currentManager, mockIssues } from "@/components/store/mock-data";
+import { mockIssues } from "@/components/store/mock-data";
 import { STORE_DATA_SOURCE, storeNow } from "@/components/store/api/config";
-import { getCurrentOutlet, getStoreOrders } from "@/components/store/api/store-data";
+import { getStoreOrders, getStoreSession } from "@/components/store/api/store-data";
 import { getDashboardData } from "@/components/store/dashboard/dashboard-data";
 import { UpcomingDeliveries } from "@/components/store/dashboard/upcoming-deliveries";
 import { RecentRequests } from "@/components/store/dashboard/recent-requests";
@@ -16,7 +16,8 @@ export default async function StoreDashboardPage() {
   const now = storeNow();
   // Delivery issues belong to Dev B's receipts flow; there's no API for them yet.
   const issues = STORE_DATA_SOURCE === "api" ? [] : mockIssues;
-  const [orders, outlet] = await Promise.all([getStoreOrders(), getCurrentOutlet().catch(() => null)]);
+  const [orders, session] = await Promise.all([getStoreOrders(), getStoreSession().catch(() => null)]);
+  const outlet = session?.outlet ?? null;
   const data = getDashboardData(orders, issues);
   const next = data.nextDelivery;
   const nextEta = next?.eta ? formatTime(next.eta) : null;
@@ -30,7 +31,8 @@ export default async function StoreDashboardPage() {
         <div className="flex min-w-0 flex-col gap-2">
           <h1 className="text-xl font-semibold text-primary md:text-3xl md:font-bold">
             <span className="md:hidden">
-              {greeting(now)}, {currentManager.firstName}
+              {greeting(now)}
+              {session ? `, ${session.manager.firstName}` : ""}
             </span>
             <span className="hidden md:inline">Dashboard</span>
           </h1>

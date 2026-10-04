@@ -356,3 +356,86 @@ def test_bad_stock_files_keep_the_current_list(client, clock, outlets):
 
     assert client.get(f"/api/v1/outlets/{fresh_id}/stock").json()["items"][0]["quantity_on_hand"] == 30
     assert client.get("/api/v1/outlets/9999/stock").status_code == 404
+
+
+@pytest.fixture
+def sign_in():
+    """Signs requests in as the given user (the Keycloak token resolves to them)."""
+    def as_user(user):
+        app.dependency_overrides[deps.get_current_user] = lambda: user
+    yield as_user
+    app.dependency_overrides.pop(deps.get_current_user, None)
+
+
+def test_store_manager_is_scoped_to_the_outlet_the_admin_assigned(client, clock, outlets, db_session, sign_in):
+    from app.models.user import User, UserRole
+
+    fresh, style = outlets["fresh"], outlets["style"]
+    # The Style store already has an order the Fresh manager must not see.
+    style_order = place(client, style.id, "2026-09-30", [item("SKU-501", "Ambient")]).json()[0]
+    manager = User(email="sm.colombo@waypoint.com", full_name="Nadee Perera", role=UserRole.STORE_MANAGER, is_active=True)
+    db_session.add(manager)
+    db_session.commit()
+
+    sign_in(manager)
+    unassigned = client.get("/api/v1/store/me")
+    assert unassigned.status_code == 403 and "isn't linked to an outlet" in unassigned.json()["detail"]
+
+    # Admin assigns the manager to Fresh Colombo (the admin screen sends the user id).
+    app.dependency_overrides.pop(deps.get_current_user)
+    assert client.post(f"/api/v1/outlets/{fresh.id}/assign-manager", json={"user_id": manager.id}).status_code == 200
+    sign_in(manager)
+
+    me = client.get("/api/v1/store/me").json()
+    assert me["outlet"]["code"] == "OUT005" and me["manager"]["full_name"] == "Nadee Perera"
+
+    # No outlet_id needed: everything is the manager's own outlet.
+    placed = client.post(
+        "/api/v1/orders/store", json={"delivery_date": "2026-09-30", "items": [item("SKU-063", "Chilled")]}
+    )
+    assert placed.status_code == 201
+    assert placed.json()[0]["outlet_id"] == fresh.id
+    assert [o["outlet_id"] for o in client.get("/api/v1/orders/store").json()] == [fresh.id]
+    assert {i["sku"] for i in client.get("/api/v1/catalogue/").json()} == {"SKU-063", "SKU-014", "SKU-070", "SKU-001"}
+    assert client.get("/api/v1/notifications/").status_code == 200
+
+    # Another outlet's data is refused, however it's asked for.
+    assert client.get("/api/v1/orders/store", params={"outlet_id": style.id}).status_code == 403
+    assert client.get(f"/api/v1/orders/store/{style_order['order_number']}").status_code == 403
+    assert client.post(f"/api/v1/orders/{style_order['id']}/cancel").status_code == 403
+    assert client.get(f"/api/v1/outlets/{style.id}/stock").status_code == 403
+    assert client.get(f"/api/v1/outlets/{style.id}/settings").status_code == 403
+    assert client.get("/api/v1/catalogue/", params={"outlet_id": style.id}).status_code == 403
+    assert client.post(
+        "/api/v1/orders/store",
+        json={"outlet_id": style.id, "delivery_date": "2026-10-02", "items": [item("SKU-501", "Ambient")]},
+    ).status_code == 403
+
+    # Reassigning moves the manager; unassigning the outlet removes the link.
+    app.dependency_overrides.pop(deps.get_current_user)
+    client.post(f"/api/v1/outlets/{style.id}/assign-manager", json={"user_id": manager.id})
+    sign_in(manager)
+    assert client.get("/api/v1/store/me").json()["outlet"]["code"] == "OUT015"
+    app.dependency_overrides.pop(deps.get_current_user)
+    client.post(f"/api/v1/outlets/{style.id}/assign-manager", json={"user_id": None, "store_manager": None})
+    sign_in(manager)
+    assert client.get("/api/v1/store/me").status_code == 403
+
+
+def test_outside_dev_mode_only_store_managers_and_admins_open_a_store(client, outlets, db_session, sign_in, monkeypatch):
+    from app.core.config import settings
+    from app.models.user import User, UserRole
+
+    monkeypatch.setattr(settings, "KEYCLOAK_DEV_MODE", False)
+    driver = User(email="driver.one@waypoint.com", full_name="Driver One", role=UserRole.DRIVER, is_active=True)
+    admin = User(email="admin.one@waypoint.com", full_name="Admin One", role=UserRole.ADMIN, is_active=True)
+    db_session.add_all([driver, admin])
+    db_session.commit()
+    fresh_id = outlets["fresh"].id
+
+    sign_in(driver)
+    assert client.get("/api/v1/store/me", params={"outlet_id": fresh_id}).status_code == 403
+    assert client.get("/api/v1/orders/store", params={"outlet_id": fresh_id}).status_code == 403
+    sign_in(admin)
+    assert client.get("/api/v1/store/me", params={"outlet_id": fresh_id}).json()["outlet"]["code"] == "OUT005"
+    assert client.get("/api/v1/store/me").status_code == 422  # an admin has to say which store

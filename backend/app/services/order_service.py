@@ -324,6 +324,11 @@ class OrderService:
         return order
 
     @staticmethod
+    def outlet_id_of(db: Session, order_id: int) -> Optional[int]:
+        """The order's outlet, for access checks (raises NotFoundError for an unknown order)."""
+        return OrderService._get(db, order_id).outlet_id
+
+    @staticmethod
     def cancel_order(db: Session, order_id: int, now: datetime) -> Order:
         """Store managers can cancel until the cutoff (workplan: cancelOrder, pre-cutoff only)."""
         order = OrderService._get(db, order_id)

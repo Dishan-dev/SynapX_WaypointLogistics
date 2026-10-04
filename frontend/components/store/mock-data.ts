@@ -4,6 +4,8 @@
 export type Brand = "fresh" | "style" | "tech";
 
 export interface StoreOutlet {
+  /** Database id; set for live outlets. */
+  id?: number;
   code: string;
   name: string;
   brand: Brand;

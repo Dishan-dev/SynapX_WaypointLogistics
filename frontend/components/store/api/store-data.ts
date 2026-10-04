@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { addDays, eachDayOfInterval, format } from "date-fns";
 import {
+  currentManager,
   currentOutlet,
   mockCatalogue,
   mockHolidays,
@@ -10,6 +11,7 @@ import {
   mockStoreStock,
   type CatalogueItem,
   type OutletSettings,
+  type StoreManager,
   type StoreNotification,
   type StoreOutlet,
   type StoreOrder,
@@ -21,7 +23,7 @@ import { STORE_DATA_SOURCE, STORE_OUTLET_ID } from "@/components/store/api/confi
 import {
   toCatalogueItem,
   toOutletSettings,
-  toStoreOutlet,
+  toStoreSession,
   toStoreStock,
   toStoreNotification,
   toStoreOrder,
@@ -31,6 +33,7 @@ import {
   type ApiOperatingDays,
   type ApiOutletSettings,
   type ApiStockImportResult,
+  type ApiStoreMe,
   type ApiStoreOrder,
   type ApiStoreStock,
 } from "@/components/store/api/mappers";
@@ -40,26 +43,63 @@ import {
 
 const live = () => STORE_DATA_SOURCE === "api";
 
+export interface StoreSession {
+  manager: StoreManager;
+  outlet: StoreOutlet;
+}
+
+async function fetchStoreSession(): Promise<StoreSession> {
+  if (!live()) return { manager: currentManager, outlet: currentOutlet };
+  try {
+    // A signed-in store manager: the backend knows their outlet from the login token.
+    return toStoreSession(await apiFetch<ApiStoreMe>("/store/me"));
+  } catch (error) {
+    // No store manager login (an admin, or local dev without Keycloak): the backend asks which outlet,
+    // so open the one set in NEXT_PUBLIC_STORE_OUTLET_ID.
+    if (error instanceof ApiError && error.status === 422) {
+      return toStoreSession(await apiFetch<ApiStoreMe>(`/store/me?outlet_id=${STORE_OUTLET_ID}`));
+    }
+    throw error;
+  }
+}
+
+// One lookup per server request (React cache), and one per page load in the browser.
+const storeSessionForRequest = cache(fetchStoreSession);
+let browserStoreSession: Promise<StoreSession> | null = null;
+
 /**
- * The signed-in manager's outlet. Its brand decides the catalogue and the ordering rules.
- * Cached per request, so the layout and the page share one call.
+ * Who is signed in and which outlet they run. Every Store Manager read and write is scoped to this outlet.
+ * Throws ApiError 401/403 when the user isn't a store manager or isn't assigned to an outlet yet.
  */
-export const getCurrentOutlet = cache(async (): Promise<StoreOutlet> => {
-  if (!live()) return currentOutlet;
-  return toStoreOutlet(await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`));
-});
+export function getStoreSession(): Promise<StoreSession> {
+  if (typeof window === "undefined") return storeSessionForRequest();
+  browserStoreSession ??= fetchStoreSession().catch((error) => {
+    browserStoreSession = null;
+    throw error;
+  });
+  return browserStoreSession;
+}
+
+/** The signed-in manager's outlet. Its brand decides the catalogue and the ordering rules. */
+export async function getCurrentOutlet(): Promise<StoreOutlet> {
+  return (await getStoreSession()).outlet;
+}
+
+async function outletId(): Promise<number> {
+  return (await getStoreSession()).outlet.id ?? STORE_OUTLET_ID;
+}
 
 /** Only the items the outlet's brand can order (fresh_items, style_items or tech_items). */
 export async function getCatalogue(): Promise<CatalogueItem[]> {
   if (!live()) return mockCatalogue;
-  const items = await apiFetch<ApiCatalogueItem[]>(`/catalogue/?outlet_id=${STORE_OUTLET_ID}`);
+  const items = await apiFetch<ApiCatalogueItem[]>(`/catalogue/?outlet_id=${await outletId()}`);
   return items.map(toCatalogueItem);
 }
 
 /** The store's on-hand list from its last CSV import. */
 export async function getStoreStock(): Promise<StoreStock> {
   if (!live()) return mockStoreStock;
-  return toStoreStock(await apiFetch<ApiStoreStock>(`/outlets/${STORE_OUTLET_ID}/stock`));
+  return toStoreStock(await apiFetch<ApiStoreStock>(`/outlets/${await outletId()}/stock`));
 }
 
 /** Replaces the store's on-hand list with the CSV (sku + quantity_on_hand). Rejected rows come back in `skipped`. */
@@ -69,13 +109,13 @@ export async function importStoreStock(file: File): Promise<ApiStockImportResult
   }
   const body = new FormData();
   body.append("file", file);
-  return apiFetch<ApiStockImportResult>(`/outlets/${STORE_OUTLET_ID}/stock/import`, { method: "POST", body });
+  return apiFetch<ApiStockImportResult>(`/outlets/${await outletId()}/stock/import`, { method: "POST", body });
 }
 
 export async function getStoreOrders(): Promise<StoreOrder[]> {
   if (live()) {
     try {
-      const orders = await apiFetch<ApiStoreOrder[]>(`/orders/store?outlet_id=${STORE_OUTLET_ID}&limit=200`);
+      const orders = await apiFetch<ApiStoreOrder[]>(`/orders/store?outlet_id=${await outletId()}&limit=200`);
       if (orders && orders.length > 0) {
         return orders.map(toStoreOrder);
       }
@@ -120,7 +160,7 @@ export async function placeGoodsRequest(input: GoodsRequestInput, mockNumbers: s
   const orders = await apiFetch<ApiStoreOrder[]>("/orders/store", {
     method: "POST",
     body: JSON.stringify({
-      outlet_id: STORE_OUTLET_ID,
+      outlet_id: await outletId(),
       delivery_date: input.deliveryDate,
       is_priority: input.isHighPriority,
       notes: input.notes || null,
@@ -145,7 +185,7 @@ export async function cancelStoreOrder(orderId: number): Promise<void> {
 export async function getNotifications(): Promise<StoreNotification[]> {
   if (live()) {
     try {
-      const notifications = await apiFetch<ApiNotification[]>(`/notifications/?outlet_id=${STORE_OUTLET_ID}`);
+      const notifications = await apiFetch<ApiNotification[]>(`/notifications/?outlet_id=${await outletId()}`);
       if (notifications && notifications.length > 0) {
         return notifications.map(toStoreNotification);
       }
@@ -161,7 +201,7 @@ export async function markNotificationRead(id: string): Promise<void> {
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
-  await apiFetch(`/notifications/read-all?outlet_id=${STORE_OUTLET_ID}`, { method: "POST" });
+  await apiFetch(`/notifications/read-all?outlet_id=${await outletId()}`, { method: "POST" });
 }
 
 /**
@@ -189,7 +229,7 @@ export async function getHolidays(from: Date, days = 90): Promise<{ date: string
 export async function getOutletSettings(): Promise<OutletSettings> {
   if (live()) {
     try {
-      const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`);
+      const res = await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings`);
       if (res) return toOutletSettings(res);
     } catch {
       // Fallback to mock settings
@@ -209,7 +249,7 @@ export async function updateOutletSettings(payload: Partial<OutletSettings>): Pr
         email_alerts_issues: payload.emailAlertsIssues,
         sms_alerts_priority: payload.smsAlertsPriority,
       };
-      const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings`, {
+      const res = await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings`, {
         method: "PATCH",
         body: JSON.stringify(apiPayload),
       });
@@ -228,7 +268,7 @@ export async function updateOutletSettings(payload: Partial<OutletSettings>): Pr
 export async function resetOutletSettings(): Promise<OutletSettings> {
   if (live()) {
     try {
-      const res = await apiFetch<ApiOutletSettings>(`/outlets/${STORE_OUTLET_ID}/settings/reset`, {
+      const res = await apiFetch<ApiOutletSettings>(`/outlets/${await outletId()}/settings/reset`, {
         method: "POST",
       });
       if (res) return toOutletSettings(res);

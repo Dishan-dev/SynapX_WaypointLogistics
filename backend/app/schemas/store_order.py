@@ -19,7 +19,8 @@ class GoodsRequestItem(BaseModel):
 class GoodsRequestCreate(BaseModel):
     """A Store Manager goods request. Mixed chilled/ambient requests become one order per zone (Q1)."""
 
-    outlet_id: int
+    # Optional for a signed-in store manager (their own outlet is used); admins and local dev send it.
+    outlet_id: Optional[int] = None
     delivery_date: date
     is_priority: bool = False
     notes: Optional[str] = Field(default=None, max_length=500)

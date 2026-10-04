@@ -30,6 +30,7 @@ import {
 } from "@/services/api";
 import { getStoreOrder } from "@/components/store/api/store-data";
 import { STORE_OUTLET_ID } from "@/components/store/api/config";
+import { useStoreOutlet } from "@/components/store/outlet-context";
 import { StoreOrder } from "@/components/store/mock-data";
 
 export default function ReceiptConfirmationPage({
@@ -41,6 +42,7 @@ export default function ReceiptConfirmationPage({
   const orderId = resolvedParams.orderId;
   const router = useRouter();
 
+  const storeOutlet = useStoreOutlet();
   const [order, setOrder] = useState<StoreOrder | null>(null);
   const [existingReceipt, setExistingReceipt] = useState<DeliveryReceipt | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -61,7 +63,8 @@ export default function ReceiptConfirmationPage({
   const orderSummary = {
     id: order?.id ?? (parseInt(orderId.replace(/\D/g, ""), 10) || 1),
     orderNumber: order?.orderNumber ?? orderId,
-    outlet_id: STORE_OUTLET_ID,
+    // The signed-in manager's outlet (the env id only outside the store layout, e.g. local dev).
+    outlet_id: storeOutlet?.id ?? STORE_OUTLET_ID,
     outlet_name: "Colombo Fresh - Pettah",
     brand: order?.temperatureClass === "chilled" ? "Fresh (Chilled)" : "Fresh",
     expected_units: totalUnits,

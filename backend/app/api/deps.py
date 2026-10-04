@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Generator, Optional
 from zoneinfo import ZoneInfo
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
@@ -9,7 +9,8 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.user import User, UserRole
 from app.models.depot_dispatcher import DepotDispatcherAssignment
-from app.models.reference import Depot
+from app.models.reference import Depot, Outlet
+from app.models.store_manager import StoreManagerAssignment
 from app.schemas.auth import TokenPayload
 
 # Make token optional so KEYCLOAK_DEV_MODE endpoints don't require the header
@@ -108,7 +109,11 @@ def get_current_user(
             mapped_role = UserRole.DISPATCHER
         elif "driver" in roles:
             mapped_role = UserRole.DRIVER
-        elif "store_manager" in roles or "warehouse_manager" in roles:
+        elif "store_manager" in roles:
+            mapped_role = UserRole.STORE_MANAGER
+        elif "loader" in roles:
+            mapped_role = UserRole.LOADER
+        elif "warehouse_manager" in roles:
             mapped_role = UserRole.WAREHOUSE_MANAGER
 
         user = User(
@@ -221,3 +226,57 @@ def require_driver(current_user: User = Depends(get_current_user)) -> User:
             detail="Driver access only"
         )
     return current_user
+
+
+# Store Manager accounts. WAREHOUSE_MANAGER is how Keycloak store managers were provisioned before
+# STORE_MANAGER existed, so both run a store.
+STORE_ROLES = (UserRole.STORE_MANAGER, UserRole.WAREHOUSE_MANAGER)
+
+
+def resolve_store_outlet(db: Session, user: User, outlet_id: Optional[int]) -> Outlet:
+    """The outlet a Store Manager request acts on.
+
+    A store manager is locked to the outlet the admin assigned them; asking for another outlet is refused.
+    Admins, and local development without a token, choose the outlet with outlet_id.
+    """
+    if user.role in STORE_ROLES:
+        assignment = db.query(StoreManagerAssignment).filter(StoreManagerAssignment.user_id == user.id).first()
+        if assignment is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account isn't linked to an outlet yet. Ask your administrator to assign you to your store.",
+            )
+        if outlet_id is not None and outlet_id != assignment.outlet_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only open your own outlet.")
+        return assignment.outlet
+    if user.role == UserRole.ADMIN or settings.KEYCLOAK_DEV_MODE:
+        if outlet_id is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Choose an outlet (outlet_id).")
+        outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
+        if outlet is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outlet not found")
+        return outlet
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="The store screens are for store managers.")
+
+
+def get_store_outlet(
+    outlet_id: Optional[int] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Outlet:
+    """resolve_store_outlet for endpoints that take ?outlet_id=."""
+    return resolve_store_outlet(db, current_user, outlet_id)
+
+
+def ensure_store_outlet_ref(db: Session, user: User, outlet_ref: str) -> None:
+    """For routes keyed by an outlet id or code in the path: a store manager may only use their own."""
+    if user.role in STORE_ROLES:
+        outlet = resolve_store_outlet(db, user, None)
+        if outlet_ref not in (str(outlet.id), outlet.code):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only open your own outlet.")
+
+
+def ensure_store_access(db: Session, user: User, outlet_id: Optional[int]) -> None:
+    """Refuse a store manager touching a record (order, notification) from another outlet."""
+    if user.role in STORE_ROLES:
+        resolve_store_outlet(db, user, outlet_id if outlet_id is not None else -1)

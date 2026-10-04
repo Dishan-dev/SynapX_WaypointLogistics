@@ -1,4 +1,12 @@
 import { API_URL } from "@/components/store/api/config";
+import { ACCESS_TOKEN_COOKIE, getAccessToken } from "@/lib/auth";
+
+/** The signed-in user's Keycloak token: from localStorage in the browser, from the cookie on the server. */
+async function sessionToken(): Promise<string | null> {
+  if (typeof window !== "undefined") return getAccessToken();
+  const { cookies } = await import("next/headers");
+  return (await cookies()).get(ACCESS_TOKEN_COOKIE)?.value ?? null;
+}
 
 /** An error from the Waypoint API, with the backend's rule code when there is one (e.g. CUTOFF_PASSED). */
 export class ApiError extends Error {
@@ -42,13 +50,19 @@ let activeBaseUrl: string = API_URL;
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response | null = null;
   const urlsToTry = Array.from(new Set([activeBaseUrl, ...CANDIDATE_URLS]));
+  // The backend works out the store manager and their outlet from this token.
+  const token = await sessionToken();
+  const auth: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
   for (const baseUrl of urlsToTry) {
     try {
       response = await fetch(`${baseUrl}/api/v1${path}`, {
         ...init,
         // File uploads (FormData) set their own multipart Content-Type.
-        headers: init.body instanceof FormData ? init.headers : { "Content-Type": "application/json", ...init.headers },
+        headers:
+          init.body instanceof FormData
+            ? { ...auth, ...init.headers }
+            : { "Content-Type": "application/json", ...auth, ...init.headers },
         cache: "no-store",
       });
       activeBaseUrl = baseUrl;

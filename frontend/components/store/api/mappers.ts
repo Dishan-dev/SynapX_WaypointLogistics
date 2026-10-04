@@ -7,6 +7,7 @@ import {
   type OrderStatus,
   type StoreNotification,
   type StoreOrder,
+  type StoreManager,
   type StoreOutlet,
   type StoreStock,
   type TemperatureClass,
@@ -77,6 +78,44 @@ export interface ApiCatalogueItem {
   temperature_zone: string;
   unit_weight_kg: number;
   unit_volume_m3: number;
+}
+
+export interface ApiStoreMe {
+  manager: { id: number; full_name: string; email: string; role: string };
+  outlet: {
+    id: number;
+    code: string;
+    name: string;
+    brand: string;
+    district: string;
+    depot: string | null;
+    window_start: string | null;
+    window_end: string | null;
+  };
+}
+
+/** The signed-in manager and their outlet, from GET /store/me. */
+export function toStoreSession(me: ApiStoreMe): { manager: StoreManager; outlet: StoreOutlet } {
+  const names = me.manager.full_name.trim().split(/\s+/);
+  return {
+    manager: {
+      fullName: me.manager.full_name,
+      firstName: names[0] ?? "",
+      initials: names
+        .slice(0, 2)
+        .map((name) => name.charAt(0).toUpperCase())
+        .join(""),
+    },
+    outlet: {
+      id: me.outlet.id,
+      code: me.outlet.code,
+      name: me.outlet.name,
+      brand: me.outlet.brand.toLowerCase() as Brand,
+      district: me.outlet.district,
+      windowStart: me.outlet.window_start ?? "00:00",
+      windowEnd: me.outlet.window_end ?? "23:59",
+    },
+  };
 }
 
 export interface ApiStoreStock {

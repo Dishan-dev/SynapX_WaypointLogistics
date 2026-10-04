@@ -4,6 +4,7 @@ from app.models.order import Order, OrderItem
 from app.models.inventory import InventoryItem, Warehouse
 from app.models.catalogue import FreshItem, StyleItem, TechItem
 from app.models.store_stock import StoreStockItem
+from app.models.store_manager import StoreManagerAssignment
 from app.models.shipment import Shipment, DispatchTrip
 from app.models.fleet import Vehicle, DriverProfile
 from app.models.allocation import Allocation
@@ -52,6 +53,7 @@ __all__ = [
     "StyleItem",
     "TechItem",
     "StoreStockItem",
+    "StoreManagerAssignment",
     "OrderItem",
     "InventoryItem",
     "Warehouse",

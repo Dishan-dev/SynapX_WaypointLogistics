@@ -1,11 +1,11 @@
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { brandLabels, currentManager, type StoreOutlet } from "@/components/store/mock-data";
+import { brandLabels, type StoreManager, type StoreOutlet } from "@/components/store/mock-data";
 import { NotificationBell } from "@/components/store/notifications/notification-bell";
 
 // Desktop top bar (Figma: Components / Top Bar). Hidden on mobile, where StoreMobileAppBar takes over.
-export function StoreTopBar({ outlet }: { outlet: StoreOutlet | null }) {
+export function StoreTopBar({ outlet, manager }: { outlet: StoreOutlet | null; manager: StoreManager | null }) {
   return (
     <header className="hidden shrink-0 items-center justify-between gap-4 border-b border-border bg-card px-6 py-4 md:flex lg:gap-6 lg:px-10">
       <div className="flex min-w-0 flex-1 items-center gap-4">
@@ -38,13 +38,15 @@ export function StoreTopBar({ outlet }: { outlet: StoreOutlet | null }) {
 
         <NotificationBell />
 
-        <span
-          className="flex size-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground"
-          title={currentManager.fullName}
-        >
-          <span aria-hidden="true">{currentManager.initials}</span>
-          <span className="sr-only">Signed in as {currentManager.fullName}</span>
-        </span>
+        {manager && (
+          <span
+            className="flex size-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground"
+            title={manager.fullName}
+          >
+            <span aria-hidden="true">{manager.initials}</span>
+            <span className="sr-only">Signed in as {manager.fullName}</span>
+          </span>
+        )}
       </div>
     </header>
   );
