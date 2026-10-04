@@ -60,13 +60,9 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastChecked, setLastChecked] = useState<string>("");
 
-  const keycloakUrl = process.env.NEXT_PUBLIC_KEYCLOAK_URL || "https://auth.tenderease.me";
-  const keycloakRealm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "waypointlogistics";
-  const keycloakClientId = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || "waypoint-frontend";
-
-  const keycloakLoginUrl = `${keycloakUrl}/realms/${keycloakRealm}/protocol/openid-connect/auth?client_id=${keycloakClientId}&response_type=code&scope=openid%20profile%20email&redirect_uri=${encodeURIComponent(
-    typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"
-  )}`;
+  const keycloakUrl = process.env.NEXT_PUBLIC_KEYCLOAK_URL?.trim().replace(/\/$/, "") || "";
+  const keycloakRealm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM?.trim() || "";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.trim().replace(/\/$/, "") || "";
 
   const fetchHealth = useCallback(async () => {
     setIsLoading(true);
@@ -81,7 +77,7 @@ export default function Home() {
         // Fallback default structure
         setHealthData({
           keycloak: { status: "offline", latency: 0, url: keycloakUrl, realm: keycloakRealm, error: "Health check route error" },
-          backend: { status: "offline", latency: 0, url: "http://localhost:5000/api/v1", error: "Offline" },
+          backend: { status: "offline", latency: 0, url: `${apiUrl}/api/v1`, error: "Offline" },
           database: { status: "offline", provider: "Neon Serverless PostgreSQL", details: "Unavailable" },
           bridge: { status: "disconnected" },
           timestamp: new Date().toISOString(),
@@ -91,7 +87,7 @@ export default function Home() {
       const errMsg = err instanceof Error ? err.message : "Health check request failed";
       setHealthData({
         keycloak: { status: "offline", latency: 0, url: keycloakUrl, realm: keycloakRealm, error: errMsg },
-        backend: { status: "offline", latency: 0, url: "http://localhost:5000/api/v1", error: errMsg },
+        backend: { status: "offline", latency: 0, url: `${apiUrl}/api/v1`, error: errMsg },
         database: { status: "offline", provider: "Neon Serverless PostgreSQL" },
         bridge: { status: "disconnected" },
         timestamp: new Date().toISOString(),
@@ -100,7 +96,7 @@ export default function Home() {
       setIsLoading(false);
       setLastChecked(new Date().toLocaleTimeString());
     }
-  }, [keycloakRealm, keycloakUrl]);
+  }, [apiUrl, keycloakRealm, keycloakUrl]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -373,7 +369,7 @@ export default function Home() {
                 </div>
 
                 <div className="font-extrabold text-sm text-slate-900 truncate">
-                  auth.tenderease.me
+                  {keycloakUrl || "Not configured"}
                 </div>
 
                 <div className="text-xs text-slate-600 flex flex-col gap-1 border-t border-slate-200 pt-2 font-mono">
@@ -515,23 +511,23 @@ export default function Home() {
                 </div>
 
                 <div className="font-extrabold text-sm text-slate-900 truncate">
-                  {isBridgeUp ? ":3000 &harr; :5000 Active" : "Waiting for :5000"}
+                  {isBridgeUp ? "Frontend server reached FastAPI" : "Waiting for FastAPI"}
                 </div>
 
                 <div className="text-xs text-slate-600 flex flex-col gap-1 border-t border-slate-200 pt-2 font-mono">
                   <div className="flex justify-between">
                     <span>Next.js Client:</span>
-                    <span className="font-semibold text-slate-800">Port 3000</span>
+                    <span className="font-semibold text-slate-800">Next.js</span>
                   </div>
                   <div className="flex justify-between">
                     <span>FastAPI Target:</span>
-                    <span className="font-semibold text-slate-800">Port 5000</span>
+                    <span className="font-semibold text-slate-800 truncate max-w-[65%]">{apiUrl || "Not configured"}</span>
                   </div>
                   <div className="text-[11px] font-sans mt-0.5 font-medium">
                     {isBridgeUp ? (
-                      <span className="text-emerald-700">CORS Handshake OK</span>
+                      <span className="text-emerald-700">Server-side health probe OK</span>
                     ) : (
-                      <span className="text-amber-800">Browser cannot reach FastAPI</span>
+                      <span className="text-amber-800">Server-side health probe failed</span>
                     )}
                   </div>
                 </div>
@@ -643,25 +639,19 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            <a
-              href="http://localhost:5000/api/v1/docs"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-[#092C4C] hover:underline font-bold"
-            >
-              <span>Swagger API Docs</span>
-              <ExternalLink className="size-3" />
-            </a>
-            <span className="text-slate-300">&bull;</span>
-            <a
-              href={`${keycloakUrl}/admin/master/console/#/${keycloakRealm}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-[#092C4C] hover:underline font-bold"
-            >
-              <span>Keycloak Console</span>
-              <ExternalLink className="size-3" />
-            </a>
+            {apiUrl && (
+              <a href={`${apiUrl}/api/v1/docs`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#092C4C] hover:underline font-bold">
+                <span>Swagger API Docs</span>
+                <ExternalLink className="size-3" />
+              </a>
+            )}
+            {apiUrl && keycloakUrl && <span className="text-slate-300">&bull;</span>}
+            {keycloakUrl && (
+              <a href={`${keycloakUrl}/admin/master/console/#/${keycloakRealm}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#092C4C] hover:underline font-bold">
+                <span>Keycloak Console</span>
+                <ExternalLink className="size-3" />
+              </a>
+            )}
           </div>
         </section>
       </main>

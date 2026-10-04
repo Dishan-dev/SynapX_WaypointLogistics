@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getKeycloakConfig } from "@/lib/keycloak";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { code, code_verifier, redirect_uri, refresh_token, grant_type } = body;
 
-    const keycloakUrl = (process.env.NEXT_PUBLIC_KEYCLOAK_URL || "https://auth.tenderease.me").replace(/\/$/, "");
-    const realm = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "waypointlogistics";
-    const clientId = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || "waypoint-frontend";
-
-    const tokenEndpoint = `${keycloakUrl}/realms/${realm}/protocol/openid-connect/token`;
+    const { clientId, tokenEndpoint } = getKeycloakConfig();
 
     const params = new URLSearchParams();
     params.set("client_id", clientId);
@@ -18,6 +15,12 @@ export async function POST(req: NextRequest) {
       params.set("grant_type", "refresh_token");
       params.set("refresh_token", refresh_token);
     } else {
+      if (!code || !code_verifier || !redirect_uri) {
+        return NextResponse.json({ error: "invalid_request", error_description: "Missing authorization code, PKCE verifier, or redirect URI" }, { status: 400 });
+      }
+      if (redirect_uri !== new URL("/auth/callback", req.url).toString()) {
+        return NextResponse.json({ error: "invalid_request", error_description: "Invalid redirect URI" }, { status: 400 });
+      }
       params.set("grant_type", "authorization_code");
       params.set("code", code);
       params.set("redirect_uri", redirect_uri);

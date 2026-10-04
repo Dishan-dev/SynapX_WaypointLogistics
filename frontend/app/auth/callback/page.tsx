@@ -60,15 +60,15 @@ function CallbackHandler() {
       if (exchangedCodes.has(code)) return;
       exchangedCodes.add(code);
 
-      // Validate PKCE state if present in session
+      // Reject callbacks that were not initiated in this browser session.
       const savedState = sessionStorage.getItem(PKCE_STATE_KEY);
-      if (savedState && state && savedState !== state) {
+      const verifier = sessionStorage.getItem(PKCE_VERIFIER_KEY);
+      if (!savedState || !state || savedState !== state || !verifier) {
         setStatus("error");
-        setErrorMessage("Security state mismatch. Please initiate sign in again.");
+        setErrorMessage("Sign-in session is missing or invalid. Please initiate sign in again.");
         return;
       }
 
-      const verifier = sessionStorage.getItem(PKCE_VERIFIER_KEY) || undefined;
       const targetRole = sessionStorage.getItem(TARGET_ROLE_KEY) as KeycloakAppRole | null;
       const redirectUri = `${window.location.origin}/auth/callback`;
 
@@ -106,7 +106,7 @@ function CallbackHandler() {
         sessionStorage.removeItem("waypoint_return_url");
 
         let targetPortal = getDefaultPortalForRoles(user.roles);
-        if (savedReturnUrl) {
+        if (savedReturnUrl?.startsWith("/") && !savedReturnUrl.startsWith("//")) {
           targetPortal = savedReturnUrl;
         } else if (targetRole && user.roles.includes(targetRole)) {
           targetPortal = ROLE_CONFIGS[targetRole].route;
