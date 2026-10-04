@@ -49,6 +49,10 @@ export function QuickAllocationDrawer({
     );
   }, [selectedOrders]);
 
+  const requiresVan = useMemo(() => {
+    return selectedOrders.some((o) => o.requires_van);
+  }, [selectedOrders]);
+
   // Fetch available vehicles
   useEffect(() => {
     if (!isOpen) return;
@@ -62,8 +66,9 @@ export function QuickAllocationDrawer({
           // Auto select first compatible vehicle
           const compatible = data.find((v) => {
             const isTempMatch = !requiresChilled || v.temperature_mode?.toLowerCase() === "reefer";
+            const isVanMatch = !requiresVan || v.vehicle_type?.toLowerCase() === "van";
             const isAvail = v.status === "AVAILABLE";
-            return isTempMatch && isAvail;
+            return isTempMatch && isVanMatch && isAvail;
           });
           if (compatible) {
             setSelectedVehicleId(compatible.id);
@@ -75,7 +80,7 @@ export function QuickAllocationDrawer({
     }
 
     fetchVehicles();
-  }, [isOpen, requiresChilled]);
+  }, [isOpen, requiresChilled, requiresVan]);
 
   const selectedVehicle = useMemo(() => {
     return vehicles.find((v) => v.id === selectedVehicleId) || null;
@@ -169,7 +174,7 @@ export function QuickAllocationDrawer({
                 Allocate Selected Orders
               </h2>
               <p className="text-[12px] text-[#6B7280] mt-1 font-normal">
-                {selectedOrders.length} {selectedOrders.length === 1 ? "order" : "orders"} · {Math.round(totalWeight)} kg · {requiresChilled ? "Chilled" : "Ambient"}
+                {selectedOrders.length} {selectedOrders.length === 1 ? "order" : "orders"} · {Math.round(totalWeight)} kg · {requiresChilled ? "Chilled" : "Ambient"}{requiresVan && " · Van Required"}
               </p>
             </div>
             <span className="inline-flex items-center px-3 py-1 rounded-full text-[11px] font-semibold bg-[#F6F6F3] text-[#18385F] border border-[#E5E5E2] shrink-0">
@@ -210,8 +215,9 @@ export function QuickAllocationDrawer({
             <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
               {vehicles.map((v) => {
                 const isTempCompatible = !requiresChilled || v.temperature_mode?.toLowerCase() === "reefer";
+                const isVanCompatible = !requiresVan || v.vehicle_type?.toLowerCase() === "van";
                 const isOperational = v.status?.toLowerCase() !== "unavailable";
-                const isEligible = isTempCompatible && isOperational;
+                const isEligible = isTempCompatible && isVanCompatible && isOperational;
 
                 // Projected capacity calculation
                 const baseWeight = v.capacity_kg * 0.45;
@@ -224,6 +230,10 @@ export function QuickAllocationDrawer({
                 if (!isTempCompatible) {
                   subLabel = "Incompatible";
                   matchLabel = "Temp mismatch";
+                  matchBadgeClass = "bg-rose-50 text-rose-700 border-rose-200";
+                } else if (!isVanCompatible) {
+                  subLabel = "Incompatible";
+                  matchLabel = "Van required";
                   matchBadgeClass = "bg-rose-50 text-rose-700 border-rose-200";
                 } else if (!isOperational) {
                   subLabel = "Offline";
