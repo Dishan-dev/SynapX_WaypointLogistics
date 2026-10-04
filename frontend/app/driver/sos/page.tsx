@@ -122,7 +122,7 @@ export default function SOSPage() {
     try {
       await apiFetch("/driver/sos", {
         method: "POST",
-        // photo_url is saved once sos_alerts has a photo_url column; ignored until then
+        // photo_url (Cloudflare R2 link) is saved with the SOS: sos_alerts.photo_url, migration 0014
         body: JSON.stringify({ ...alert, photo_url }),
       });
       // The success screen shows what was actually sent

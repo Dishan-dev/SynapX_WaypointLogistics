@@ -140,6 +140,10 @@ class IssueReport(Base):
 
 class SOSAlert(Base):
     __tablename__ = "sos_alerts"
+    # photo_url is in the table (migration 0014_sos_photo) but not mapped: saving and reading
+    # an SOS never name it, so both keep working on a database where the migration hasn't
+    # run yet. driver_service._save_sos_photo writes it through the table.
+    __mapper_args__ = {"exclude_properties": ["photo_url"]}
 
     id = Column(Integer, primary_key=True, index=True)
     driver_id = Column(Integer, ForeignKey("users.id"), nullable=False)
@@ -147,6 +151,7 @@ class SOSAlert(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     message = Column(String(500), nullable=True)
+    photo_url = Column(Text, nullable=True)  # Cloudflare R2 link to the driver's photo
     status = Column(Enum(SOSStatus), default=SOSStatus.TRIGGERED, nullable=False)
     triggered_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     acknowledged_at = Column(DateTime, nullable=True)

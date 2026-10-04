@@ -130,6 +130,7 @@ class SOSAlertBase(BaseModel):
 
 class SOSAlertCreate(SOSAlertBase):
     driver_trip_id: Optional[int] = None
+    photo_url: Optional[str] = None  # the photo the driver attached (Cloudflare R2 link)
 
 class SOSAlertRead(SOSAlertBase):
     id: int
