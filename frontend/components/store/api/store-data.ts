@@ -7,11 +7,13 @@ import {
   mockNotifications,
   mockOrders,
   mockOutletSettings,
+  mockStoreStock,
   type CatalogueItem,
   type OutletSettings,
   type StoreNotification,
   type StoreOutlet,
   type StoreOrder,
+  type StoreStock,
   type TemperatureClass,
 } from "@/components/store/mock-data";
 import { ApiError, apiFetch } from "@/components/store/api/client";
@@ -20,6 +22,7 @@ import {
   toCatalogueItem,
   toOutletSettings,
   toStoreOutlet,
+  toStoreStock,
   toStoreNotification,
   toStoreOrder,
   toTemperatureZone,
@@ -27,7 +30,9 @@ import {
   type ApiNotification,
   type ApiOperatingDays,
   type ApiOutletSettings,
+  type ApiStockImportResult,
   type ApiStoreOrder,
+  type ApiStoreStock,
 } from "@/components/store/api/mappers";
 
 // One place for every Store Manager read and write. Screens call these and don't care whether the data
@@ -49,6 +54,22 @@ export async function getCatalogue(): Promise<CatalogueItem[]> {
   if (!live()) return mockCatalogue;
   const items = await apiFetch<ApiCatalogueItem[]>(`/catalogue/?outlet_id=${STORE_OUTLET_ID}`);
   return items.map(toCatalogueItem);
+}
+
+/** The store's on-hand list from its last CSV import. */
+export async function getStoreStock(): Promise<StoreStock> {
+  if (!live()) return mockStoreStock;
+  return toStoreStock(await apiFetch<ApiStoreStock>(`/outlets/${STORE_OUTLET_ID}/stock`));
+}
+
+/** Replaces the store's on-hand list with the CSV (sku + quantity_on_hand). Rejected rows come back in `skipped`. */
+export async function importStoreStock(file: File): Promise<ApiStockImportResult> {
+  if (!live()) {
+    throw new ApiError("Stock import needs the Waypoint server. Switch to live data to import.", 400);
+  }
+  const body = new FormData();
+  body.append("file", file);
+  return apiFetch<ApiStockImportResult>(`/outlets/${STORE_OUTLET_ID}/stock/import`, { method: "POST", body });
 }
 
 export async function getStoreOrders(): Promise<StoreOrder[]> {
@@ -82,6 +103,8 @@ export interface GoodsRequestInput {
   deliveryDate: string;
   isHighPriority: boolean;
   notes: string;
+  /** A narrower delivery window inside the outlet's hours ("HH:MM"). Leave out for the full window. */
+  window?: { start: string; end: string };
   items: { sku: string; itemName: string; quantity: number; temperatureClass: TemperatureClass }[];
 }
 
@@ -101,6 +124,8 @@ export async function placeGoodsRequest(input: GoodsRequestInput, mockNumbers: s
       delivery_date: input.deliveryDate,
       is_priority: input.isHighPriority,
       notes: input.notes || null,
+      window_start: input.window?.start ?? null,
+      window_end: input.window?.end ?? null,
       items: input.items.map((item) => ({
         sku: item.sku,
         item_name: item.itemName,

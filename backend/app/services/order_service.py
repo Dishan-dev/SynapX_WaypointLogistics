@@ -1,5 +1,5 @@
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Dict, List, Optional, Set
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
@@ -65,10 +65,33 @@ def _delivery_label(day: date) -> str:
     return f"{day:%a} {day.day} {day:%b}"
 
 
+def _window_label(start: time, end: time) -> str:
+    return f"{start.strftime('%H:%M')} – {end.strftime('%H:%M')}"
+
+
 def _window(outlet: Outlet) -> Optional[str]:
     if outlet.window_start and outlet.window_end:
-        return f"{outlet.window_start.strftime('%H:%M')} – {outlet.window_end.strftime('%H:%M')}"
+        return _window_label(outlet.window_start, outlet.window_end)
     return None
+
+
+def _requested_window(outlet: Outlet, request: GoodsRequestCreate) -> Optional[str]:
+    """The delivery window for this request: the manager's choice inside the outlet window, or the whole window."""
+    start, end = request.window_start, request.window_end
+    if start is None and end is None:
+        return _window(outlet)
+    if start is None or end is None:
+        raise OrderRuleError("Choose both a start and an end time for the delivery window.", code="WINDOW_INCOMPLETE")
+    if start >= end:
+        raise OrderRuleError("The delivery window has to end after it starts.", code="WINDOW_INVALID")
+    if outlet.window_start and outlet.window_end and (start < outlet.window_start or end > outlet.window_end):
+        usual = _window(outlet)
+        raise OrderRuleError(
+            f"Choose a window inside {outlet.name}'s receiving hours ({usual}).",
+            code="WINDOW_OUTSIDE_OUTLET",
+            details={"outlet_window": usual},
+        )
+    return _window_label(start, end)
 
 
 class OrderService:
@@ -138,6 +161,7 @@ class OrderService:
                 details={"skus": unavailable},
             )
         zone_of = {item.sku: specs[item.sku].temperature_zone for item in request.items}
+        delivery_window = _requested_window(outlet, request)
 
         delivery_date = request.delivery_date
         if not calendar_service.is_operating_day(db, delivery_date):
@@ -207,7 +231,7 @@ class OrderService:
                 brand=brand.capitalize() if brand else None,
                 district=outlet.district,
                 temperature_zone=zone,
-                delivery_window=_window(outlet),
+                delivery_window=delivery_window,
                 weight_kg=round(sum(item.quantity * specs[item.sku].unit_weight_kg for item in lines), 2),
                 volume_m3=round(sum(item.quantity * specs[item.sku].unit_volume_m3 for item in lines), 4),
                 is_priority=request.is_priority,

@@ -8,6 +8,7 @@ import {
   type StoreNotification,
   type StoreOrder,
   type StoreOutlet,
+  type StoreStock,
   type TemperatureClass,
 } from "@/components/store/mock-data";
 
@@ -78,6 +79,29 @@ export interface ApiCatalogueItem {
   unit_volume_m3: number;
 }
 
+export interface ApiStoreStock {
+  imported_at: string | null;
+  items: { sku: string; name: string | null; pack_label: string | null; quantity_on_hand: number }[];
+}
+
+export interface ApiStockImportResult {
+  imported: number;
+  skipped: { line: number | null; sku: string | null; reason: string }[];
+  imported_at: string;
+}
+
+export function toStoreStock(api: ApiStoreStock): StoreStock {
+  return {
+    importedAt: api.imported_at,
+    items: api.items.map((item) => ({
+      sku: item.sku,
+      itemName: item.name,
+      packLabel: item.pack_label,
+      quantityOnHand: item.quantity_on_hand,
+    })),
+  };
+}
+
 export interface ApiOperatingDays {
   operating_days: string[];
   earliest_default: string;
@@ -110,6 +134,12 @@ export function toCatalogueItem(item: ApiCatalogueItem): CatalogueItem {
   };
 }
 
+/** "05:00 – 06:30" (orders.delivery_window) -> { windowStart, windowEnd }. */
+function parseWindow(value: string | null): StoreOrder["deliveryWindow"] {
+  const match = value?.match(/(\d{2}:\d{2})\s*[–-]\s*(\d{2}:\d{2})/);
+  return match ? { windowStart: match[1], windowEnd: match[2] } : undefined;
+}
+
 export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
   const temperatureClass = toTemperatureClass(order.temperature_zone);
   return {
@@ -122,6 +152,7 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
     submittedAt: order.submitted_at ?? order.created_at,
     notes: order.notes ?? undefined,
     deferralReason: order.deferral_reason ?? undefined,
+    deliveryWindow: parseWindow(order.delivery_window),
     statusTimes: order.submitted_at ? { submitted: order.submitted_at } : undefined,
     shortfall: order.shortfall
       ? {

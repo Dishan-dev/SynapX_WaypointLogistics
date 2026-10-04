@@ -3,6 +3,11 @@ import type { StoreOutlet } from "@/components/store/mock-data";
 
 type OutletWindow = Pick<StoreOutlet, "windowStart" | "windowEnd"> | null;
 
+/** The order's own delivery window when it has one, otherwise the outlet's usual window. */
+export function windowFor(order: { deliveryWindow?: { windowStart: string; windowEnd: string } }, outlet: OutletWindow) {
+  return order.deliveryWindow ?? outlet;
+}
+
 // null when the outlet couldn't be loaded.
 const windowLabel = (outlet: OutletWindow) => (outlet ? `${outlet.windowStart} – ${outlet.windowEnd}` : "window unavailable");
 

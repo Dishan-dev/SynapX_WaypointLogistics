@@ -5,7 +5,7 @@ import { Table, TableBody, TableRow } from "@/components/ui/table";
 import { StoreArrowLink, StoreSectionCard } from "@/components/store/store-cards";
 import { StoreTableCell, StoreTableHeader } from "@/components/store/store-table";
 import { OrderStatusPill, PriorityPill } from "@/components/store/status-pill";
-import { formatItemCount, formatRelativeWindow, formatTime } from "@/components/store/format";
+import { formatItemCount, formatRelativeWindow, formatTime, windowFor } from "@/components/store/format";
 import type { StoreOrder, StoreOutlet } from "@/components/store/mock-data";
 import { MobileSectionTitle } from "@/components/store/dashboard/mobile-section-title";
 
@@ -17,7 +17,7 @@ function windowText(order: StoreOrder, outlet: StoreOutlet | null, now: Date) {
   if (order.status === "delivered" && order.arrivedAt) {
     return `Arrived today, ${formatTime(order.arrivedAt)}`;
   }
-  return formatRelativeWindow(order.orderDate, outlet, now);
+  return formatRelativeWindow(order.orderDate, windowFor(order, outlet), now);
 }
 
 function DeliveryAction({ order }: { order: StoreOrder }) {

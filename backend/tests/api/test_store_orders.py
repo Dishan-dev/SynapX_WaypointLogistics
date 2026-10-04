@@ -291,3 +291,68 @@ def test_catalogue_sets_zone_name_weight_and_volume(client, clock, outlets):
     assert order["temperature_zone"] == "Chilled"
     assert order["weight_kg"] == round(10 * 6.5 + 2 * 12.4, 2)
     assert {i["item_name"] for i in order["items"]} == {"Greek Yogurt 500g", "Soft Drinks 1L"}
+
+
+def test_request_can_narrow_the_delivery_window_inside_the_outlet_window(client, clock, outlets):
+    fresh_id = outlets["fresh"].id
+
+    def place_with(start, end, day):
+        return client.post(
+            "/api/v1/orders/store",
+            json={"outlet_id": fresh_id, "delivery_date": day, "window_start": start, "window_end": end,
+                  "items": [item("SKU-063", "Chilled")]},
+        )
+
+    res = place_with("05:00", "06:30", "2026-09-30")
+    assert res.status_code == 201
+    assert res.json()[0]["delivery_window"] == "05:00 – 06:30"
+    # Without a choice it's the outlet's whole window (04:00 – 07:45).
+    assert place(client, fresh_id, "2026-10-02", [item("SKU-063", "Chilled")]).json()[0]["delivery_window"] == "04:00 – 07:45"
+
+    outside = place_with("03:30", "06:00", "2026-10-03")
+    assert outside.status_code == 422 and outside.json()["detail"]["code"] == "WINDOW_OUTSIDE_OUTLET"
+    assert place_with("06:00", "05:00", "2026-10-03").json()["detail"]["code"] == "WINDOW_INVALID"
+    assert place_with("06:00", None, "2026-10-03").json()["detail"]["code"] == "WINDOW_INCOMPLETE"
+
+
+def upload(client, outlet_id, text):
+    return client.post(
+        f"/api/v1/outlets/{outlet_id}/stock/import", files={"file": ("stock.csv", text.encode(), "text/csv")}
+    )
+
+
+def test_stock_import_replaces_the_list_and_reports_skipped_rows(client, clock, outlets):
+    fresh_id = outlets["fresh"].id
+    assert client.get(f"/api/v1/outlets/{fresh_id}/stock").json() == {"imported_at": None, "items": []}
+
+    res = upload(client, fresh_id, "SKU,Quantity\nsku-063,12\nSKU-014,0\nSKU-501,4\nSKU-070,-2\nSKU-063,9\n,\n")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["imported"] == 2
+    reasons = {(row["sku"], row["reason"].split(" ")[0]) for row in body["skipped"]}
+    assert reasons == {("SKU-070", "Quantity"), ("SKU-063", "Listed"), ("SKU-501", "Not")}  # Style item at a Fresh store
+
+    stock = client.get(f"/api/v1/outlets/{fresh_id}/stock").json()
+    assert stock["imported_at"] is not None
+    yogurt = next(row for row in stock["items"] if row["sku"] == "SKU-063")
+    assert (yogurt["name"], yogurt["pack_label"], yogurt["quantity_on_hand"]) == ("Greek Yogurt 500g", "12 unit Chilled Carton", 12)
+
+    # A new count replaces the old one.
+    upload(client, fresh_id, "sku,on_hand\nSKU-001,30\n")
+    assert [row["sku"] for row in client.get(f"/api/v1/outlets/{fresh_id}/stock").json()["items"]] == ["SKU-001"]
+
+
+def test_bad_stock_files_keep_the_current_list(client, clock, outlets):
+    fresh_id = outlets["fresh"].id
+    upload(client, fresh_id, "sku,quantity\nSKU-001,30\n")
+
+    wrong_columns = upload(client, fresh_id, "item,count\nSKU-001,5\n")
+    assert wrong_columns.status_code == 422 and wrong_columns.json()["detail"]["code"] == "STOCK_CSV_COLUMNS"
+    nothing_usable = upload(client, fresh_id, "sku,quantity\nNOPE,5\n")
+    assert nothing_usable.status_code == 422 and nothing_usable.json()["detail"]["code"] == "STOCK_CSV_EMPTY"
+    assert client.post(
+        f"/api/v1/outlets/{fresh_id}/stock/import", files={"file": ("s.csv", "sku\xff".encode("latin-1"), "text/csv")}
+    ).status_code == 400
+
+    assert client.get(f"/api/v1/outlets/{fresh_id}/stock").json()["items"][0]["quantity_on_hand"] == 30
+    assert client.get("/api/v1/outlets/9999/stock").status_code == 404

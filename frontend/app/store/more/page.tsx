@@ -12,6 +12,11 @@ const moreLinks = (outletCode: string | undefined) => [
     href: "/store/requests/shortfalls",
   },
   {
+    title: "Store Stock",
+    description: "On-hand counts and CSV import",
+    href: "/store/stock",
+  },
+  {
     title: "Delivery History",
     description: "Completed deliveries",
     href: "/store/history",

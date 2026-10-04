@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models.loader_issue import IssueStatus as LoaderIssueStatus, IssueType as LoaderIssueType
@@ -23,6 +23,10 @@ class GoodsRequestCreate(BaseModel):
     delivery_date: date
     is_priority: bool = False
     notes: Optional[str] = Field(default=None, max_length=500)
+    # Optional narrower window for this delivery; must sit inside the outlet's receiving window.
+    # Leave both out to use the outlet's full window.
+    window_start: Optional[time] = None
+    window_end: Optional[time] = None
     items: List[GoodsRequestItem] = Field(min_length=1)
 
 

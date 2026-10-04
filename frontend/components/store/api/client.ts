@@ -47,7 +47,8 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     try {
       response = await fetch(`${baseUrl}/api/v1${path}`, {
         ...init,
-        headers: { "Content-Type": "application/json", ...init.headers },
+        // File uploads (FormData) set their own multipart Content-Type.
+        headers: init.body instanceof FormData ? init.headers : { "Content-Type": "application/json", ...init.headers },
         cache: "no-store",
       });
       activeBaseUrl = baseUrl;

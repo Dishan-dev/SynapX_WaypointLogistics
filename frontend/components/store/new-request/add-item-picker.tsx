@@ -34,6 +34,7 @@ export function AddItemPicker({
   open,
   onOpenChange,
   catalogue,
+  onHand,
   selected,
   onConfirm,
   requestLabel,
@@ -41,6 +42,8 @@ export function AddItemPicker({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   catalogue: CatalogueItem[];
+  /** sku → units on the store's shelves, from its last stock import. Undefined before any import. */
+  onHand?: Record<string, number>;
   /** Items already in the request, sku → quantity. */
   selected: Record<string, number>;
   /** Called with the full sku → quantity map after "Add to Request". */
@@ -54,6 +57,7 @@ export function AddItemPicker({
   const body = (
     <PickerBody
       catalogue={catalogue}
+      onHand={onHand}
       selected={selected}
       compact={isMobile}
       onCancel={() => onOpenChange(false)}
@@ -94,12 +98,14 @@ export function AddItemPicker({
 // Mounted fresh each time the picker opens, so its working copy starts from the current request.
 function PickerBody({
   catalogue,
+  onHand,
   selected,
   compact,
   onCancel,
   onConfirm,
 }: {
   catalogue: CatalogueItem[];
+  onHand?: Record<string, number>;
   selected: Record<string, number>;
   compact: boolean;
   onCancel: () => void;
@@ -209,6 +215,7 @@ function PickerBody({
                   <span className="text-sm text-muted-foreground">
                     {item.sku} · {item.packLabel || temperatureLabel[item.temperatureClass]}
                   </span>
+                  {onHand && <span className="text-sm text-muted-foreground">On hand: {onHand[item.sku] ?? "not counted"}</span>}
                 </div>
                 <div className="shrink-0">{action(item)}</div>
               </li>
@@ -221,6 +228,7 @@ function PickerBody({
                 { label: "Item" },
                 { label: "SKU" },
                 { label: "Storage" },
+                ...(onHand ? [{ label: "On hand" }] : []),
                 { label: "Quantity" },
                 { label: "Action", className: "text-transparent select-none" },
               ]}
@@ -236,6 +244,11 @@ function PickerBody({
                   <StoreTableCell>
                     <TemperaturePill value={item.temperatureClass} />
                   </StoreTableCell>
+                  {onHand && (
+                    <StoreTableCell>
+                      {item.sku in onHand ? onHand[item.sku] : <span className="text-muted-foreground">—</span>}
+                    </StoreTableCell>
+                  )}
                   <StoreTableCell>
                     <QuantityStepper
                       label={`Quantity for ${item.itemName}`}

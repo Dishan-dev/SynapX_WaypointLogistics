@@ -21,6 +21,7 @@ import {
   formatItemCount,
   formatLongDate,
   formatShortWindow,
+  windowFor,
   formatTime,
   formatUnitCount,
 } from "@/components/store/format";
@@ -107,7 +108,7 @@ export function GoodsRequestsView({
         order.orderNumber,
         order.submittedAt,
         order.orderDate,
-        formatDeliveryWindow(outlet),
+        formatDeliveryWindow(windowFor(order, outlet)),
         order.items.length,
         totalUnits(order),
         order.isHighPriority ? "High" : "Default",
@@ -307,7 +308,7 @@ export function GoodsRequestsView({
                       </StoreTableCell>
                       <StoreTableCell>
                         <span className="block font-medium">{formatLongDate(order.orderDate)}</span>
-                        <span className="mt-2 block text-muted-foreground">{formatDeliveryWindow(outlet)}</span>
+                        <span className="mt-2 block text-muted-foreground">{formatDeliveryWindow(windowFor(order, outlet))}</span>
                       </StoreTableCell>
                       <StoreTableCell>
                         <span className="block font-medium">{formatItemCount(order.items.length)}</span>
@@ -347,7 +348,7 @@ export function GoodsRequestsView({
                     <dl className="flex flex-col gap-2 text-sm">
                       <div className="flex justify-between gap-2">
                         <dt className="text-muted-foreground">Delivery window</dt>
-                        <dd className="text-right font-medium">{formatShortWindow(order.orderDate, outlet)}</dd>
+                        <dd className="text-right font-medium">{formatShortWindow(order.orderDate, windowFor(order, outlet))}</dd>
                       </div>
                       <div className="flex justify-between gap-2">
                         <dt className="text-muted-foreground">Items</dt>

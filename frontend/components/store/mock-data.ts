@@ -160,6 +160,8 @@ export interface StoreOrder {
   notes?: string;
   activity?: { at: string; text: string }[];
   deferralReason?: string;
+  /** The window chosen for this delivery, when it differs from the outlet's usual one. */
+  deliveryWindow?: { windowStart: string; windowEnd: string };
   /** Order-level shortfall from the loader (the loader flags per order, not per item). */
   shortfall?: OrderShortfall;
 }
@@ -385,6 +387,31 @@ export interface CatalogueItem {
   /** What the quantity counts, from the pack (e.g. "Cartons"). */
   unitLabel: string;
 }
+
+// ── Store stock (store_stock) — on-hand quantities from the manager's last CSV import ──
+
+export interface StoreStockItem {
+  sku: string;
+  /** null when the SKU is no longer in the outlet's catalogue. */
+  itemName: string | null;
+  packLabel: string | null;
+  quantityOnHand: number;
+}
+
+export interface StoreStock {
+  /** null before the first import. */
+  importedAt: string | null;
+  items: StoreStockItem[];
+}
+
+export const mockStoreStock: StoreStock = {
+  importedAt: "2026-09-26T05:30:00",
+  items: [
+    { sku: "SKU-063", itemName: "Greek Yogurt 500g", packLabel: "12 unit Chilled Carton", quantityOnHand: 4 },
+    { sku: "SKU-014", itemName: "Soft Drinks 1L (12pk)", packLabel: "12 unit Chilled Carton", quantityOnHand: 11 },
+    { sku: "SKU-001", itemName: "Bottled Water 500ml", packLabel: "24 unit Carton", quantityOnHand: 26 },
+  ],
+};
 
 // Mock mode is Fresh Colombo, so this stands in for fresh_items.
 export const mockCatalogue: CatalogueItem[] = [
