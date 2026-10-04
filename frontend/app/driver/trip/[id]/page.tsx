@@ -24,6 +24,8 @@ interface DeliveryStop {
 interface TripDetail {
   id: number;
   dispatch_trip_id: number;
+  run_code?: string | null; // e.g. RUN-0067
+  vehicle_number?: string | null; // e.g. VEH005
   status: string;
   stops: DeliveryStop[];
   planned_departure: string | null;
@@ -97,10 +99,10 @@ export default function TripDetailsPage({ params }: { params: Promise<{ id: stri
           </Link>
           <div className="flex flex-col gap-0.5">
             <h1 className="text-[18px] font-bold leading-[1.25em]" style={{ color: "#12202E" }}>
-              Trip R-{tripId}
+              {trip?.run_code ?? `Trip R-${tripId}`}
             </h1>
             <p className="text-[12px] font-normal leading-[1.45em]" style={{ color: "#5D6A78" }}>
-              {loading ? "Loading..." : `${trip?.stops?.length || 0} stops · Delivery`}
+              {loading ? "Loading..." : `${trip?.stops?.length || 0} stops · ${trip?.vehicle_number ? `Truck ${trip.vehicle_number}` : "Delivery"}`}
             </p>
           </div>
         </div>

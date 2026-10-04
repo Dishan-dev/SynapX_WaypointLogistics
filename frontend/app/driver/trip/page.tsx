@@ -246,7 +246,7 @@ export default function DriverRouteMapPage() {
             </Link>
             <div className="flex flex-col gap-0.5">
               <h1 className="text-[17px] font-bold leading-tight text-[#12202E]">
-                {trip ? `Trip R-${trip.id}` : "Route Map"}
+                {trip ? trip.run_code ?? `Trip R-${trip.id}` : "Route Map"}
               </h1>
               <p className="text-[11px] text-[#5D6A78]">
                 {gpsPosition
@@ -254,7 +254,7 @@ export default function DriverRouteMapPage() {
                   : gpsError
                   ? `⚠ ${gpsError}`
                   : "Locating…"}
-                {trip && ` · Dispatch #${trip.dispatch_trip_id}`}
+                {trip && ` · ${trip.vehicle_number ? `Truck ${trip.vehicle_number}` : `Dispatch #${trip.dispatch_trip_id}`}`}
               </p>
             </div>
           </div>

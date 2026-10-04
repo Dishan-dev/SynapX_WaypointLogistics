@@ -33,6 +33,8 @@ interface UserProfile {
 interface DriverTripSummary {
   id: number;
   dispatch_trip_id: number;
+  run_code?: string | null; // e.g. RUN-0067
+  vehicle_number?: string | null; // e.g. VEH005
   status: string;
   assigned_date: string;
 }
@@ -184,8 +186,10 @@ export default function DriverDashboard() {
                   {/* Trip Header */}
                   <div className="flex justify-between items-start w-full">
                     <div className="flex flex-col gap-0.5">
-                      <span className="font-bold text-[24px]" style={{ color: "#0B2743" }}>Trip R-{trip.id}</span>
-                      <span className="font-semibold text-[12px]" style={{ color: "#5D6A78" }}>Dispatch #{trip.dispatch_trip_id}</span>
+                      <span className="font-bold text-[24px]" style={{ color: "#0B2743" }}>{trip.run_code ?? `Trip R-${trip.id}`}</span>
+                      <span className="font-semibold text-[12px]" style={{ color: "#5D6A78" }}>
+                        {trip.vehicle_number ? `Truck ${trip.vehicle_number}` : `Dispatch #${trip.dispatch_trip_id}`}
+                      </span>
                     </div>
                     <div className="flex items-center px-2 py-1 rounded-full bg-[#FFF4D6]">
                       <span className="font-bold text-[10px]" style={{ color: "#A85D00" }}>{trip.status.replace('_', ' ')}</span>
@@ -211,7 +215,7 @@ export default function DriverDashboard() {
                       className="w-full flex justify-center items-center h-[55px] rounded-lg text-white font-bold text-[16px]"
                       style={{ backgroundColor: "#092C4C" }}
                     >
-                      Open Trip R-{trip.id}
+                      Open Trip {trip.run_code ?? `R-${trip.id}`}
                     </button>
                   </Link>
                 </div>
@@ -226,7 +230,7 @@ export default function DriverDashboard() {
                   {/* Trip Header */}
                   <div className="flex justify-between items-start w-full mb-1">
                     <div className="flex flex-col gap-0.5">
-                      <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>Trip R-{trip.id}</span>
+                      <span className="font-bold text-[18px]" style={{ color: "#12202E" }}>{trip.run_code ?? `Trip R-${trip.id}`}</span>
                       <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Status · {trip.status}</span>
                     </div>
                     <div className="flex items-center px-2 py-1 rounded-full bg-[#E9EEF3]">
@@ -235,8 +239,8 @@ export default function DriverDashboard() {
                   </div>
 
                   <div className="flex justify-between items-baseline w-full mt-[-2px]">
-                    <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>Dispatch Ref</span>
-                    <span className="font-bold text-[12px]" style={{ color: "#5D6A78" }}>#{trip.dispatch_trip_id}</span>
+                    <span className="font-normal text-[12px]" style={{ color: "#5D6A78" }}>{trip.vehicle_number ? "Truck" : "Dispatch Ref"}</span>
+                    <span className="font-bold text-[12px]" style={{ color: "#5D6A78" }}>{trip.vehicle_number ?? `#${trip.dispatch_trip_id}`}</span>
                   </div>
                   
                   {/* Action */}

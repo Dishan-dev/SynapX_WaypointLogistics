@@ -321,6 +321,16 @@ def test_failed_stop_keeps_orders_dispatched_and_warns_the_dispatcher(loader_cli
     assert event["status"] == "warning"
 
 
+def test_trip_shows_the_run_code_and_truck(loader_client, released):
+    driver = released["driver"]
+
+    trip = today(loader_client, driver)[0]
+
+    assert (trip["run_code"], trip["vehicle_number"]) == ("RUN-0024", "VEH014")
+    detail = trip_detail(loader_client, driver, trip["id"])
+    assert (detail["run_code"], detail["vehicle_number"]) == ("RUN-0024", "VEH014")
+
+
 # ---- End of trip -----------------------------------------------------------------------
 
 def test_completing_the_trip_closes_the_dispatchers_run(loader_client, released):

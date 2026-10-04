@@ -58,6 +58,16 @@ class DriverTrip(Base):
         """The dispatcher's departure time for this trip (not a column)."""
         return self.dispatch_trip.departure_time if self.dispatch_trip else None
 
+    @property
+    def run_code(self):
+        """The run's code the dispatcher and loader use, e.g. RUN-0067 (not a column)."""
+        return self.dispatch_trip.trip_code if self.dispatch_trip else None
+
+    @property
+    def vehicle_number(self):
+        """The truck on this trip, e.g. VEH005 (not a column)."""
+        return self.dispatch_trip.vehicle_number if self.dispatch_trip else None
+
 
 class DeliveryStop(Base):
     __tablename__ = "delivery_stops"

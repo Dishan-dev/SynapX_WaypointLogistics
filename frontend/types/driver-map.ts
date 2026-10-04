@@ -34,6 +34,8 @@ export interface DriverTripDetail {
   id: number;
   driver_id: number;
   dispatch_trip_id: number;
+  run_code?: string | null; // e.g. RUN-0067, as the dispatcher and loader call it
+  vehicle_number?: string | null; // the truck, e.g. VEH005
   status: TripStatus;
   assigned_date: string;
   started_at: string | null;
