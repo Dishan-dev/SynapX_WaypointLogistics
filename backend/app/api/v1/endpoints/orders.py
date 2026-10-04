@@ -82,7 +82,7 @@ def list_orders(
     db: Session = Depends(deps.get_db),
     depot: Depot = Depends(deps.get_dispatcher_depot),
 ):
-    query = db.query(Order).options(selectinload(Order.items)).filter(Order.depot == depot)
+    query = db.query(Order).options(selectinload(Order.items), selectinload(Order.outlet)).filter(Order.depot == depot)
 
     if is_late is not None:
         query = query.filter(Order.is_late == is_late)
@@ -236,7 +236,7 @@ def get_order(
     db: Session = Depends(deps.get_db),
     depot: Depot = Depends(deps.get_dispatcher_depot),
 ):
-    order = db.query(Order).options(selectinload(Order.items)).filter(Order.id == order_id, Order.depot == depot).first()
+    order = db.query(Order).options(selectinload(Order.items), selectinload(Order.outlet)).filter(Order.id == order_id, Order.depot == depot).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
