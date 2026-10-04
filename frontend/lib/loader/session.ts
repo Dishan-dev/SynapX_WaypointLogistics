@@ -12,8 +12,11 @@ export const IDLE_SIGN_OUT_MS = 10 * 60_000;
 /** "Still there?" shows this long before the idle sign-out. Not in Figma. */
 export const IDLE_WARNING_MS = 30_000;
 
-/** Which tablet this is. Until tablets are registered, set per device. */
-export const TABLET_LABEL = process.env.NEXT_PUBLIC_LOADER_TABLET_LABEL ?? "Dock tablet 3";
+/**
+ * The depot this tablet signs into; its loaders see every dock of it. Set per
+ * device (tablets are no longer tied to a dock).
+ */
+export const TABLET_DEPOT = process.env.NEXT_PUBLIC_LOADER_DEPOT ?? "peliyagoda";
 
 export interface StoredSession {
   session: LoaderSession;
@@ -22,7 +25,6 @@ export interface StoredSession {
 }
 
 export interface TabletPlace {
-  dock: string;
   depot: string;
 }
 
@@ -63,6 +65,11 @@ function parse<T>(raw: string | null): T | undefined {
 let cachedRaw: string | null = null;
 let cachedSession: StoredSession | null = null;
 
+/** The signed-in session's id, for the X-Loader-Session header on tablet reads. */
+export function currentSessionId(): number | undefined {
+  return readSession()?.session.session_id;
+}
+
 /** The stored session; the same object until it changes (for useSyncExternalStore). */
 export function readSession(): StoredSession | null {
   const raw = read(SESSION_KEY);
@@ -97,7 +104,7 @@ export function endReason(): SessionEndReason | undefined {
 export function saveSession(stored: StoredSession) {
   lastEndReason = undefined;
   write(SESSION_KEY, JSON.stringify(stored));
-  write(PLACE_KEY, JSON.stringify({ dock: stored.session.dock, depot: stored.session.depot }));
+  write(PLACE_KEY, JSON.stringify({ depot: stored.session.depot }));
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
@@ -110,8 +117,8 @@ let cachedPlaceRaw: string | null = null;
 let cachedPlace: TabletPlace | null = null;
 
 /**
- * Dock and depot from this tablet's last session, which the sign-in screen
- * shows before anyone signs in. The same object until it changes.
+ * The depot from this tablet's last session, which the sign-in screen shows
+ * before anyone signs in. The same object until it changes.
  */
 export function lastPlace(): TabletPlace | null {
   const raw = read(PLACE_KEY);

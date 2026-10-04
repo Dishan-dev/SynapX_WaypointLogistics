@@ -12,7 +12,12 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import AllocationError, InvalidStateTransitionError, NotFoundError
+from app.core.exceptions import (
+    AllocationError,
+    AuthorizationError,
+    InvalidStateTransitionError,
+    NotFoundError,
+)
 from app.core.security import verify_password
 from app.models.delivery_run import (
     DeliveryRun,
@@ -31,9 +36,10 @@ from app.models.loader_activity import (
     RunReleaseAction,
 )
 from app.models.driver import DriverTrip, DriverTripStatus
-from app.models.fleet import Vehicle
+from app.models.fleet import DriverProfile, Vehicle
 from app.models.loader_issue import IssueStatus, IssueType, LoaderIssue, LoaderIssueOption
 from app.models.loader_user import LoaderSession, LoaderUser
+from app.models.notification import NotificationType
 from app.models.order import Order, OrderStatus
 from app.models.plan_revision import PlanChangeKind, PlanRevision, PlanRevisionChange
 from app.models.shipment import DispatchTrip
@@ -110,6 +116,14 @@ def _depot_hhmm(value: datetime) -> str:
 
 # The derived last line of a gated-out run's log, once its driver trip is done.
 TRIP_COMPLETED_EVENT = "trip_completed"
+
+# The run log's "the truck is at the dock" line, written by mark_arrived (one
+# per arrival). The driver app's own "I've arrived" (POST
+# /driver/trips/{id}/at-dock, driver_service.report_at_dock) still logs it
+# directly; until it calls mark_arrived, that entry also counts as the truck
+# arriving at the planned dock (LoaderService.log). Remove that workaround once
+# it swaps.
+DRIVER_AT_DOCK_EVENT = "driver_at_dock"
 TRIP_COMPLETED_MESSAGE = "Trip complete · back at depot"
 
 # A stop that arrives this close to the end of the outlet's window is "closing".
@@ -608,6 +622,109 @@ class IssueAlreadyDecidedError(InvalidStateTransitionError):
         }
 
 
+class RunPickedByOtherError(InvalidStateTransitionError):
+    """Another loader has picked this run and still holds it. 409."""
+
+    def __init__(self, run: DeliveryRun, holder: LoaderSession):
+        who = holder.loader_user.short_name
+        super().__init__(
+            f"{who} is loading {run.code}.",
+            current_state="picked",
+            target_state="picked",
+            entity="DeliveryRun",
+        )
+        self.code = "RUN_PICKED_BY_OTHER"
+        self.details = {
+            "entity": "DeliveryRun",
+            "entity_id": run.code,
+            "picked_by": who,
+            "picked_at": _utc_z(run.picked_at) if run.picked_at else None,
+        }
+
+
+class RunNotPickedError(InvalidStateTransitionError):
+    """A write on a run this loader has not picked (or has put back). 409."""
+
+    def __init__(self, run: DeliveryRun):
+        super().__init__(
+            f"Pick {run.code} before working on it.",
+            current_state="not_picked",
+            target_state="picked",
+            entity="DeliveryRun",
+        )
+        self.code = "RUN_NOT_PICKED"
+        self.details = {"entity": "DeliveryRun", "entity_id": run.code}
+
+
+class LoaderNoDepotError(AuthorizationError):
+    """A loader with no depot on record cannot sign in. 403."""
+
+    def __init__(self, user: LoaderUser):
+        super().__init__(f"{user.short_name} has no depot yet. Ask the admin to set it.")
+        self.code = "LOADER_NO_DEPOT"
+        self.details = {"loader_user_id": user.id}
+
+
+class LoaderOtherDepotError(AuthorizationError):
+    """Signing in at a depot the loader does not belong to. 403."""
+
+    def __init__(self, user: LoaderUser, depot: Depot):
+        super().__init__(f"{user.short_name} works at another depot, not {depot.value.title()}.")
+        self.code = "LOADER_OTHER_DEPOT"
+        self.details = {"loader_user_id": user.id, "depot": depot.value}
+
+
+class LoaderSessionEndedError(AuthorizationError):
+    """A read on a session that has ended (signed out or timed out). 403."""
+
+    def __init__(self, session: LoaderSession):
+        super().__init__("This loader session has ended. Sign in again.")
+        self.code = "LOADER_SESSION_ENDED"
+        self.details = {"session_id": session.id}
+
+
+class DockNotAtDepotError(AllocationError):
+    """A dock at another depot than the run's. 422."""
+
+    def __init__(self, dock: Dock, depot: Depot):
+        super().__init__(
+            f"{dock.name} is not at the {depot.value.title()} depot.",
+            code="DOCK_NOT_AT_DEPOT",
+            violations=[{
+                "code": "DOCK_NOT_AT_DEPOT",
+                "message": f"{dock.name} is at {dock.depot.value.title()}, not {depot.value.title()}.",
+                "dock": dock.code,
+            }],
+        )
+
+
+class TruckAlreadyArrivedError(InvalidStateTransitionError):
+    """The dock of a run whose truck is already at the depot cannot change. 409."""
+
+    def __init__(self, run: DeliveryRun):
+        super().__init__(
+            f"The truck for {run.code} is already at {run.dock.name}.",
+            current_state="at_dock",
+            target_state="awaiting_truck",
+            entity="DeliveryRun",
+        )
+        self.code = "TRUCK_ALREADY_ARRIVED"
+        self.details = {"entity": "DeliveryRun", "entity_id": run.code, "dock": run.dock.code}
+
+
+# The pick lock lasts while its session is open and was seen this recently: the
+# tablet signs out after 10 minutes idle, plus a minute for a slow last request.
+# A tablet that dies without signing out frees its runs after this long.
+PICK_LIVE_MINUTES = 11
+
+# The derived stage of a run (RunStatus is unchanged), for queue, detail and dispatcher.
+STAGE_AWAITING_TRUCK = "awaiting_truck"
+STAGE_AT_DOCK = "at_dock"
+STAGE_LOADING = "loading"
+STAGE_READY = "ready"
+STAGE_GATED_OUT = "gated_out"
+
+
 # delivery_runs.code is String(20); a longer trip code cannot be stored.
 RUN_CODE_MAX = 20
 
@@ -627,6 +744,10 @@ DISPATCHER_EVENT_TITLES = {
     "run_released": "Ready to depart",
     "run_release_undone": "Ready undone",
     "gated_out": "Gated out",
+    "driver_at_dock": "Truck at dock",
+    "dock_changed": "Dock changed",
+    "run_picked": "Loader picked run",
+    "run_unpicked": "Loader put run back",
 }
 
 # The timeline dot colour the dialog maps: error = red, warning = amber, ok = green.
@@ -779,6 +900,7 @@ class LoaderService:
             **LoaderService.release_fields(run),
             current_plan_version=run.current_plan_version,
             dock=run.dock.name,
+            **LoaderService.pick_fields(run),
             vehicle=vehicle,
             capacity=schemas.CapacityRead(
                 loaded_weight_kg=run.loaded_weight_kg,
@@ -867,7 +989,7 @@ class LoaderService:
 
     @staticmethod
     def dock_plan_updated_at(
-        db: Session, dock: Dock, run_ids: Optional[List[int]] = None
+        db: Session, dock: Optional[Dock], run_ids: Optional[List[int]] = None
     ) -> Optional[datetime]:
         """The latest plan publish across a dock - plan_updated_at on the summary
         (L3), "Plan from Dispatcher · updated 02:14" on the queue strip.
@@ -879,11 +1001,10 @@ class LoaderService:
         query = (
             select(func.max(PlanRevision.published_at))
             .join(DeliveryRun, PlanRevision.run_id == DeliveryRun.id)
-            .where(
-                DeliveryRun.dock_id == dock.id,
-                PlanRevision.version == DeliveryRun.current_plan_version,
-            )
+            .where(PlanRevision.version == DeliveryRun.current_plan_version)
         )
+        if dock is not None:
+            query = query.where(DeliveryRun.dock_id == dock.id)
         if run_ids is not None:
             query = query.where(DeliveryRun.id.in_(run_ids))
         return db.execute(query).scalar()
@@ -1238,32 +1359,31 @@ class LoaderService:
     @staticmethod
     def list_dock_activity(
         db: Session,
-        dock: Dock,
+        session: LoaderSession,
+        dock: Optional[Dock] = None,
         run_code: Optional[str] = None,
         limit: int = 100,
     ) -> List[schemas.ActivityRead]:
-        """Everything that happened at one dock, NEWEST first.
+        """Everything that happened at the depot's docks (or one), NEWEST first.
 
         This is a feed rather than a timeline - the loader coming back to the Log
-        tab wants the most recent thing at the top, across every run on the dock.
+        tab wants the most recent thing at the top, across every run.
         That is the opposite of the per-run timeline above, deliberately.
 
         `run_code` narrows the feed to one run without changing the ordering.
+        Runs still awaiting their truck are left out, like the queue.
         """
-        query = (
-            select(LoaderActivity)
-            .join(DeliveryRun, LoaderActivity.run_id == DeliveryRun.id)
-            .where(DeliveryRun.dock_id == dock.id)
+        depot_runs = (
+            select(DeliveryRun.id)
+            .join(Dock, DeliveryRun.dock_id == Dock.id)
+            .where(Dock.depot == session.loader_user.depot, DeliveryRun.arrived_at.is_not(None))
         )
+        if dock is not None:
+            depot_runs = depot_runs.where(DeliveryRun.dock_id == dock.id)
+        query = select(LoaderActivity).where(LoaderActivity.run_id.in_(depot_runs))
 
         if run_code is not None:
-            run = LoaderService.get_run(db, run_code)
-            if run.dock_id != dock.id:
-                raise NotFoundError(
-                    f"Run '{run_code}' is not at {dock.name}.",
-                    entity="DeliveryRun",
-                    entity_id=run_code,
-                )
+            run = LoaderService.loader_run(db, run_code, session)
             query = query.where(LoaderActivity.run_id == run.id)
 
         rows = db.execute(
@@ -1272,7 +1392,7 @@ class LoaderService:
         feed = [LoaderService._to_activity_read(row) for row in rows]
         runs = db.execute(
             select(DeliveryRun).where(
-                DeliveryRun.dock_id == dock.id,
+                DeliveryRun.id.in_(depot_runs),
                 DeliveryRun.status == RunStatus.GATED_OUT,
                 *([DeliveryRun.code == run_code] if run_code is not None else []),
             )
@@ -1286,14 +1406,351 @@ class LoaderService:
         feed.sort(key=lambda e: _naive_utc(e.at), reverse=True)
         return feed[:limit]
 
+    # --- depot scope, the pick lock and truck arrival -------------------------
+    #
+    # A loader belongs to a depot (loader_users.depot) and sees every dock of
+    # it. A run is built when the dispatcher dispatches the trip, but stays out
+    # of the queue until the driver taps "Arrived at dock" (arrived_at). One
+    # loader picks a run and only they can work it while their session is live.
+
+    @staticmethod
+    def loader_depot(user: LoaderUser) -> Depot:
+        if user.depot is None:
+            raise LoaderNoDepotError(user)
+        return user.depot
+
+    @staticmethod
+    def open_session(db: Session, session_id: int) -> LoaderSession:
+        """The tablet's session for a read: it must still be open. Marks it
+        seen, which keeps any run it has picked locked."""
+        session = db.get(LoaderSession, session_id)
+        if session is None:
+            raise NotFoundError(
+                f"Loader session {session_id} not found.", entity="LoaderSession", entity_id=session_id
+            )
+        if session.ended_at is not None:
+            raise LoaderSessionEndedError(session)
+        LoaderService.loader_depot(session.loader_user)
+        session.last_seen_at = _naive_utc(datetime.now(timezone.utc))
+        return session
+
+    @staticmethod
+    def run_depot(run: DeliveryRun) -> Depot:
+        return run.dock.depot
+
+    @staticmethod
+    def loader_run(db: Session, code: str, session: LoaderSession) -> DeliveryRun:
+        """A run as a loader may see it: at their depot and its truck arrived.
+        Anything else is a 404, so other depots' runs are not revealed."""
+        run = db.execute(select(DeliveryRun).filter_by(code=code)).scalars().first()
+        if (
+            run is None
+            or LoaderService.run_depot(run) != session.loader_user.depot
+            or run.arrived_at is None
+        ):
+            raise NotFoundError(f"Run '{code}' not found.", entity="DeliveryRun", entity_id=code)
+        return run
+
+    @staticmethod
+    def require_open(db: Session, run: DeliveryRun, session: LoaderSession) -> None:
+        """Opening the checklist: refused while another loader holds the run."""
+        holder = LoaderService.pick_holder(run)
+        if holder is not None and holder.loader_user_id != session.loader_user_id:
+            raise RunPickedByOtherError(run, holder)
+
+    @staticmethod
+    def pick_holder(run: DeliveryRun, now: Optional[datetime] = None) -> Optional[LoaderSession]:
+        """The session holding the run's pick lock, or None when it is free:
+        never picked, put back, signed out, or not seen for PICK_LIVE_MINUTES."""
+        session = run.picked_session
+        if session is None or session.ended_at is not None:
+            return None
+        now = _naive_utc(now or datetime.now(timezone.utc))
+        if now - _naive_utc(session.last_seen_at) > timedelta(minutes=PICK_LIVE_MINUTES):
+            return None
+        return session
+
+    @staticmethod
+    def _require_pick(db: Session, run: DeliveryRun, session_id: int) -> LoaderUser:
+        """Every tablet write, after its replay check: only the loader who
+        picked the run may change it. Returns that loader.
+
+        - Held by another loader's live session: 409 RUN_PICKED_BY_OTHER.
+        - Free (the holder signed out or went quiet): only the loader who
+          picked it last, so their offline taps still sync after an idle
+          sign-out; anyone else gets 409 RUN_NOT_PICKED. That loader does not
+          lock it again by syncing - a pick does that.
+        A run at another depot, or not yet at a dock, is a 404.
+        """
+        session = db.get(LoaderSession, session_id)
+        if session is None:
+            raise NotFoundError(
+                f"Loader session {session_id} not found.", entity="LoaderSession", entity_id=session_id
+            )
+        user = session.loader_user
+        if LoaderService.run_depot(run) != user.depot or run.arrived_at is None:
+            raise NotFoundError(f"Run '{run.code}' not found.", entity="DeliveryRun", entity_id=run.code)
+        holder = LoaderService.pick_holder(run)
+        if holder is not None:
+            if holder.loader_user_id != user.id:
+                raise RunPickedByOtherError(run, holder)
+        elif run.picked_by_id != user.id:
+            raise RunNotPickedError(run)
+        if session.ended_at is None:
+            session.last_seen_at = _naive_utc(datetime.now(timezone.utc))
+        return user
+
+    @staticmethod
+    def pick_run(db: Session, code: str, session_id: int) -> DeliveryRun:
+        """POST /loader/runs/{code}/pick: take the run. Idempotent for the
+        holder; a loader signing back in takes over their own pick."""
+        session = LoaderService.open_session(db, session_id)
+        run = LoaderService.loader_run(db, code, session)
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+        if run.status == RunStatus.GATED_OUT:
+            raise InvalidStateTransitionError(
+                f"{run.code} is through the gate; it is the Driver's now.",
+                current_state=run.status.value, target_state="picked", entity="DeliveryRun",
+            )
+        holder = LoaderService.pick_holder(run)
+        user = session.loader_user
+        if holder is not None and holder.loader_user_id != user.id:
+            raise RunPickedByOtherError(run, holder)
+        if run.picked_session_id == session.id:
+            return run
+        now = datetime.now(timezone.utc)
+        newly = holder is None or run.picked_by_id != user.id
+        # The objects, not the ids, so run.picked_session is current in this request.
+        run.picked_by = user
+        run.picked_session = session
+        run.picked_at = _naive_utc(now)
+        if newly:
+            LoaderService.log(
+                db, run, at=now, actor_kind=ActorKind.LOADER, event_type="run_picked",
+                actor_id=user.id, message=f"Picked {run.code} · {user.full_name}",
+            )
+        db.flush()
+        return run
+
+    @staticmethod
+    def unpick_run(db: Session, code: str, session_id: int) -> DeliveryRun:
+        """POST /loader/runs/{code}/unpick: put the run back for anyone to
+        pick. A no-op on a free run; 409 while another loader holds it."""
+        session = LoaderService.open_session(db, session_id)
+        run = LoaderService.loader_run(db, code, session)
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+        holder = LoaderService.pick_holder(run)
+        user = session.loader_user
+        if holder is None:
+            if run.picked_by_id == user.id:
+                run.picked_by = None
+                run.picked_session = None
+            return run
+        if holder.loader_user_id != user.id:
+            raise RunPickedByOtherError(run, holder)
+        run.picked_by = None
+        run.picked_session = None
+        LoaderService.log(
+            db, run, at=datetime.now(timezone.utc), actor_kind=ActorKind.LOADER,
+            event_type="run_unpicked", actor_id=user.id,
+            message=f"Put {run.code} back · {user.full_name}",
+        )
+        db.flush()
+        return run
+
+    @staticmethod
+    def stage(run: DeliveryRun) -> str:
+        """awaiting_truck -> at_dock -> loading -> ready -> gated_out."""
+        if run.status == RunStatus.GATED_OUT:
+            return STAGE_GATED_OUT
+        if run.status == RunStatus.READY_TO_DEPART:
+            return STAGE_READY
+        if run.arrived_at is None:
+            return STAGE_AWAITING_TRUCK
+        if run.status in LOADING_RUN_STATES or LoaderService.pick_holder(run) is not None:
+            return STAGE_LOADING
+        return STAGE_AT_DOCK
+
+    @staticmethod
+    def pick_fields(run: DeliveryRun, viewer: Optional[LoaderSession] = None) -> dict:
+        """stage, arrival and who holds the run, as the card, the checklist and
+        the dispatcher read them. picked_by is only set while the lock is live."""
+        holder = LoaderService.pick_holder(run)
+        fields = {
+            "stage": LoaderService.stage(run),
+            "arrived_at": run.arrived_at,
+            "picked_by": holder.loader_user.short_name if holder else None,
+            "picked_at": run.picked_at if holder else None,
+        }
+        if viewer is not None:
+            fields["picked_by_me"] = holder is not None and holder.loader_user_id == viewer.loader_user_id
+        return fields
+
+    @staticmethod
+    def list_docks(db: Session, depot: Depot) -> List[Dock]:
+        return list(
+            db.execute(select(Dock).filter_by(depot=depot).order_by(Dock.code)).scalars()
+        )
+
+    @staticmethod
+    def _trip_driver(db: Session, trip: Optional[DispatchTrip], run: DeliveryRun) -> Optional[DriverProfile]:
+        """The trip's driver; with none named, the driver assigned to the
+        vehicle (the same fallback the driver app uses to find its trips)."""
+        if trip is not None and trip.driver_id is not None:
+            return db.get(DriverProfile, trip.driver_id)
+        return db.execute(
+            select(DriverProfile).filter_by(assigned_vehicle_id=run.vehicle_id).order_by(DriverProfile.id)
+        ).scalars().first()
+
+    @staticmethod
+    def mark_arrived(
+        db: Session,
+        trip: DispatchTrip,
+        driver: User,
+        dock_code: str,
+        arrived_at: Optional[datetime] = None,
+    ) -> Tuple[DeliveryRun, bool]:
+        """POST /loader/dispatch-trips/{id}/arrived: the driver is at the dock.
+
+        Only marks the truck as arrived (time + dock) and makes the run
+        visible in the loader queue; the run's orders came from the dispatcher
+        already. Returns (run, replayed). The first arrival wins: a repeat,
+        even naming another dock, returns the run unchanged. A dock other than
+        the planned one at the same depot moves the run there; another depot's
+        dock is 422 DOCK_NOT_AT_DEPOT. Only the trip's driver: else 403.
+        """
+        run = LoaderService.require_run_for_dispatch_trip(db, trip.id)
+        profile = db.execute(select(DriverProfile).filter_by(user_id=driver.id)).scalars().first()
+        expected = LoaderService._trip_driver(db, trip, run)
+        if profile is None or expected is None or expected.id != profile.id:
+            raise AuthorizationError(f"Only the driver of {run.code} can say the truck has arrived.")
+        dock = LoaderService.resolve_dock(db, dock_code)
+        depot = LoaderService.run_depot(run)
+        if dock.depot != depot:
+            raise DockNotAtDepotError(dock, depot)
+
+        db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
+        if run.arrived_at is not None or run.status == RunStatus.GATED_OUT:
+            return run, True
+
+        now = datetime.now(timezone.utc)
+        tapped = min(_naive_utc(arrived_at), _naive_utc(now)) if arrived_at else _naive_utc(now)
+        planned = run.dock
+        driver_name = driver.full_name or "Driver"
+        # The same line the driver app's at-dock writes, so the log, the
+        # driver's at_dock_at and the dispatcher read one entry per arrival.
+        message = f"Driver at {dock.name} · {driver_name}"
+        if dock.id != planned.id:
+            message += f" (planned {planned.name})"
+            run.dock_id = dock.id
+        run.arrived_at = tapped
+        run.arrived_dock_id = dock.id
+        LoaderService.log(
+            db, run, at=tapped, actor_kind=ActorKind.SYSTEM, event_type=DRIVER_AT_DOCK_EVENT,
+            actor_label=driver_name, message=message,
+        )
+        trip.loading_events = [
+            *(trip.loading_events or []),
+            {"event": "Truck at dock", "time": _depot_hhmm(tapped), "note": message, "status": "ok"},
+        ]
+        trip.updated_at = now
+        db.flush()
+        db.refresh(run)
+        return run, False
+
+    @staticmethod
+    def change_dock(db: Session, trip: DispatchTrip, dock_code: str) -> DeliveryRun:
+        """POST /loader/dispatch-trips/{id}/dock: the dispatcher moves the run
+        to another dock of its depot. Only before the truck arrives (409
+        TRUCK_ALREADY_ARRIVED after); the same dock is a no-op."""
+        run = LoaderService.require_run_for_dispatch_trip(db, trip.id)
+        dock = LoaderService.resolve_dock(db, dock_code)
+        depot = LoaderService.run_depot(run)
+        if dock.depot != depot:
+            raise DockNotAtDepotError(dock, depot)
+        if run.arrived_at is not None or run.status == RunStatus.GATED_OUT:
+            raise TruckAlreadyArrivedError(run)
+        if dock.id == run.dock_id:
+            return run
+        old = run.dock.name
+        run.dock_id = dock.id
+        now = datetime.now(timezone.utc)
+        LoaderService.log(
+            db, run, at=now, actor_kind=ActorKind.DISPATCHER, event_type="dock_changed",
+            actor_label="Dispatcher", message=f"Dock changed: {old} -> {dock.name}",
+        )
+        db.flush()
+        db.refresh(run)
+        return run
+
+    # --- release notification ---------------------------------------------
+
+    @staticmethod
+    def notify_due_releases(db: Session, now: Optional[datetime] = None) -> List[DeliveryRun]:
+        """Tell the driver and the depot's dispatcher about each release that
+        can no longer be undone (10 s + 2 s), once. An undone release has no
+        released_at, so it sends nothing; a reopen clears release_notified_at,
+        so the next release is told again. No worker: called on the loader,
+        dispatcher and notification reads. Nothing is committed here."""
+        now = now or datetime.now(timezone.utc)
+        cutoff = _naive_utc(now) - timedelta(seconds=UNDO_WINDOW_SECONDS + UNDO_GRACE_SECONDS)
+        runs = db.execute(
+            select(DeliveryRun).where(
+                DeliveryRun.status.in_(CLOSED_RUN_STATES),
+                DeliveryRun.released_at.is_not(None),
+                DeliveryRun.released_at < cutoff,
+                DeliveryRun.release_notified_at.is_(None),
+            ).order_by(DeliveryRun.released_at)
+        ).scalars().all()
+        for run in runs:
+            LoaderService._send_release_notifications(db, run)
+            run.release_notified_at = _naive_utc(now)
+        if runs:
+            db.flush()
+        return list(runs)
+
+    @staticmethod
+    def _send_release_notifications(db: Session, run: DeliveryRun) -> None:
+        from app.services.notification_service import notification_service
+
+        rows = [row for stop in LoaderService.current_stops(db, run) for row in stop.orders
+                if row.state not in OFF_PLAN_STATES]
+        total = len(rows)
+        on_truck = sum(1 for row in rows if row.state in ON_TRUCK_STATES)
+        short = sum(1 for row in rows if row.state == RunOrderState.FLAGGED)
+        who = run.released_by.short_name if run.released_by else "the loader"
+        at = _depot_hhmm(run.released_at)
+        dock = run.dock.name
+        trip = db.get(DispatchTrip, run.dispatch_trip_id) if run.dispatch_trip_id else None
+        meta = {"dispatch_trip_id": run.dispatch_trip_id}
+
+        driver = LoaderService._trip_driver(db, trip, run) if trip is not None else None
+        if driver is not None:
+            notification_service.send_to_driver(db, driver.user_id, NotificationType.RUN_RELEASED, {
+                **meta,
+                "title": f"{run.code} is ready at {dock}",
+                "message": (
+                    f"Loaded by {who} at {at} · {on_truck} of {total} orders. "
+                    "Start the trip when you're ready."
+                ),
+            })
+        shortfalls = f" · {short} shortfall{'s' if short != 1 else ''}" if short else ""
+        notification_service.send_to_depot_dispatcher(
+            db, LoaderService.run_depot(run), NotificationType.RUN_RELEASED, {
+                **meta,
+                "title": f"{run.code} · {run.vehicle.code} released at {dock}",
+                "message": f"{who} at {at} · {on_truck} of {total} orders{shortfalls}.",
+            },
+        )
+
     # --- L2 sign-in: users and sessions ------------------------------------
 
     @staticmethod
-    def list_users(db: Session, q: Optional[str] = None) -> List[LoaderUser]:
-        """Active loaders for the sign-in tiles, by full name. `q` matches the
-        full or short name anywhere, case-insensitive. Not filtered by depot:
-        the tablet sends no dock, and loader_users only has an optional home dock."""
-        query = select(LoaderUser).where(LoaderUser.is_active.is_(True))
+    def list_users(db: Session, depot: Depot, q: Optional[str] = None) -> List[LoaderUser]:
+        """Active loaders of the depot being signed into, for the sign-in
+        tiles, by full name. `q` matches the full or short name anywhere,
+        case-insensitive."""
+        query = select(LoaderUser).where(LoaderUser.is_active.is_(True), LoaderUser.depot == depot)
         needle = (q or "").strip()
         if needle:
             like = f"%{needle}%"
@@ -1302,25 +1759,40 @@ class LoaderService:
 
     @staticmethod
     def start_session(db: Session, payload: schemas.SessionRequest) -> LoaderSession:
-        """Sign a loader in on a registered tablet.
+        """Sign a loader in at their depot.
 
-        The tablet decides the dock, so an unknown or retired tablet is a 404.
-        An unknown or inactive loader gets the same answer as a wrong PIN, so
-        the endpoint does not reveal which ids exist. Other sessions on the
-        tablet are left alone: the tablet ends the old one itself.
+        The loader's depot decides what they see (every dock of it). A
+        loader with no depot is 403 LOADER_NO_DEPOT; signing in at another
+        depot than theirs is 403 LOADER_OTHER_DEPOT. An unknown or inactive
+        loader gets the same answer as a wrong PIN, so the endpoint does not
+        reveal which ids exist. A tablet label is optional now; when sent it
+        must be a registered tablet (404 otherwise) and is recorded. Other
+        sessions on the tablet are left alone: the tablet ends the old one.
         """
-        label = payload.dock_tablet_label.strip()
-        tablet = db.execute(
-            select(DockTablet).where(DockTablet.label == label, DockTablet.is_active.is_(True))
-        ).scalars().first()
-        if tablet is None:
-            raise NotFoundError(
-                f"Dock tablet '{label}' is not registered.", entity="DockTablet", entity_id=label
-            )
+        tablet = None
+        label = (payload.dock_tablet_label or "").strip()
+        if label:
+            tablet = db.execute(
+                select(DockTablet).where(DockTablet.label == label, DockTablet.is_active.is_(True))
+            ).scalars().first()
+            if tablet is None:
+                raise NotFoundError(
+                    f"Dock tablet '{label}' is not registered.", entity="DockTablet", entity_id=label
+                )
         user = db.get(LoaderUser, payload.loader_user_id)
         if user is None or not user.is_active or not verify_password(payload.pin, user.pin_hash):
             raise IncorrectPinError()
-        session = LoaderSession(loader_user_id=user.id, dock_tablet_id=tablet.id)
+        depot = LoaderService.loader_depot(user)
+        if payload.depot is not None and payload.depot != depot:
+            raise LoaderOtherDepotError(user, payload.depot)
+        # Naive UTC, like the columns: the pick lock's 11 minutes are measured from last_seen_at.
+        now = _naive_utc(datetime.now(timezone.utc))
+        session = LoaderSession(
+            loader_user_id=user.id,
+            dock_tablet_id=tablet.id if tablet else None,
+            started_at=now,
+            last_seen_at=now,
+        )
         db.add(session)
         db.flush()
         return session
@@ -1339,19 +1811,21 @@ class LoaderService:
         if session.ended_at is None:
             session.ended_at = datetime.now(timezone.utc)
             session.end_reason = payload.end_reason
+            # The lock lifts with the session. picked_by_id stays, so this
+            # loader's offline taps still sync while nobody else has picked it.
+            for run in db.execute(select(DeliveryRun).filter_by(picked_session_id=session.id)).scalars():
+                run.picked_session = None
             db.flush()
         return session
 
     @staticmethod
     def session_read(session: LoaderSession) -> schemas.LoaderSessionRead:
-        dock = session.dock_tablet.dock
+        user = session.loader_user
         return schemas.LoaderSessionRead(
             session_id=session.id,
-            loader=schemas.SessionLoaderRead(
-                id=session.loader_user.id, short_name=session.loader_user.short_name
-            ),
-            dock=dock.name,
-            depot=dock.depot.value,
+            loader=schemas.SessionLoaderRead(id=user.id, short_name=user.short_name),
+            dock=None,
+            depot=user.depot.value if user.depot else "",
             started_at=session.started_at,
             ended_at=session.ended_at,
             end_reason=session.end_reason,
@@ -1360,39 +1834,60 @@ class LoaderService:
     # --- L3 queue and summary ---------------------------------------------
 
     @staticmethod
-    def queue_runs(db: Session, dock: Dock, brand: Optional[Brand] = None) -> List[DeliveryRun]:
-        """The dock's runs, by departure. Gated-out runs have left the dock and
-        drop off (they are the driver's now). Not narrowed to one day: the queue
-        is whatever the dock still has to load or hand over."""
-        query = select(DeliveryRun).where(
-            DeliveryRun.dock_id == dock.id, DeliveryRun.status != RunStatus.GATED_OUT
+    def queue_runs(
+        db: Session, depot: Depot, dock: Optional[Dock] = None, brand: Optional[Brand] = None
+    ) -> List[DeliveryRun]:
+        """The depot's runs whose truck is at a dock, by dock then arrival.
+        Runs still awaiting their truck are hidden; gated-out runs have left
+        (they are the driver's now). Not narrowed to one day: the queue is
+        whatever the depot still has to load or hand over."""
+        query = (
+            select(DeliveryRun)
+            .join(Dock, DeliveryRun.dock_id == Dock.id)
+            .where(
+                Dock.depot == depot,
+                DeliveryRun.arrived_at.is_not(None),
+                DeliveryRun.status != RunStatus.GATED_OUT,
+            )
         )
+        if dock is not None:
+            query = query.where(DeliveryRun.dock_id == dock.id)
         if brand is not None:
             query = query.where(DeliveryRun.brand == brand)
-        return list(db.execute(query.order_by(DeliveryRun.departs_at, DeliveryRun.code)).scalars())
+        return list(db.execute(
+            query.order_by(Dock.code, DeliveryRun.arrived_at, DeliveryRun.departs_at, DeliveryRun.code)
+        ).scalars())
 
     @staticmethod
-    def build_queue(db: Session, dock: Dock, brand: Optional[Brand] = None) -> schemas.RunQueueRead:
-        """GET /loader/runs: cards grouped by brand and wave ("Fresh · night
-        wave"), groups in order of their first departure."""
-        groups: Dict[Tuple[Brand, str], schemas.RunGroupRead] = {}
-        for run in LoaderService.queue_runs(db, dock, brand):
-            wave = run.wave or "day"
-            key = (run.brand, wave)
-            if key not in groups:
-                groups[key] = schemas.RunGroupRead(
-                    label=f"{BRAND_LABELS[run.brand]} · {wave} wave", brand=run.brand, wave=wave, runs=[]
-                )
-            groups[key].runs.append(LoaderService.run_card(db, run))
-        return schemas.RunQueueRead(groups=list(groups.values()))
+    def build_queue(
+        db: Session,
+        session: LoaderSession,
+        dock: Optional[Dock] = None,
+        brand: Optional[Brand] = None,
+    ) -> schemas.RunQueueRead:
+        """GET /loader/runs: every dock of the loader's depot (or the one
+        asked for), each with its arrived runs in arrival order. Docks with no
+        truck are listed too, so the tablet can say so."""
+        depot = session.loader_user.depot
+        docks = [dock] if dock is not None else LoaderService.list_docks(db, depot)
+        groups = {
+            d.id: schemas.DockQueueRead(dock=d.name, dock_code=d.code, runs=[]) for d in docks
+        }
+        for run in LoaderService.queue_runs(db, depot, dock, brand):
+            groups[run.dock_id].runs.append(LoaderService.run_card(db, run, session))
+        return schemas.RunQueueRead(depot=depot.value, docks=list(groups.values()))
 
     @staticmethod
-    def run_card(db: Session, run: DeliveryRun) -> schemas.RunSummaryRead:
+    def run_card(
+        db: Session, run: DeliveryRun, viewer: Optional[LoaderSession] = None
+    ) -> schemas.RunSummaryRead:
         """One queue card. Counts, release fields and the plan alert come from
         the run read itself, so the card and the checklist never disagree."""
         detail = LoaderService.build_run_detail(db, run)
         return schemas.RunSummaryRead(
             code=run.code,
+            dock=run.dock.name,
+            **LoaderService.pick_fields(run, viewer),
             vehicle_code=detail.vehicle.code,
             vehicle_type=detail.vehicle.vehicle_type,
             temp_capability=detail.vehicle.temp_capability,
@@ -1416,8 +1911,12 @@ class LoaderService:
 
     @staticmethod
     def _run_loader(db: Session, run: DeliveryRun) -> Optional[str]:
-        """Who is on the run: the loader of its latest logged action, else who
-        released it, else who checked an order last."""
+        """Who is on the run: the loader holding it, else the loader of its
+        latest logged action, else who released it, else who checked an
+        order last."""
+        holder = LoaderService.pick_holder(run)
+        if holder is not None:
+            return holder.loader_user.short_name
         latest = db.execute(
             select(LoaderActivity)
             .where(
@@ -1460,10 +1959,16 @@ class LoaderService:
     def _run_alert(
         db: Session, run: DeliveryRun, detail: schemas.RunDetailRead
     ) -> Optional[schemas.RunAlertRead]:
-        """The card's alert row, most urgent first: an unread plan (the same
-        wording as the frontend's planChangeAlert), a flag waiting on the
-        dispatcher, then signed off. The tablet replaces the plan alert with its
-        own while it has taps waiting to sync."""
+        """The card's alert row, most urgent first: a driver waiting at the
+        dock with nobody on the run (no action: the card's Pick button is the
+        way in), an unread plan (the same wording as the frontend's
+        planChangeAlert), a flag waiting on the dispatcher, then signed off.
+        Once a loader picks the run the others take over. The tablet replaces
+        the plan alert with its own while it has taps waiting to sync."""
+        if LoaderService.stage(run) == STAGE_AT_DOCK:
+            return schemas.RunAlertRead(
+                tone="warning", message=f"Driver waiting at {run.dock.name} · {_depot_hhmm(run.arrived_at)}"
+            )
         href = f"/loader/runs/{quote(run.code)}"
         to = detail.unacknowledged_plan_version
         if to is not None:
@@ -1520,15 +2025,19 @@ class LoaderService:
         )
 
     @staticmethod
-    def build_summary(db: Session, dock: Dock) -> schemas.QueueSummaryRead:
+    def build_summary(
+        db: Session, session: LoaderSession, dock: Optional[Dock] = None
+    ) -> schemas.QueueSummaryRead:
         """GET /loader/summary: the queue's metric cards, counted from the same
-        runs and cards as GET /loader/runs so the two agree.
+        runs and cards as GET /loader/runs so the two agree - depot-wide, or
+        one dock when asked.
 
         The day is the depot date of the first departure (a night wave leaving
-        03:30 belongs to that date), or today when the dock has no runs.
+        03:30 belongs to that date), or today when no truck is in.
         """
-        runs = LoaderService.queue_runs(db, dock)
-        cards = [LoaderService.run_card(db, run) for run in runs]
+        depot = session.loader_user.depot
+        runs = LoaderService.queue_runs(db, depot, dock)
+        cards = [LoaderService.run_card(db, run, session) for run in runs]
         day = _depot_date(runs[0].departs_at if runs else datetime.now(timezone.utc))
 
         holiday = db.execute(
@@ -1537,17 +2046,20 @@ class LoaderService:
             .order_by(CalendarDay.date)
         ).scalars().first()
 
-        loading = [c for c in cards if c.status in LOADING_RUN_STATES]
+        loading = [c for c in cards if c.stage == STAGE_LOADING]
         loaders: List[str] = []
         for card in loading:
-            first = card.loader.split(" ")[0] if card.loader else None
+            name = card.picked_by or card.loader
+            first = name.split(" ")[0] if name else None
             if first and first not in loaders:
                 loaders.append(first)
         waiting = LoaderService._waiting_issues(db, [run.id for run in runs])
         ready = [c.code for c in cards if c.status == RunStatus.READY_TO_DEPART]
 
         return schemas.QueueSummaryRead(
-            dock=dock.name,
+            depot=depot.value,
+            dock=dock.name if dock is not None else None,
+            dock_count=1 if dock is not None else len(LoaderService.list_docks(db, depot)),
             date=day,
             day_label=_day_label(day),
             next_holiday=(
@@ -1564,7 +2076,7 @@ class LoaderService:
             ),
             ready=schemas.ReadyCountRead(count=len(ready), run_codes=ready),
             plan_updated_at=(
-                LoaderService.dock_plan_updated_at(db, dock, [run.id for run in runs]) if runs else None
+                LoaderService.dock_plan_updated_at(db, None, [run.id for run in runs]) if runs else None
             ),
         )
 
@@ -1586,6 +2098,7 @@ class LoaderService:
             return replay
 
         run = LoaderService.get_run(db, payload.run_code)
+        LoaderService._require_pick(db, run, payload.loader_session_id)
         if payload.plan_version != run.current_plan_version:
             raise StalePlanVersionError(run, payload.plan_version)
         db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
@@ -1694,21 +2207,25 @@ class LoaderService:
         return issue
 
     @staticmethod
-    def list_issues(db: Session, dock: Dock, run_code: Optional[str] = None) -> List[LoaderIssue]:
-        """GET /loader/issues (L5, the Issues tab): every issue on the dock's
-        runs, newest first, whatever its status. `run_code` narrows it to one
-        run; a run at another dock is a 404, as on the dock-wide activity feed."""
+    def list_issues(
+        db: Session,
+        session: LoaderSession,
+        dock: Optional[Dock] = None,
+        run_code: Optional[str] = None,
+    ) -> List[LoaderIssue]:
+        """GET /loader/issues (L5, the Issues tab): every issue on the depot's
+        runs (or one dock's), newest first, whatever its status. `run_code`
+        narrows it to one run; a run at another depot is a 404."""
         query = (
             select(LoaderIssue)
             .join(DeliveryRun, LoaderIssue.run_id == DeliveryRun.id)
-            .where(DeliveryRun.dock_id == dock.id)
+            .join(Dock, DeliveryRun.dock_id == Dock.id)
+            .where(Dock.depot == session.loader_user.depot)
         )
+        if dock is not None:
+            query = query.where(DeliveryRun.dock_id == dock.id)
         if run_code is not None:
-            run = LoaderService.get_run(db, run_code)
-            if run.dock_id != dock.id:
-                raise NotFoundError(
-                    f"Run '{run_code}' is not at {dock.name}.", entity="DeliveryRun", entity_id=run_code
-                )
+            run = LoaderService.loader_run(db, run_code, session)
             query = query.where(LoaderIssue.run_id == run.id)
         return list(
             db.execute(query.order_by(LoaderIssue.reported_at.desc(), LoaderIssue.id.desc())).scalars()
@@ -1730,6 +2247,7 @@ class LoaderService:
         action_id = str(payload.client_action_id)
         if LoaderService._release_replay(db, run, ReleaseAction.RELEASE, action_id):
             return run
+        LoaderService._require_pick(db, run, payload.loader_session_id)
         if payload.plan_version != run.current_plan_version:
             raise StalePlanVersionError(run, payload.plan_version)
         db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
@@ -1767,6 +2285,7 @@ class LoaderService:
         action_id = str(payload.client_action_id)
         if LoaderService._release_replay(db, run, ReleaseAction.UNDO, action_id):
             return run
+        LoaderService._require_pick(db, run, payload.loader_session_id)
         if payload.plan_version != run.current_plan_version:
             raise StalePlanVersionError(run, payload.plan_version)
         db.execute(select(DeliveryRun.id).where(DeliveryRun.id == run.id).with_for_update())
@@ -1785,6 +2304,7 @@ class LoaderService:
     def _set_released(
         run: DeliveryRun, actor: Optional[LoaderUser], at: Optional[datetime]
     ) -> None:
+        run.release_notified_at = None
         if at is None:
             run.status = RunStatus.LOADED
             run.released_at = None
@@ -1878,6 +2398,7 @@ class LoaderService:
         if LoaderService._is_replay(db, run, order_number, action, action_id):
             return run
 
+        LoaderService._require_pick(db, run, payload.loader_session_id)
         if payload.plan_version != run.current_plan_version:
             raise StalePlanVersionError(run, payload.plan_version)
 
@@ -2075,6 +2596,7 @@ class LoaderService:
                 return run
             raise ClientActionIdReusedError(action_id, entity="PlanRevision")
 
+        LoaderService._require_pick(db, run, payload.loader_session_id)
         if version != run.current_plan_version:
             raise StalePlanVersionError(run, version)
 
@@ -2241,6 +2763,9 @@ class LoaderService:
             message=message,
         )
         db.add(entry)
+        if event_type == DRIVER_AT_DOCK_EVENT and run.arrived_at is None:
+            run.arrived_at = _naive_utc(at)
+            run.arrived_dock_id = run.dock_id
         return entry
 
     # --- publishing a plan ------------------------------------------------
@@ -2495,6 +3020,7 @@ class LoaderService:
         # can say "was Ready 01:48"; the next release overwrites it.
         if run.status == RunStatus.READY_TO_DEPART:
             run.status = RunStatus.LOADING
+            run.release_notified_at = None
             LoaderService.log(
                 db, run, at=now, actor_kind=ActorKind.SYSTEM,
                 event_type="load_reopened", actor_label="System",
@@ -2592,7 +3118,7 @@ class LoaderService:
         else:
             dock = LoaderService._dock_for(db, vehicle, dock_code)
             if dock is None:
-                where = f"dock {dock_code}" if dock_code else f"dock at {vehicle.depot_name}"
+                where = f"dock {dock_code} at {vehicle.depot_name}" if dock_code else f"dock at {vehicle.depot_name}"
                 violation("NO_DOCK", f"There is no {where} to load {vehicle.code}.")
 
         if len(trip.trip_code) > RUN_CODE_MAX:
@@ -2730,13 +3256,14 @@ class LoaderService:
 
     @staticmethod
     def _dock_for(db: Session, vehicle: Vehicle, dock_code: Optional[str]) -> Optional[Dock]:
-        """The named dock, or else the first dock (by code) at the vehicle's depot."""
-        if dock_code:
-            return db.execute(select(Dock).filter_by(code=dock_code)).scalars().first()
+        """The named dock, or else the first dock (by code) at the vehicle's
+        depot. A named dock at another depot counts as no dock."""
         try:
             depot = Depot((vehicle.depot_name or "").strip().lower())
         except ValueError:
             return None
+        if dock_code:
+            return db.execute(select(Dock).filter_by(code=dock_code, depot=depot)).scalars().first()
         return db.execute(
             select(Dock).filter_by(depot=depot).order_by(Dock.code)
         ).scalars().first()
@@ -3593,6 +4120,8 @@ class LoaderService:
             run_code=run.code,
             status=run.status,
             dock=run.dock.code,
+            dock_name=run.dock.name,
+            **LoaderService.pick_fields(run),
             departs_at=run.departs_at,
             plan_version=run.current_plan_version,
             plan_acknowledged=revision is None or revision.acknowledged_at is not None,

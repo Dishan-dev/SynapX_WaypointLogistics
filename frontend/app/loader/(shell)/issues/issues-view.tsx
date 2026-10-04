@@ -11,7 +11,7 @@ import { LoaderScreen } from "@/components/loader/loader-screen";
 import { useStoredSession } from "@/components/loader/loader-session";
 import { useLoaderSync } from "@/components/loader/loader-sync-provider";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatTime, ISSUE_TYPE_LABELS, isIssueWaiting, issueStatusLine } from "@/lib/loader/format";
+import { depotName, formatTime, ISSUE_TYPE_LABELS, isIssueWaiting, issueStatusLine } from "@/lib/loader/format";
 import {
   cachedIssues,
   loadIssues,
@@ -36,20 +36,20 @@ interface IssuesState {
   ready: boolean;
 }
 
-/** The dock's issues, refetched after each sync, on return to the tab and every 30 s. */
-function useIssues(dock: string | undefined): IssuesState {
+/** The depot's issues, refetched after each sync, on return to the tab and every 30 s. */
+function useIssues(depot: string | undefined): IssuesState {
   const { transport, sync } = useLoaderSync();
   const [state, setState] = React.useState<IssuesState>(() => ({
-    loaded: dock ? cachedIssues(dock) : undefined,
+    loaded: depot ? cachedIssues(depot) : undefined,
     local: [],
     ready: false,
   }));
 
   const refresh = React.useCallback(async () => {
-    if (!dock) return;
-    const [loaded, local] = await Promise.all([loadIssues(transport, dock), localFlags()]);
+    if (!depot) return;
+    const [loaded, local] = await Promise.all([loadIssues(transport, depot), localFlags()]);
     setState((s) => ({ loaded: loaded ?? s.loaded, local, ready: true }));
-  }, [transport, dock]);
+  }, [transport, depot]);
 
   React.useEffect(() => {
     const id = window.setTimeout(() => void refresh(), 0);
@@ -76,8 +76,8 @@ function useIssues(dock: string | undefined): IssuesState {
  * flags this tablet has not sent yet, and answered ones. Kept simple.
  */
 export function IssuesView() {
-  const dock = useStoredSession()?.session.dock;
-  const { loaded, local, ready } = useIssues(dock);
+  const depot = useStoredSession()?.session.depot;
+  const { loaded, local, ready } = useIssues(depot);
   const { dismissActions } = useLoaderSync();
   const issues = loaded?.issues ?? [];
   const waiting = issues.filter(isIssueWaiting);
@@ -89,7 +89,7 @@ export function IssuesView() {
         <header className="flex flex-col gap-2">
           <h2 className="text-2xl font-semibold text-primary">Issues</h2>
           <div className="flex flex-wrap items-center gap-1.5">
-            <p className="text-xs text-muted-foreground">Flags sent to the Dispatcher at {dock ?? "this dock"}.</p>
+            <p className="text-xs text-muted-foreground">Flags sent to the Dispatcher at {depot ? depotName(depot) : "this depot"}.</p>
             {loaded?.source === "cache" && (
               <InfoChip tone="warning" icon={<WifiOff />}>
                 Offline · as of {formatTime(loaded.fetchedAt)}

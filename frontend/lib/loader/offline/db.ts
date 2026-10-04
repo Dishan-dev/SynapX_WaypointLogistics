@@ -1,5 +1,5 @@
 // IndexedDB store for the loader tablet: the last copy of each open run, the
-// last queue per dock, the last activity log per run, and the outbox of writes
+// last queue per depot, the last activity log per run, and the outbox of writes
 // made while offline. Raw
 // IndexedDB, no dependency.
 
@@ -9,15 +9,17 @@ const DB_NAME = "waypoint-loader";
 // v2: runs keyed by "code" (API contract shapes); v1 data is dropped.
 // v3: adds the queue store; runs and the outbox are kept.
 // v4: adds the activity store; everything else is kept.
-const DB_VERSION = 4;
+// v5: the queue store is keyed by depot (loaders see every dock of it); the old
+//     per-dock copies are dropped, everything else is kept.
+const DB_VERSION = 5;
 const RUNS = "runs";
 const OUTBOX = "outbox";
 const QUEUE = "queue";
 const ACTIVITY = "activity";
 
-/** The last GET /loader/runs and /loader/summary this tablet saw for a dock. */
+/** The last GET /loader/runs and /loader/summary this tablet saw for a depot. */
 export interface CachedQueue {
-  dock: string;
+  depot: string;
   queue: RunQueue;
   summary: QueueSummary;
   fetched_at: string;
@@ -56,7 +58,8 @@ function openDb(): Promise<IDBDatabase> {
         const outbox = db.createObjectStore(OUTBOX, { keyPath: "client_action_id" });
         outbox.createIndex("created_at", "created_at");
       }
-      if (!db.objectStoreNames.contains(QUEUE)) db.createObjectStore(QUEUE, { keyPath: "dock" });
+      if (event.oldVersion < 5 && db.objectStoreNames.contains(QUEUE)) db.deleteObjectStore(QUEUE);
+      if (!db.objectStoreNames.contains(QUEUE)) db.createObjectStore(QUEUE, { keyPath: "depot" });
       if (!db.objectStoreNames.contains(ACTIVITY)) db.createObjectStore(ACTIVITY, { keyPath: "run_code" });
     };
     req.onsuccess = () => resolve(req.result);
@@ -85,8 +88,8 @@ export async function putCachedRun(run: Run): Promise<void> {
 
 // ---- Queue -------------------------------------------------------------
 
-export async function getCachedQueue(dock: string): Promise<CachedQueue | undefined> {
-  return request((await store(QUEUE, "readonly")).get(dock));
+export async function getCachedQueue(depot: string): Promise<CachedQueue | undefined> {
+  return request((await store(QUEUE, "readonly")).get(depot));
 }
 
 export async function putCachedQueue(entry: CachedQueue): Promise<void> {

@@ -489,7 +489,7 @@ def test_gate_out_locks_the_run(loader_client, trip_setup):
     assert loader_client.get(f"{BASE}/dispatch-trips/{trip.id}/handoff").json()["status"] == "gated_out"
     # Off the dock's queue.
     queue = loader_client.get(f"{BASE}/runs", params={"dock": "DOCK3"}).json()
-    assert run.code not in [r["code"] for g in queue["groups"] for r in g["runs"]]
+    assert run.code not in [r["code"] for d in queue["docks"] for r in d["runs"]]
 
 
 def test_trips_without_a_loader_run_are_404(loader_client, trip_setup):

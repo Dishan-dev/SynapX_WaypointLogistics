@@ -31,7 +31,7 @@ const ACTION_LABEL: Record<Exclude<SessionEndReason, "idle_timeout">, string> = 
  * the tablet and are sent later under this loader's session.
  */
 export function MoreView() {
-  const { user, dockLabel } = useLoaderShell();
+  const { user, depotLabel } = useLoaderShell();
   const { sync } = useLoaderSync();
   const signOut = useSignOut();
   const [confirm, setConfirm] = React.useState<keyof typeof ACTION_LABEL>();
@@ -53,7 +53,7 @@ export function MoreView() {
           </span>
           <div className="min-w-0">
             <p className="truncate text-base font-semibold text-foreground">{user.name}</p>
-            <p className="truncate text-xs text-muted-foreground">Loader · {dockLabel}</p>
+            <p className="truncate text-xs text-muted-foreground">Loader · {depotLabel}</p>
           </div>
         </div>
 

@@ -6,7 +6,9 @@ from app.models.notification import NotificationCategory, NotificationType
 
 class NotificationRead(BaseModel):
     id: int
-    outlet_id: int
+    # Set on a Store Manager's notification; null on a driver's or a dispatcher's.
+    outlet_id: Optional[int] = None
+    dispatch_trip_id: Optional[int] = None
     order_id: Optional[int] = None
     order_number: Optional[str] = None
     type: NotificationType

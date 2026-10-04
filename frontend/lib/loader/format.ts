@@ -397,26 +397,46 @@ export function planChangeAlert(run: Run): RunAlert | null {
   return { tone: "warning", message: `Plan updated ${at} · ${versions}`, action: "Review", href };
 }
 
+/**
+ * Who has the run: "mine" (the signed-in loader picked it), "other" (another
+ * loader holds it: greyed, no link) or "free" (anyone can pick it).
+ */
+export type RunPick = "mine" | "other" | "free";
+
+export function runPick(run: Pick<RunSummary, "picked_by" | "picked_by_me">): RunPick {
+  if (run.picked_by_me) return "mine";
+  return run.picked_by ? "other" : "free";
+}
+
 /** Display fields for a queue run card. */
 export function runCardView(run: RunSummary) {
   // Loaded only: a flagged order is not on the truck (contract counting rules).
   const progress = run.orders_total ? Math.round((run.orders_loaded / run.orders_total) * 100) : 0;
   const note = `${run.orders_loaded} of ${run.orders_total} loaded`;
+  const pick = runPick(run);
   return {
     code: run.code,
     status: run.status,
+    pick,
+    /** "Truck arrived 01:10". */
+    arrived: run.arrived_at ? `Truck arrived ${formatTime(run.arrived_at)}` : undefined,
+    /** "Saman J. is loading" on another loader's run; "You're loading" on yours. */
+    pickNote: pick === "mine" ? "You’re loading" : pick === "other" ? `${run.picked_by} is loading` : undefined,
     title: `${run.code} · ${run.vehicle_code} · Trip ${run.trip_number}`,
     subtitle: `${BRAND_LABELS[run.brand]} · ${run.district} · ${run.stop_count} stops`,
     departs: formatTime(run.departs_at),
     chips: run.chips.map((label) => ({ label, kind: runChipKind(label) })),
     progress,
-    progressNote: run.loader ? `${note} · ${run.loader}` : note,
-    alert: run.alert
+    progressNote: run.loader && pick === "free" ? `${note} · ${run.loader}` : note,
+    // Another loader's run is greyed out with no way in: its alert loses the action.
+    alert: run.alert && pick === "other"
+      ? { tone: run.alert.tone, message: run.alert.message, actionLabel: undefined, actionHref: undefined }
+      : run.alert
       ? {
           tone: run.alert.tone,
           message: run.alert.message,
-          actionLabel: run.alert.action,
-          actionHref: run.alert.href,
+          actionLabel: run.alert.action ?? undefined,
+          actionHref: run.alert.href ?? undefined,
         }
       : undefined,
   };
@@ -569,9 +589,9 @@ export function depotName(depot: string): string {
   return `${depot.charAt(0).toUpperCase()}${depot.slice(1)} DC`;
 }
 
-/** "Peliyagoda DC · Dock 3" from a session's depot slug and dock. */
-export function dockLabel(session: Pick<LoaderSession, "depot" | "dock">): string {
-  return `${depotName(session.depot)} · ${session.dock}`;
+/** "Peliyagoda DC" for a session: a loader works every dock of their depot. */
+export function depotLabel(session: Pick<LoaderSession, "depot">): string {
+  return depotName(session.depot);
 }
 
 // ---- Sign-in ---------------------------------------------------------------------------
@@ -598,21 +618,21 @@ export function matchUsers(users: LoaderUser[], query: string): LoaderUser[] {
 }
 
 export interface SignInOverview {
-  /** "Dock 3 tonight · plan from Dispatcher, updated 02:14" */
+  /** "Peliyagoda DC tonight · plan from Dispatcher, updated 02:14" */
   heading: string;
   nextDeparture?: { time: string; caption: string };
   runs: { count: number; caption: string };
   issues: { count: number; caption: string };
 }
 
-/** Tablet sign-in cards (Figma 00 tablet): the dock's night at a glance. */
+/** Tablet sign-in cards (Figma 00 tablet): the depot's night at a glance. */
 export function signInOverview(
   queue: RunQueue,
   summary: QueueSummary,
   plan: { updatedAt?: string },
   now: string,
 ): SignInOverview {
-  const runs = queue.groups.flatMap((g) => g.runs);
+  const runs = queue.docks.flatMap((d) => d.runs);
   const next = runs
     .filter((r) => r.status !== "ready_to_depart" && r.status !== "gated_out")
     .sort((a, b) => a.departs_at.localeCompare(b.departs_at))[0];
@@ -620,7 +640,7 @@ export function signInOverview(
   const when = shiftLabel(now) === "Night shift" ? "tonight" : "today";
   const updated = plan.updatedAt ? `, updated ${formatTime(plan.updatedAt)}` : "";
   return {
-    heading: `${summary.dock} ${when} · plan from Dispatcher${updated}`,
+    heading: `${depotName(summary.depot)} ${when} · plan from Dispatcher${updated}`,
     nextDeparture: next && {
       time: formatTime(next.departs_at),
       caption: `${next.code} · ${next.vehicle_code} · ${BRAND_LABELS[next.brand]}`,

@@ -9,10 +9,11 @@ import { useLoaderShell } from "@/components/loader/loader-shell";
 import { MetricTile } from "@/components/loader/metric-tile";
 import { RunCard } from "@/components/loader/run-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatTime, greeting, type PlanSource } from "@/lib/loader/format";
+import { depotName, formatTime, greeting, type PlanSource } from "@/lib/loader/format";
 import { mockNow } from "@/lib/loader/mock-data";
-import type { QueueSummary, RunGroup, RunQueue } from "@/lib/loader/types";
+import type { DockQueue, QueueSummary, RunQueue, RunSummary } from "@/lib/loader/types";
 import { useLiveQueue } from "./use-live-queue";
+import { usePick } from "./use-pick";
 
 type BrandFilter = "fresh" | "style_tech";
 
@@ -20,10 +21,14 @@ const FILTER_KEY = "waypoint-loader-queue-filter";
 // The mock scenario is set at 02:20 on 28 May; the API runs on the real clock.
 const MOCK_TRANSPORT = process.env.NEXT_PUBLIC_LOADER_TRANSPORT !== "api";
 
-const inFilter = (group: RunGroup, filter: BrandFilter) =>
-  filter === "fresh" ? group.brand === "fresh" : group.brand !== "fresh";
+const inFilter = (run: RunSummary, filter: BrandFilter) =>
+  filter === "fresh" ? run.brand === "fresh" : run.brand !== "fresh";
 
-const runCount = (groups: RunGroup[]) => groups.reduce((n, g) => n + g.runs.length, 0);
+/** Each dock with only the runs in the filter. */
+const filtered = (docks: DockQueue[], filter: BrandFilter) =>
+  docks.map((dock) => ({ ...dock, runs: dock.runs.filter((run) => inFilter(run, filter)) }));
+
+const runCount = (docks: DockQueue[]) => docks.reduce((n, d) => n + d.runs.length, 0);
 
 /** The filter this tablet used last (a per-tablet convenience). */
 function savedFilter(): BrandFilter {
@@ -35,11 +40,24 @@ function savedFilter(): BrandFilter {
 }
 
 /**
- * Loading queue (Figma 1b, 1b.1, 7, 13, 19 · tablet T1b): the signed-in
- * dock's runs by departure, metric cards, brand filter and each run's alert.
+ * Loading queue (Figma 1b, 1b.1, 7, 13, 19 · tablet T1b): every dock of the
+ * signed-in depot with the trucks that have arrived, metric cards, brand
+ * filter, each run's alert and who is loading it. A free run is picked here.
  */
 export function QueueView() {
   const live = useLiveQueue();
+  const { refresh } = live;
+  // A picked run opens its checklist; otherwise (taken first, offline) the
+  // queue reloads so the card shows who has it.
+  const picked = usePick();
+  const { pick } = picked;
+  const onPick = React.useCallback(
+    (code: string) =>
+      void pick(code).then((run) => {
+        if (!run) void refresh();
+      }),
+    [pick, refresh],
+  );
   const firstName = useLoaderShell().user.name.split(" ")[0];
   const [now] = React.useState(() => (MOCK_TRANSPORT ? mockNow : new Date().toISOString()));
   const [filter, setFilterState] = React.useState<BrandFilter>(savedFilter);
@@ -70,6 +88,9 @@ export function QueueView() {
             heading={`${greeting(now)}, ${firstName}`}
             filter={filter}
             onFilter={setFilter}
+            onPick={onPick}
+            picking={picked.picking}
+            notice={picked.notice}
           />
         ) : (
           <>
@@ -96,6 +117,9 @@ function QueueContent({
   heading,
   filter,
   onFilter,
+  onPick,
+  picking,
+  notice,
 }: {
   queue: RunQueue;
   summary: QueueSummary;
@@ -103,10 +127,14 @@ function QueueContent({
   heading: string;
   filter: BrandFilter;
   onFilter: (filter: BrandFilter) => void;
+  onPick: (code: string) => void;
+  picking?: string;
+  notice?: string;
 }) {
-  const fresh = queue.groups.filter((g) => inFilter(g, "fresh"));
-  const styleTech = queue.groups.filter((g) => inFilter(g, "style_tech"));
-  const shown = filter === "fresh" ? fresh : styleTech;
+  const fresh = filtered(queue.docks, "fresh");
+  const styleTech = filtered(queue.docks, "style_tech");
+  const shown = (filter === "fresh" ? fresh : styleTech).filter((dock) => dock.runs.length > 0);
+  const depot = depotName(summary.depot);
 
   return (
     <>
@@ -122,7 +150,7 @@ function QueueContent({
               </InfoChip>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">{summary.dock} · runs sorted by departure time.</p>
+          <p className="text-xs text-muted-foreground">{depot} · every dock · trucks in order of arrival.</p>
         </div>
         <div className="flex gap-2" role="group" aria-label="Brand">
           <FilterChip label="Fresh" count={runCount(fresh)} active={filter === "fresh"} onClick={() => onFilter("fresh")} />
@@ -136,29 +164,37 @@ function QueueContent({
       </div>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <MetricTile label="Runs" value={summary.runs} caption={`At ${summary.dock} today`} />
+        <MetricTile label="Runs" value={summary.runs} caption={`At ${depot} today`} />
         <MetricTile label="Loading" value={summary.loading.count} caption={summary.loading.loaders.join(", ")} />
         <MetricTile label="Issues" value={summary.issues.count} caption={summary.issues.label} />
         <MetricTile label="Ready" value={summary.ready.count} caption={summary.ready.run_codes.join(", ")} />
       </div>
 
+      {notice && (
+        <p role="alert" className="rounded-lg border border-warning/40 bg-warning-muted px-4 py-3 text-sm text-warning-muted-foreground">
+          {notice}
+        </p>
+      )}
+
       {shown.length ? (
-        shown.map((group) => (
-          <section key={group.label} aria-label={group.label} className="flex flex-col gap-3">
+        shown.map((dock) => (
+          <section key={dock.dock_code} aria-label={dock.dock} className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between">
-              <h2 className="text-base font-semibold text-primary">{group.label}</h2>
-              <span className="text-xs text-muted-foreground">{group.runs.length} runs</span>
+              <h2 className="text-base font-semibold text-primary">{dock.dock}</h2>
+              <span className="text-xs text-muted-foreground">
+                {dock.runs.length} {dock.runs.length === 1 ? "truck" : "trucks"}
+              </span>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              {group.runs.map((run) => (
-                <RunCard key={run.code} run={run} />
+              {dock.runs.map((run) => (
+                <RunCard key={run.code} run={run} onPick={onPick} picking={picking === run.code} />
               ))}
             </div>
           </section>
         ))
       ) : (
         <p className="rounded-xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
-          No runs at {summary.dock} for this filter today.
+          No trucks at {depot} for this filter yet. A run shows here once its driver says the truck is at the dock.
         </p>
       )}
     </>
