@@ -1,6 +1,7 @@
 """Dispatch and dock plans must agree, including when the dock rejects a change."""
 
 from uuid import uuid4
+from datetime import time
 
 from app.models.allocation import Allocation, AllocationStatus
 from app.models.delivery_run import DeliveryRun
@@ -37,6 +38,9 @@ def test_plan_rejection_does_not_update_dispatch_trip(loader_client, trip_setup)
 
 def test_departure_change_updates_trip_and_dock_together(loader_client, trip_setup):
     db = trip_setup["db"]
+    # Fixture timestamps are UTC; route validation uses Colombo windows.
+    for order in trip_setup["orders"]:
+        order.outlet.window_end = time(18)
     trip = make_trip(db, trip_setup["vehicle"], trip_setup["orders"])
     dock_run = LoaderService.create_run_for_dispatch_trip(db, trip)
 
@@ -56,6 +60,8 @@ def test_departure_change_updates_trip_and_dock_together(loader_client, trip_set
 
 def test_stop_order_updates_trip_and_dock_together(loader_client, trip_setup):
     db = trip_setup["db"]
+    for order in trip_setup["orders"]:
+        order.outlet.window_end = time(18)
     trip = make_trip(db, trip_setup["vehicle"], trip_setup["orders"])
     dock_run = LoaderService.create_run_for_dispatch_trip(db, trip)
     codes = [stop.outlet.code for stop in sorted(
@@ -84,6 +90,8 @@ def test_stop_order_updates_trip_and_dock_together(loader_client, trip_setup):
 
 def test_stop_order_updates_trip_without_dock_run(loader_client, trip_setup):
     db = trip_setup["db"]
+    for order in trip_setup["orders"]:
+        order.outlet.window_end = time(18)
     trip = make_trip(db, trip_setup["vehicle"], trip_setup["orders"])
     codes = list(dict.fromkeys(order.outlet.code for order in trip_setup["orders"]))
     reversed_stops = [
@@ -100,7 +108,8 @@ def test_stop_order_updates_trip_without_dock_run(loader_client, trip_setup):
 
     assert response.status_code == 200, response.text
     db.refresh(trip)
-    assert trip.stop_sequence == reversed_stops
+    assert [stop["outlet_code"] for stop in trip.stop_sequence] == list(reversed(codes))
+    assert all(stop["arrival_at"] and stop["window_status"] == "PASS" for stop in trip.stop_sequence)
     assert response.json()["loader"] is None
 
 

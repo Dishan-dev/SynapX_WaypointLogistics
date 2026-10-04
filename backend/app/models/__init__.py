@@ -11,6 +11,7 @@ from app.models.allocation import Allocation
 from app.models.outlet import OutletContact, OutletReceivingWindow
 from app.models.notification import Notification
 from app.models.user_notification import UserNotification
+from app.models.allocation_planning import VehicleFuelWeek
 from app.models.email_outbox import EmailOutbox
 from app.models.receipts import DeliveryReceipt
 from app.models.delivery_issue import DeliveryIssue
@@ -68,6 +69,7 @@ __all__ = [
     "OutletReceivingWindow",
     "Notification",
     "UserNotification",
+    "VehicleFuelWeek",
     "EmailOutbox",
     "DeliveryReceipt",
     "DeliveryIssue",
