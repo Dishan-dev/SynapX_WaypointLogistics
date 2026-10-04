@@ -59,6 +59,19 @@ def update_issue(
     db: Session = Depends(get_db),
     current_user: User = Depends(deps.get_current_user),
 ):
-    """Update issue status, resolution notes, or claim amount."""
+    """Update issue status, resolution notes, claim amount, or details."""
     deps.ensure_store_access(db, current_user, issue_service.get_issue(db, issue_id).outlet_id)
     return issue_service.update_issue(db, issue_id, payload)
+
+
+@router.delete("/{issue_id}", status_code=204)
+def delete_issue(
+    issue_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """Delete or withdraw an issue/complaint."""
+    issue = issue_service.get_issue(db, issue_id)
+    deps.ensure_store_access(db, current_user, issue.outlet_id)
+    issue_service.delete_issue(db, issue_id)
+    return None

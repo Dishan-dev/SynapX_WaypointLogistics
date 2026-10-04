@@ -28,6 +28,7 @@ import { useStoreOutlet } from "@/components/store/outlet-context";
 interface HistoryRecord {
   orderId: string;
   deliveryDate: string;
+  rawDate: string;
   arrivalInfo: string;
   vehicleId: string;
   vehicleType: string;
@@ -44,6 +45,8 @@ interface HistoryRecord {
 
 export default function DeliveryHistoryPage() {
   const outlet = useStoreOutlet();
+  // "Now" for the date filter, read once when the page opens (render must stay pure).
+  const [now] = useState(() => Date.now());
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<"all" | "clean" | "issues">("all");
@@ -96,6 +99,7 @@ export default function DeliveryHistoryPage() {
           return {
             orderId: ord.orderNumber,
             deliveryDate: dateStr,
+            rawDate: ord.orderDate || new Date().toISOString(),
             arrivalInfo: ord.delivery?.actualArrival
               ? `Arrived ${format(parseISO(ord.delivery.actualArrival), "HH:mm")}`
               : ord.status === "completed"
@@ -147,6 +151,15 @@ export default function DeliveryHistoryPage() {
 
     if (issuesFilter === "clean" && rec.outcomeType !== "clean") return false;
     if (issuesFilter === "with_issues" && rec.outcomeType === "clean") return false;
+
+    if (dateFilter !== "all") {
+      const days = parseInt(dateFilter, 10);
+      if (!isNaN(days) && rec.rawDate) {
+        const itemDate = new Date(rec.rawDate).getTime();
+        const cutoff = now - days * 24 * 60 * 60 * 1000;
+        if (itemDate < cutoff) return false;
+      }
+    }
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();

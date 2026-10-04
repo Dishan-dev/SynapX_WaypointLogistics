@@ -79,22 +79,29 @@ class ReceiptService:
                 pass
 
             issue_type_formatted = (payload.issue_type or "Discrepancy").replace("_", " ").title()
-            delivery_issue = DeliveryIssue(
-                order_id=payload.order_id,
-                order_number=order_number,
-                outlet_id=payload.outlet_id,
-                issue_type=issue_type_formatted,
-                title=f"Delivery Discrepancy on {order_number} ({issue_type_formatted})",
-                received_units=payload.units_received,
-                description=payload.issue_description or f"Discrepancy reported on receipt confirmation ({payload.issue_type}).",
-                reported_by=reported_by,
-                status="open",
-            )
-            db.add(delivery_issue)
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+
+            # Prevent duplicate issue creation if frontend/intake already created per-item issues
+            existing_issue = db.execute(
+                select(DeliveryIssue).where(DeliveryIssue.order_id == payload.order_id)
+            ).scalars().first()
+
+            if not existing_issue:
+                delivery_issue = DeliveryIssue(
+                    order_id=payload.order_id,
+                    order_number=order_number,
+                    outlet_id=payload.outlet_id,
+                    issue_type=issue_type_formatted,
+                    title=f"Delivery Discrepancy on {order_number} ({issue_type_formatted})",
+                    received_units=payload.units_received,
+                    description=payload.issue_description or f"Discrepancy reported on receipt confirmation ({payload.issue_type}).",
+                    reported_by=reported_by,
+                    status="open",
+                )
+                db.add(delivery_issue)
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
 
             notification_service.send(
                 db,
