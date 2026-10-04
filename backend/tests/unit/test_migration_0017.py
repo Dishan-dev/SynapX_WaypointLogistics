@@ -33,6 +33,8 @@ CREATE TABLE loader_sessions (id INTEGER PRIMARY KEY,
 CREATE TABLE delivery_runs (id INTEGER PRIMARY KEY, code VARCHAR(20) NOT NULL,
     dock_id INTEGER NOT NULL REFERENCES docks(id), status VARCHAR(20) NOT NULL,
     departs_at DATETIME NOT NULL, released_at DATETIME, created_at DATETIME);
+CREATE TABLE loader_activities (id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES delivery_runs(id),
+    at DATETIME NOT NULL, event_type VARCHAR(40) NOT NULL, message TEXT NOT NULL);
 CREATE TABLE notifications (id INTEGER PRIMARY KEY, outlet_id INTEGER NOT NULL REFERENCES outlets(id),
     order_id INTEGER, type VARCHAR(30) NOT NULL, category VARCHAR(20) NOT NULL, title VARCHAR(200) NOT NULL,
     message TEXT, is_read BOOLEAN NOT NULL, created_at DATETIME NOT NULL);
@@ -85,6 +87,25 @@ def test_runs_in_flight_stay_visible_and_no_past_release_notifies():
     assert rows["RUN-004"].release_notified_at == rows["RUN-004"].released_at
     assert rows["RUN-002"].release_notified_at is None
     assert all(r.picked_by_id is None and r.picked_session_id is None and r.picked_at is None for r in rows.values())
+
+
+def test_the_driver_apps_at_dock_line_sets_the_arrival_from_its_earliest_entry():
+    engine = migrated("INSERT INTO docks VALUES (1, 'DOCK3', 'Dock 3', 'PELIYAGODA');" + RUNS + """
+        INSERT INTO loader_activities VALUES (1, 1, '2026-10-05 02:50:00', 'driver_at_dock', 'Driver at Dock 3 · A');
+        INSERT INTO loader_activities VALUES (2, 1, '2026-10-05 02:40:00', 'driver_at_dock', 'Driver at Dock 3 · A');
+        INSERT INTO loader_activities VALUES (3, 1, '2026-10-05 02:30:00', 'plan_published', 'Plan v1');
+        INSERT INTO loader_activities VALUES (4, 2, '2026-10-04 20:30:00', 'driver_at_dock', 'Driver at Dock 3 · B');
+    """)
+
+    with engine.connect() as conn:
+        rows = {r.code: r for r in conn.execute(sa.text(
+            "SELECT code, arrived_at, arrived_dock_id FROM delivery_runs"
+        ))}
+
+    assert rows["RUN-001"].arrived_at.startswith("2026-10-05 02:40")  # not started, but the driver is there
+    assert rows["RUN-001"].arrived_dock_id == 1
+    assert rows["RUN-002"].arrived_at.startswith("2026-10-04 20:30")  # the driver's line beats created_at
+    assert rows["RUN-005"].arrived_at.startswith("2026-10-04 20:10")  # no line: as before
 
 
 def test_loader_depot_from_the_home_dock_else_the_only_depot_with_docks():

@@ -21,6 +21,9 @@ Relaxed NOT NULLs (nothing is removed and no existing row changes):
 - loader_sessions.dock_tablet_id: sign-in no longer needs a dock tablet.
 
 Backfills:
+- delivery_runs the driver app already said were at the dock (a `driver_at_dock` activity): arrived_at = the
+  earliest such activity and arrived_dock_id = dock_id, so they stay visible once LoaderService.log stops
+  treating that line as the arrival. Runs as below otherwise.
 - loader_users.depot: the depot of the loader's home dock; otherwise, when exactly one depot has docks, that
   depot. Loaders still without a depot are logged by id (a warning) and cannot sign in until it is set.
 - delivery_runs in flight (not not_started, not gated_out): arrived_at = created_at (departs_at when that is
@@ -120,6 +123,14 @@ def _backfill_loader_depots(bind) -> None:
 
 
 def _backfill_runs() -> None:
+    op.execute(
+        "UPDATE delivery_runs SET arrived_dock_id = dock_id, arrived_at = ("
+        "SELECT MIN(a.at) FROM loader_activities a "
+        "WHERE a.run_id = delivery_runs.id AND a.event_type = 'driver_at_dock') "
+        "WHERE arrived_at IS NULL AND EXISTS ("
+        "SELECT 1 FROM loader_activities a "
+        "WHERE a.run_id = delivery_runs.id AND a.event_type = 'driver_at_dock')"
+    )
     op.execute(
         "UPDATE delivery_runs SET arrived_at = COALESCE(created_at, departs_at), arrived_dock_id = dock_id "
         "WHERE arrived_at IS NULL AND status NOT IN ('NOT_STARTED', 'GATED_OUT')"

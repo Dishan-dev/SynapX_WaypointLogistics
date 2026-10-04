@@ -236,7 +236,9 @@ This supersedes the per-dock wording further down (`?dock=` required, "Dock tabl
 - **Tablet reads carry the session** in the `X-Loader-Session` header: `GET /loader/runs`, `/summary`, `/runs/{code}`, `/runs/{code}/activity`, `/activity`, `/issues` and `/issues/{id}`. Without the header the response is 422. An ended session gets **403 `LOADER_SESSION_ENDED`**, and anything at another depot gets **404**. Each read marks the session as seen.
 - **Hidden until arrival.** The run (plan v1, built from the dispatcher's trip) exists from dispatch but is not in the queue until `POST /loader/dispatch-trips/{id}/arrived` (driver only) with `{dock_code, arrived_at?}`.
   - It only records time and dock. It is idempotent: the first arrival wins and a repeat returns `replayed: true`.
-  - Another dock at the same depot moves the run there and is logged as "Arrived at Dock 2 (planned Dock 3)". Another depot's dock is **422 `DOCK_NOT_AT_DEPOT`**. Anyone but the trip's driver gets **403**.
+  - It writes one `driver_at_dock` line to the run log, `Driver at Dock 3 · Tharindu Fernando`, the same line the driver app's `POST /driver/trips/{id}/at-dock` writes today (and its `at_dock_at` reads). A repeat writes nothing.
+  - Another dock at the same depot moves the run there and is logged as "Driver at Dock 2 · Tharindu Fernando (planned Dock 3)". Another depot's dock is **422 `DOCK_NOT_AT_DEPOT`**. Anyone but the trip's driver gets **403**.
+  - Until `driver_service.report_at_dock` calls `LoaderService.mark_arrived`, its `driver_at_dock` line also counts as the truck arriving at the planned dock. That workaround goes once it swaps.
   - Dispatcher plan changes before arrival still apply to the hidden run.
 - **Stage** (derived; `RunStatus` is unchanged): `awaiting_truck` → `at_dock` → `loading` → `ready` → `gated_out`. It is on the card, the run read and the dispatcher's `loading` view, together with `arrived_at`, `picked_by` and `picked_at`. Cards also carry `dock` and `picked_by_me`.
 - **`GET /loader/runs`** returns `{depot, docks: [{dock, dock_code, runs}]}`: every dock of the depot (empty ones too), with runs in arrival order. `?dock=` and `?brand=` are optional filters. **`GET /loader/summary`** returns `{depot, dock, dock_count, ...}`, depot-wide, or for one dock with `?dock=`.
@@ -802,6 +804,7 @@ Where each field comes from:
 
 | When | `tone` | `message` | `action` → `href` |
 | --- | --- | --- | --- |
+| stage `at_dock` (the truck is in, nobody has picked the run) | `warning` | `Driver waiting at Dock 3 · 02:10` (arrival, depot time) | `null` → `null` (the card's Pick button) |
 | a plan nobody has acknowledged | `warning` | `Plan updated 02:14 · v2 → v3` (depot time) | `Review` → `/loader/runs/{code}` |
 | … and that plan reopened a Ready run | `error` | `Load reopened · RUN-021 · VEH001 · v2 → v3 at 02:14` | `Open` → `/loader/runs/{code}` |
 | a flag waiting on the Dispatcher (sent or seen) | `error` | `ORD0092314 missing · waiting` (latest waiting flag) | `Open` → `/loader/issues/{id}` |

@@ -435,8 +435,8 @@ export function runCardView(run: RunSummary) {
       ? {
           tone: run.alert.tone,
           message: run.alert.message,
-          actionLabel: run.alert.action,
-          actionHref: run.alert.href,
+          actionLabel: run.alert.action ?? undefined,
+          actionHref: run.alert.href ?? undefined,
         }
       : undefined,
   };

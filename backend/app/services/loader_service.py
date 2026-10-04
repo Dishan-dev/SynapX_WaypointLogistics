@@ -117,9 +117,12 @@ def _depot_hhmm(value: datetime) -> str:
 # The derived last line of a gated-out run's log, once its driver trip is done.
 TRIP_COMPLETED_EVENT = "trip_completed"
 
-# What the driver app's own "I've arrived" (POST /driver/trips/{id}/at-dock,
-# driver_service.report_at_dock) logs. Until it calls mark_arrived, that entry
-# also counts as the truck arriving at the planned dock (LoaderService.log).
+# The run log's "the truck is at the dock" line, written by mark_arrived (one
+# per arrival). The driver app's own "I've arrived" (POST
+# /driver/trips/{id}/at-dock, driver_service.report_at_dock) still logs it
+# directly; until it calls mark_arrived, that entry also counts as the truck
+# arriving at the planned dock (LoaderService.log). Remove that workaround once
+# it swaps.
 DRIVER_AT_DOCK_EVENT = "driver_at_dock"
 TRIP_COMPLETED_MESSAGE = "Trip complete · back at depot"
 
@@ -741,7 +744,7 @@ DISPATCHER_EVENT_TITLES = {
     "run_released": "Ready to depart",
     "run_release_undone": "Ready undone",
     "gated_out": "Gated out",
-    "truck_arrived": "Truck at dock",
+    "driver_at_dock": "Truck at dock",
     "dock_changed": "Dock changed",
     "run_picked": "Loader picked run",
     "run_unpicked": "Loader put run back",
@@ -1633,21 +1636,22 @@ class LoaderService:
         now = datetime.now(timezone.utc)
         tapped = min(_naive_utc(arrived_at), _naive_utc(now)) if arrived_at else _naive_utc(now)
         planned = run.dock
-        message = f"Arrived at {dock.name}"
+        driver_name = driver.full_name or "Driver"
+        # The same line the driver app's at-dock writes, so the log, the
+        # driver's at_dock_at and the dispatcher read one entry per arrival.
+        message = f"Driver at {dock.name} · {driver_name}"
         if dock.id != planned.id:
             message += f" (planned {planned.name})"
             run.dock_id = dock.id
         run.arrived_at = tapped
         run.arrived_dock_id = dock.id
-        driver_name = driver.full_name or "Driver"
         LoaderService.log(
-            db, run, at=tapped, actor_kind=ActorKind.SYSTEM, event_type="truck_arrived",
+            db, run, at=tapped, actor_kind=ActorKind.SYSTEM, event_type=DRIVER_AT_DOCK_EVENT,
             actor_label=driver_name, message=message,
         )
         trip.loading_events = [
             *(trip.loading_events or []),
-            {"event": "Truck at dock", "time": _depot_hhmm(tapped),
-             "note": f"{message} · {driver_name}", "status": "ok"},
+            {"event": "Truck at dock", "time": _depot_hhmm(tapped), "note": message, "status": "ok"},
         ]
         trip.updated_at = now
         db.flush()
@@ -1955,10 +1959,16 @@ class LoaderService:
     def _run_alert(
         db: Session, run: DeliveryRun, detail: schemas.RunDetailRead
     ) -> Optional[schemas.RunAlertRead]:
-        """The card's alert row, most urgent first: an unread plan (the same
-        wording as the frontend's planChangeAlert), a flag waiting on the
-        dispatcher, then signed off. The tablet replaces the plan alert with its
-        own while it has taps waiting to sync."""
+        """The card's alert row, most urgent first: a driver waiting at the
+        dock with nobody on the run (no action: the card's Pick button is the
+        way in), an unread plan (the same wording as the frontend's
+        planChangeAlert), a flag waiting on the dispatcher, then signed off.
+        Once a loader picks the run the others take over. The tablet replaces
+        the plan alert with its own while it has taps waiting to sync."""
+        if LoaderService.stage(run) == STAGE_AT_DOCK:
+            return schemas.RunAlertRead(
+                tone="warning", message=f"Driver waiting at {run.dock.name} · {_depot_hhmm(run.arrived_at)}"
+            )
         href = f"/loader/runs/{quote(run.code)}"
         to = detail.unacknowledged_plan_version
         if to is not None:

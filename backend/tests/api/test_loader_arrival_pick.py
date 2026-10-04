@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.delivery_run import RunStatus
+from app.models.driver import DriverTrip
 from app.models.fleet import DriverProfile
 from app.models.loader_activity import LoaderActivity
 from app.models.loader_user import LoaderSession
@@ -141,8 +142,8 @@ def test_the_run_is_hidden_until_the_driver_says_the_truck_arrived(strict_loader
     assert queue_codes(client, saman) == {CODE: "Dock 3"}
     detail = client.get(f"{BASE}/runs/{CODE}", headers=tab(saman)).json()
     assert (detail["stage"], detail["arrived_at"]) == ("at_dock", body["arrived_at"])
-    [logged] = events(day["db"], day["run"], "truck_arrived")
-    assert (logged.message, logged.actor_label) == ("Arrived at Dock 3", "Tharindu Fernando")
+    [logged] = events(day["db"], day["run"], "driver_at_dock")
+    assert (logged.message, logged.actor_label) == ("Driver at Dock 3 · Tharindu Fernando", "Tharindu Fernando")
     assert day["trip"].loading_events[-1]["event"] == "Truck at dock"
 
 
@@ -153,7 +154,7 @@ def test_arrival_is_idempotent_and_the_first_one_wins(strict_loader_client, day)
     assert again.status_code == 200
     assert again.json()["replayed"] is True
     assert (again.json()["dock_code"], again.json()["arrived_at"]) == ("DOCK3", first["arrived_at"])
-    assert len(events(day["db"], day["run"], "truck_arrived")) == 1
+    assert len(events(day["db"], day["run"], "driver_at_dock")) == 1
 
 
 def test_arrival_keeps_an_offline_tap_time_but_never_a_future_one(strict_loader_client, day):
@@ -179,8 +180,8 @@ def test_another_dock_at_the_same_depot_moves_the_run_there(strict_loader_client
     assert response.json()["dock_code"] == "DOCK4"
     assert day["run"].dock_id == day["run"].arrived_dock_id == day["dock4"].id
     assert queue_codes(strict_loader_client, day["saman"]) == {CODE: "Dock 4"}
-    [logged] = events(day["db"], day["run"], "truck_arrived")
-    assert logged.message == "Arrived at Dock 4 (planned Dock 3)"
+    [logged] = events(day["db"], day["run"], "driver_at_dock")
+    assert logged.message == "Driver at Dock 4 · Tharindu Fernando (planned Dock 3)"
 
 
 def test_another_depots_dock_is_a_422(strict_loader_client, day):
@@ -583,3 +584,61 @@ def test_the_driver_apps_own_at_dock_also_shows_the_run(strict_loader_client, da
     assert queue_codes(client, day["saman"]) == {CODE: "Dock 3"}
     assert day["run"].arrived_dock_id == day["run"].dock_id
     assert arrive(client, day, dock="DOCK4").json()["replayed"] is True  # the first arrival stands
+    assert len(events(day["db"], day["run"], "driver_at_dock")) == 1
+
+
+def test_after_mark_arrived_the_driver_apps_at_dock_logs_nothing_more(strict_loader_client, day):
+    """mark_arrived writes the driver app's own driver_at_dock line, so the
+    driver's at_dock_at is set and a later at-dock tap adds no second line."""
+    client, headers = strict_loader_client, auth(day["driver"])
+    day["run"].departs_at = datetime.utcnow() + timedelta(hours=3)
+    day["db"].flush()
+    [trip] = client.get("/api/v1/driver/trips/today", headers=headers).json()
+    arrive(client, day)
+
+    response = client.post(f"/api/v1/driver/trips/{trip['id']}/at-dock", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["at_dock_at"] is not None
+    assert len(events(day["db"], day["run"], "driver_at_dock")) == 1
+
+
+def test_the_driver_apps_swap_to_mark_arrived_logs_one_line(strict_loader_client, day):
+    """The one-line change for driver_service.report_at_dock: call mark_arrived
+    with the driver trip's dispatch trip and the run's dock instead of log."""
+    db = day["db"]
+    client, headers = strict_loader_client, auth(day["driver"])
+    day["run"].departs_at = datetime.utcnow() + timedelta(hours=3)
+    db.flush()
+    [listed] = client.get("/api/v1/driver/trips/today", headers=headers).json()
+    trip, run = db.get(DriverTrip, listed["id"]), day["run"]
+
+    for _ in range(2):  # a repeat tap is a replay
+        LoaderService.mark_arrived(db, trip.dispatch_trip, trip.driver, run.dock.code)
+
+    [logged] = events(db, run, "driver_at_dock")
+    assert logged.message == "Driver at Dock 3 · Tharindu Fernando"
+    assert (run.arrived_dock_id, trip.at_dock_at) == (run.dock_id, logged.at)
+    assert queue_codes(client, day["saman"]) == {CODE: "Dock 3"}
+
+
+def test_a_waiting_driver_is_the_cards_alert_until_a_loader_picks_the_run(strict_loader_client, day):
+    client, saman = strict_loader_client, day["saman"]
+    tapped = (datetime.utcnow() - timedelta(minutes=12)).replace(second=0, microsecond=0)
+    arrive(client, day, arrived_at=tapped.isoformat() + "Z")
+    at_depot = (tapped + timedelta(hours=5, minutes=30)).strftime("%H:%M")  # depot time, UTC+5:30
+
+    def card():
+        body = client.get(f"{BASE}/runs", headers=tab(saman)).json()
+        return next(c for d in body["docks"] for c in d["runs"] if c["code"] == CODE)
+
+    waiting = card()
+    assert waiting["stage"] == "at_dock"
+    assert waiting["alert"] == {
+        "tone": "warning", "message": f"Driver waiting at Dock 3 · {at_depot}", "action": None, "href": None,
+    }
+
+    assert pick(client, saman).status_code == 200
+    picked = card()
+    assert picked["stage"] == "loading"
+    assert picked["alert"] is None or not picked["alert"]["message"].startswith("Driver waiting")

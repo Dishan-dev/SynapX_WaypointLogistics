@@ -533,12 +533,13 @@ class EndSessionRequest(BaseModel):
 
 
 class RunAlertRead(BaseModel):
-    """The coloured row on a queue card. tone: warning · error · success · neutral."""
+    """The coloured row on a queue card. tone: warning · error · success · neutral.
+    No action (both None) when the card's own button is the way in."""
 
     tone: str
     message: str
-    action: str
-    href: str
+    action: Optional[str] = None
+    href: Optional[str] = None
 
 
 class RunSummaryRead(BaseModel):

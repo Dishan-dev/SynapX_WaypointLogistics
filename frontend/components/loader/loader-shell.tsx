@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 import { FlagIssueHost } from "./flag-issue-sheet";
 import { WaitingFlagsProvider } from "./flag-status";
 import { LoaderBottomNav, type LoaderTab } from "./loader-bottom-nav";
-import { listOutbox } from "@/lib/loader/offline/db";
+import { markArrivalsSeen, newArrivalCount } from "@/lib/loader/new-arrivals";
+import { listOutbox, type CachedQueue } from "@/lib/loader/offline/db";
 import { loadIssues } from "@/lib/loader/offline/issues-cache";
+import { cachedQueue, loadQueue, QUEUE_EVENT } from "@/lib/loader/offline/queue-cache";
 import { warmRunPages } from "@/lib/loader/offline/run-pages";
 import { LoaderSyncProvider, useLoaderSync } from "./loader-sync-provider";
 
@@ -65,8 +67,47 @@ async function pendingFlagCount(): Promise<number> {
   }
 }
 
+/** How often the queue is checked for new arrivals while it is not open. */
+const ARRIVALS_REFRESH_MS = 30_000;
+
 /**
- * Bottom nav with the Issues badge: the depot's open issues from the server,
+ * Runs that reached a dock since this session last had the queue open, for
+ * the Queue tab badge. On the queue every copy it loads counts as seen, so
+ * opening it clears the badge; elsewhere the queue is reloaded every 30 s
+ * while online (no server push) and each copy is counted.
+ */
+function useNewArrivals(depot: string | undefined, sessionId: number | null, onQueue: boolean): number {
+  const { transport, sync } = useLoaderSync();
+  const [count, setCount] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!depot || sessionId === null) return;
+    let cancelled = false;
+    const take = (loaded: CachedQueue) => {
+      if (cancelled || loaded.depot !== depot) return;
+      if (onQueue) markArrivalsSeen(sessionId, loaded.queue);
+      setCount(onQueue ? 0 : newArrivalCount(sessionId, loaded.queue));
+    };
+    void cachedQueue(depot).then((cached) => cached && take(cached));
+    const onLoaded = (e: Event) => take((e as CustomEvent<CachedQueue>).detail);
+    window.addEventListener(QUEUE_EVENT, onLoaded);
+    // The queue page loads it itself; elsewhere, look for trucks pulling in.
+    const id = onQueue || !sync.online
+      ? undefined
+      : window.setInterval(() => void loadQueue(transport, depot).catch(() => {}), ARRIVALS_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(QUEUE_EVENT, onLoaded);
+      if (id !== undefined) window.clearInterval(id);
+    };
+  }, [depot, sessionId, onQueue, sync.online, transport]);
+
+  return count;
+}
+
+/**
+ * Bottom nav with the Queue tab's new-arrivals badge and the Issues badge:
+ * the depot's open issues from the server,
  * plus flags queued on this tablet, so the badge rises as soon as a flag is
  * queued offline. When queued flags go out, the list is reloaded so the
  * server's count takes them over.
@@ -76,15 +117,18 @@ function ShellBottomNav({
   loadingHref,
   logHref,
   depot,
+  sessionId,
   issueCount,
 }: {
   active?: LoaderTab;
   loadingHref: string;
   logHref: string;
   depot?: string;
+  sessionId: number | null;
   issueCount?: number;
 }) {
   const { sync, transport } = useLoaderSync();
+  const arrivals = useNewArrivals(depot, sessionId, active === "queue");
   const [pendingFlags, setPendingFlags] = React.useState(0);
   const lastPending = React.useRef(0);
 
@@ -110,6 +154,7 @@ function ShellBottomNav({
       loadingHref={loadingHref}
       logHref={logHref}
       issueCount={total}
+      newArrivals={arrivals}
     />
   );
 }
@@ -168,6 +213,7 @@ export function LoaderShell({ user, depotLabel, depot, sessionId, issueCount, ch
             loadingHref={lastRunCode ? `/loader/runs/${lastRunCode}` : "/loader"}
             logHref={lastRunCode ? `/loader/runs/${lastRunCode}/log` : "/loader/log"}
             depot={depot}
+            sessionId={sessionId}
             issueCount={issueCount}
           />
         </div>

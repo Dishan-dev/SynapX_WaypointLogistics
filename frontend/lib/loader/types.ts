@@ -343,8 +343,9 @@ export type RunAlertTone = "warning" | "error" | "success" | "neutral";
 export interface RunAlert {
   tone: RunAlertTone;
   message: string;
-  action: string;
-  href: string;
+  /** Null when the card's own Pick button is the way in ("Driver waiting at Dock 3"). */
+  action: string | null;
+  href: string | null;
 }
 
 export interface RunSummary {
