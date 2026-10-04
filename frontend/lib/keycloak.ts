@@ -97,6 +97,7 @@ export interface AuthUser {
   roles: KeycloakAppRole[];
   primaryRole: KeycloakAppRole | null;
   outletId?: number;
+  assigned_depot?: string;
 }
 
 export function getKeycloakConfig() {
@@ -237,8 +238,16 @@ export function buildLogoutUrl(redirectUri: string, idToken?: string): string {
     client_id: config.clientId,
     post_logout_redirect_uri: redirectUri,
   });
+
+  // Only pass id_token_hint if the ID token is unexpired.
+  // In Keycloak 18+, passing an expired id_token_hint triggers HTTP 400 Bad Request.
   if (idToken) {
-    params.set("id_token_hint", idToken);
+    const payload = decodeJwt<KeycloakTokenPayload>(idToken);
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (payload?.exp && payload.exp > nowSec) {
+      params.set("id_token_hint", idToken);
+    }
   }
+
   return `${config.logoutEndpoint}?${params.toString()}`;
 }

@@ -21,16 +21,29 @@ export function RoleGuard({
   fallbackTitle = "Access Restricted",
 }: RoleGuardProps) {
   const pathname = usePathname();
-  const { user, isAuthenticated, isLoading, loginWithKeycloak, logout } = useAuth();
+  const { user, isAuthenticated, isLoading, isLoggingOut, loginWithKeycloak, logout } = useAuth();
 
-  // Auto-redirect to Keycloak login if not authenticated
+  // Auto-redirect to Keycloak login if not authenticated (never during active logout)
   useEffect(() => {
+    if (isLoggingOut) return;
     if (!isLoading && (!isAuthenticated || !user)) {
       const currentUrl = typeof window !== "undefined" ? window.location.pathname + window.location.search : "/";
       const targetRole = allowedRoles.length === 1 ? allowedRoles[0] : undefined;
       void loginWithKeycloak(targetRole, currentUrl);
     }
-  }, [isLoading, isAuthenticated, user, allowedRoles, loginWithKeycloak]);
+  }, [isLoading, isAuthenticated, user, isLoggingOut, allowedRoles, loginWithKeycloak]);
+
+  if (isLoggingOut) {
+    return (
+      <div className="min-h-screen bg-[#F6F7F9] flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <div className="h-10 w-10 rounded-full border-3 border-slate-200 border-t-[#092C4C] animate-spin" />
+          <p className="text-sm font-semibold text-slate-800">Signing Out of Waypoint...</p>
+          <p className="text-xs text-slate-500">Closing Keycloak SSO session and clearing credentials</p>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

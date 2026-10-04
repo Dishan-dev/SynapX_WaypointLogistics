@@ -15,7 +15,12 @@ function LoginContent() {
 
   const redirectUrl = searchParams.get("redirect") || searchParams.get("returnUrl") || "";
   const isAdminTarget = redirectUrl === "/admin" || redirectUrl.startsWith("/admin");
-  const targetRole: KeycloakAppRole | undefined = isAdminTarget ? "admin" : undefined;
+  const isDispatcherTarget = redirectUrl === "/dispatcher" || redirectUrl.startsWith("/dispatcher");
+  const targetRole: KeycloakAppRole | undefined = isAdminTarget
+    ? "admin"
+    : isDispatcherTarget
+    ? "dispatcher"
+    : undefined;
 
   useEffect(() => {
     if (isLoading) return;
@@ -28,18 +33,34 @@ function LoginContent() {
         // If authenticated but not admin, stay here and present switch account option
         return;
       }
+      if (isDispatcherTarget) {
+        if (hasRole("dispatcher") || hasRole("admin")) {
+          router.replace(redirectUrl || "/dispatcher");
+        }
+        // If authenticated but not dispatcher/admin, stay here and present switch option
+        return;
+      }
       router.replace(redirectUrl || getDefaultPortalForRoles(user.roles));
       return;
     }
 
     // Trigger Keycloak SSO redirect
     void loginWithKeycloak(targetRole, redirectUrl || undefined);
-  }, [isAuthenticated, user, isLoading, hasRole, isAdminTarget, redirectUrl, router, loginWithKeycloak, targetRole]);
+  }, [isAuthenticated, user, isLoading, hasRole, isAdminTarget, isDispatcherTarget, redirectUrl, router, loginWithKeycloak, targetRole]);
 
-  // If authenticated but lacks admin privileges
-  if (isAuthenticated && user && isAdminTarget && !hasRole("admin")) {
+  // If authenticated but lacks admin or dispatcher privileges
+  const lacksAdmin = isAdminTarget && !hasRole("admin");
+  const lacksDispatcher = isDispatcherTarget && !hasRole("dispatcher") && !hasRole("admin");
+
+  if (isAuthenticated && user && (lacksAdmin || lacksDispatcher)) {
     const userRoleLabels = user.roles.map((r) => ROLE_CONFIGS[r]?.label || r).join(", ") || "None";
     const myPortal = getDefaultPortalForRoles(user.roles);
+    const requiredTitle = lacksAdmin ? "Administrator Access Required" : "Dispatcher Access Required";
+    const requiredDescription = lacksAdmin
+      ? "You are currently signed in with an account that does not have administrator privileges."
+      : "You are currently signed in with an account that does not have dispatcher privileges.";
+    const requiredRole: KeycloakAppRole = lacksAdmin ? "admin" : "dispatcher";
+    const roleButtonLabel = lacksAdmin ? "Sign in as Administrator" : "Sign in as Dispatcher";
 
     return (
       <div className="min-h-screen bg-[#F6F7F9] text-slate-900 flex flex-col items-center justify-center p-4 font-sans antialiased">
@@ -49,9 +70,9 @@ function LoginContent() {
               <ShieldCheck className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900">Administrator Access Required</h1>
+              <h1 className="text-lg font-bold text-slate-900">{requiredTitle}</h1>
               <p className="text-xs text-slate-500 mt-1">
-                You are currently signed in with an account that does not have administrator privileges.
+                {requiredDescription}
               </p>
             </div>
 
@@ -68,10 +89,10 @@ function LoginContent() {
 
             <div className="flex flex-col gap-2 pt-2">
               <Button
-                onClick={() => loginWithKeycloak("admin", redirectUrl || "/admin")}
+                onClick={() => loginWithKeycloak(requiredRole, redirectUrl || (lacksAdmin ? "/admin" : "/dispatcher"))}
                 className="w-full bg-[#092C4C] hover:bg-[#061e34] text-white flex items-center justify-center gap-2"
               >
-                <span>Sign in as Administrator</span>
+                <span>{roleButtonLabel}</span>
                 <ArrowRight className="h-4 w-4" />
               </Button>
               <Button

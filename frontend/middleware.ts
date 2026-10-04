@@ -4,8 +4,11 @@ import type { NextRequest } from "next/server";
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
-  // Route protection for /admin
-  if (pathname === "/admin" || pathname.startsWith("/admin/")) {
+  const isProtectedAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
+  const isProtectedDispatcher = pathname === "/dispatcher" || pathname.startsWith("/dispatcher/");
+
+  // Route protection for /admin and /dispatcher
+  if (isProtectedAdmin || isProtectedDispatcher) {
     const token = request.cookies.get("waypoint_access_token")?.value;
 
     // 1. Missing access token: redirect to login with return target
@@ -51,5 +54,7 @@ export const config = {
   matcher: [
     "/admin",
     "/admin/:path*",
+    "/dispatcher",
+    "/dispatcher/:path*",
   ],
 };
