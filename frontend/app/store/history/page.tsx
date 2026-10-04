@@ -21,8 +21,9 @@ import { Input } from "@/components/ui/input";
 import { StorePill } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
 import { getStoreOrders } from "@/components/store/api/store-data";
-import { fetchStoreIssues, getStoredIssues, StoreIssue } from "@/services/issues-store";
-import { StoreOrder, mockOrders } from "@/components/store/mock-data";
+import { fetchStoreIssues, StoreIssue } from "@/services/issues-store";
+import { StoreOrder } from "@/components/store/mock-data";
+import { useStoreOutlet } from "@/components/store/outlet-context";
 
 interface HistoryRecord {
   orderId: string;
@@ -38,9 +39,14 @@ interface HistoryRecord {
   outcomeTitle: string;
   outcomeDetail: string;
   status: "completed" | "archived";
+  /** Arrived by the end of its delivery window; null when the arrival time isn't recorded. */
+  onTime: boolean | null;
 }
 
 export default function DeliveryHistoryPage() {
+  const outlet = useStoreOutlet();
+  // "Now" for the date filter, read once when the page opens (render must stay pure).
+  const [now] = useState(() => Date.now());
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState<"all" | "clean" | "issues">("all");
@@ -52,18 +58,14 @@ export default function DeliveryHistoryPage() {
     async function loadHistory() {
       setLoading(true);
       try {
-        const [orders, remoteIssues] = await Promise.all([
+        const [orders, allIssues] = await Promise.all([
           getStoreOrders(),
-          fetchStoreIssues().catch(() => getStoredIssues()),
+          // Without issues the history still shows; outcomes just read as clean.
+          fetchStoreIssues().catch((): StoreIssue[] => []),
         ]);
 
-        const allIssues = remoteIssues && remoteIssues.length > 0 ? remoteIssues : getStoredIssues();
-        const baseOrders = orders && orders.length > 0 ? orders : mockOrders;
-
-        // Filter for completed/delivered orders
-        const relevantOrders = baseOrders.filter(
-          (o) => o.status === "completed" || o.status === "delivered" || o.statusTimes?.delivered
-        );
+        // Deliveries that reached the store: received (completed) or at the dock awaiting receipt.
+        const relevantOrders = orders.filter((o) => o.status === "completed" || o.status === "delivered");
 
         const records: HistoryRecord[] = relevantOrders.map((ord) => {
           const matchingIssues = allIssues.filter(
@@ -98,18 +100,27 @@ export default function DeliveryHistoryPage() {
             orderId: ord.orderNumber,
             deliveryDate: dateStr,
             rawDate: ord.orderDate || new Date().toISOString(),
-            arrivalInfo: "Arrived • Rear dock",
-            vehicleId: ord.vehicle?.code || ord.vehicleCode || "VEH001",
-            vehicleType: ord.vehicle?.description || "Truck • Ambient",
-            driverName: ord.vehicle?.driverName || "Marcus Vance",
+            arrivalInfo: ord.delivery?.actualArrival
+              ? `Arrived ${format(parseISO(ord.delivery.actualArrival), "HH:mm")}`
+              : ord.status === "completed"
+                ? "Received"
+                : "At your dock",
+            vehicleId: ord.delivery?.vehicleCode ?? "—",
+            vehicleType: [ord.delivery?.vehicleType, ord.delivery?.temperatureMode].filter(Boolean).join(" • ") || "—",
+            driverName: ord.delivery?.driverName ?? "—",
             itemCount: ord.items.length,
             unitCount: totalUnits,
             outcomeType,
             outcomeTitle,
             outcomeDetail,
             status: "completed",
+            onTime: ord.delivery?.actualArrival
+              ? ord.delivery.actualArrival.slice(0, 16) <=
+                `${ord.orderDate}T${(ord.deliveryWindow ?? outlet)?.windowEnd ?? "23:59"}`
+              : null,
           };
         });
+
 
         setHistoryRecords(records);
       } catch {
@@ -120,7 +131,7 @@ export default function DeliveryHistoryPage() {
     }
 
     loadHistory();
-  }, []);
+  }, [outlet]);
 
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
@@ -128,7 +139,11 @@ export default function DeliveryHistoryPage() {
   const totalCount = historyRecords.length;
   const cleanCount = historyRecords.filter((r) => r.outcomeType === "clean").length;
   const issuesCount = historyRecords.filter((r) => r.outcomeType !== "clean").length;
-  const onTimePct = totalCount > 0 ? "96%" : "100%";
+  // Only deliveries with a recorded arrival count; "—" until there's one.
+  const timed = historyRecords.filter((r) => r.onTime !== null);
+  const onTimePct = timed.length
+    ? `${Math.round((timed.filter((r) => r.onTime).length / timed.length) * 100)}%`
+    : "—";
 
   const filtered = historyRecords.filter((rec) => {
     if (selectedTab === "clean" && rec.outcomeType !== "clean") return false;
@@ -141,7 +156,7 @@ export default function DeliveryHistoryPage() {
       const days = parseInt(dateFilter, 10);
       if (!isNaN(days) && rec.rawDate) {
         const itemDate = new Date(rec.rawDate).getTime();
-        const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+        const cutoff = now - days * 24 * 60 * 60 * 1000;
         if (itemDate < cutoff) return false;
       }
     }

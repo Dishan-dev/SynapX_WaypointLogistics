@@ -1,24 +1,27 @@
 import csv
 import io
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from datetime import timezone
 
-from app.api.deps import get_db, require_dispatcher_or_admin
-from app.models.user import User
+from app.api.deps import get_db, get_current_user, get_dispatcher_depot, require_dispatcher_or_admin
+from app.models.user import User, UserRole
 from app.models.fleet import Vehicle, DriverProfile, VehicleStatus
 from app.schemas.fleet import (
     VehicleCreate,
     VehicleUpdate,
     VehicleResponse,
+    VehicleDriverAssignRequest,
     DriverProfileCreate,
     DriverProfileResponse,
 )
 from app.models.allocation import Allocation, AllocationStatus
+from app.models.reference import Depot
+from sqlalchemy import func
 
 router = APIRouter()
 
@@ -188,27 +191,47 @@ def import_vehicles_csv(
         "errors": errors
     }
 
+def vehicle_to_response(v: Vehicle) -> VehicleResponse:
+    item = VehicleResponse.model_validate(v)
+    if v.driver and v.driver.user:
+        item.assigned_driver_id = v.driver.user_id
+        item.assigned_driver_name = v.driver.user.full_name
+        item.assigned_driver_phone = v.driver.phone
+    return item
+
 @router.get("/vehicles", response_model=List[VehicleResponse])
 def get_vehicles(
     db: Session = Depends(get_db),
     status: Optional[str] = None,
     skip: int = 0,
-    limit: int = 100
+    limit: int = 200,
+    depot: Optional[str] = Query(None, description="Optional depot filter"),
+    current_user: User = Depends(get_current_user),
+    x_waypoint_depot: Optional[str] = Header(default=None, alias="X-Waypoint-Depot"),
 ) -> Any:
     """
-    Retrieve vehicles. Optionally filter by status.
+    Retrieve vehicles with assigned driver info. Optionally filter by status or depot.
     """
-    query = db.query(Vehicle)
-    if status:
+    query = db.query(Vehicle).options(
+        joinedload(Vehicle.driver).joinedload(DriverProfile.user)
+    )
+    if depot and depot.lower() != "all":
+        query = query.filter(func.lower(Vehicle.depot_name) == depot.lower())
+    elif current_user.role == UserRole.DISPATCHER and x_waypoint_depot:
+        d = get_dispatcher_depot(db=db, current_user=current_user, x_waypoint_depot=x_waypoint_depot)
+        query = query.filter(func.lower(Vehicle.depot_name) == d.value)
+
+    if status and status != "ALL":
         query = query.filter(Vehicle.status == status.upper())
     vehicles = query.offset(skip).limit(limit).all()
-    return vehicles
+    return [vehicle_to_response(v) for v in vehicles]
 
 @router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
 def create_vehicle(
     vehicle_in: VehicleCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_dispatcher_or_admin),
+    current_user: User = Depends(require_dispatcher_or_admin),
+    x_waypoint_depot: Optional[str] = Header(default=None, alias="X-Waypoint-Depot"),
 ) -> Any:
     """
     Create new vehicle.
@@ -219,7 +242,11 @@ def create_vehicle(
             status_code=400,
             detail="The vehicle with this code already exists in the system.",
         )
-    vehicle = Vehicle(**vehicle_in.model_dump())
+    v_data = vehicle_in.model_dump(exclude={"assigned_driver_id"})
+    if current_user.role == UserRole.DISPATCHER:
+        d = get_dispatcher_depot(db=db, current_user=current_user, x_waypoint_depot=x_waypoint_depot)
+        v_data["depot_name"] = d.value
+    vehicle = Vehicle(**v_data)
     db.add(vehicle)
     try:
         db.commit()
@@ -227,24 +254,46 @@ def create_vehicle(
         db.rollback()
         raise HTTPException(status_code=409, detail="This vehicle code is already in use.")
     db.refresh(vehicle)
-    return vehicle
+
+    if vehicle_in.assigned_driver_id is not None:
+        user = db.query(User).filter(User.id == vehicle_in.assigned_driver_id).first()
+        if user:
+            prof = db.query(DriverProfile).filter(DriverProfile.user_id == user.id).first()
+            if not prof:
+                prof = DriverProfile(user_id=user.id, license_type="Heavy Vehicle", phone="077-0000000", assigned_vehicle_id=vehicle.id)
+                db.add(prof)
+            else:
+                prof.assigned_vehicle_id = vehicle.id
+            db.commit()
+            db.refresh(vehicle)
+
+    return vehicle_to_response(vehicle)
 
 
 @router.patch("/vehicles/{vehicle_id}", response_model=VehicleResponse)
-def update_vehicle(
+def update_vehicle_patch(
     vehicle_id: int,
     vehicle_in: VehicleUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_dispatcher_or_admin),
+    current_user: User = Depends(require_dispatcher_or_admin),
+    x_waypoint_depot: Optional[str] = Header(default=None, alias="X-Waypoint-Depot"),
 ) -> Any:
-    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).with_for_update().first()
+    query = db.query(Vehicle).filter(Vehicle.id == vehicle_id)
+    if current_user.role == UserRole.DISPATCHER:
+        d = get_dispatcher_depot(db=db, current_user=current_user, x_waypoint_depot=x_waypoint_depot)
+        query = query.filter(func.lower(Vehicle.depot_name) == d.value)
+    vehicle = query.with_for_update().first()
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
     def utc_naive(value):
         return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
-    if utc_naive(vehicle.updated_at) != utc_naive(vehicle_in.expected_updated_at):
+    if hasattr(vehicle_in, "expected_updated_at") and vehicle_in.expected_updated_at and utc_naive(vehicle.updated_at) != utc_naive(vehicle_in.expected_updated_at):
         raise HTTPException(status_code=409, detail="Vehicle changed since you opened it. Close the form, refresh, and try again.")
     changes = vehicle_in.model_dump(exclude_unset=True, exclude={"expected_updated_at"})
+    if current_user.role == UserRole.DISPATCHER and "depot_name" in changes:
+        d = get_dispatcher_depot(db=db, current_user=current_user, x_waypoint_depot=x_waypoint_depot)
+        if changes["depot_name"].strip().lower() != d.value:
+            raise HTTPException(status_code=403, detail="Vehicles cannot be moved between depots from this workspace.")
     changes = {key: value for key, value in changes.items() if getattr(vehicle, key) != value}
     protected = {"status", "code", "vehicle_type", "capacity_kg", "capacity_vol_m3", "temperature_mode", "depot_name"}
     if protected.intersection(changes):
@@ -261,7 +310,7 @@ def update_vehicle(
         db.rollback()
         raise HTTPException(status_code=409, detail="The vehicle could not be saved because its code conflicts with another vehicle.")
     db.refresh(vehicle)
-    return vehicle
+    return vehicle_to_response(vehicle)
 
 @router.put("/vehicles/{vehicle_id}", response_model=VehicleResponse)
 def update_vehicle(
@@ -272,17 +321,98 @@ def update_vehicle(
     """
     Update an existing vehicle.
     """
-    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
+    vehicle = (
+        db.query(Vehicle)
+        .options(joinedload(Vehicle.driver).joinedload(DriverProfile.user))
+        .filter(Vehicle.id == vehicle_id)
+        .first()
+    )
     if not vehicle:
         raise HTTPException(status_code=404, detail="Vehicle not found")
     
     update_data = vehicle_in.model_dump(exclude_unset=True)
+    driver_id_val = update_data.pop("assigned_driver_id", None)
     for field, value in update_data.items():
         setattr(vehicle, field, value)
+
+    if "assigned_driver_id" in vehicle_in.model_fields_set:
+        for prof in db.query(DriverProfile).filter(DriverProfile.assigned_vehicle_id == vehicle.id).all():
+            prof.assigned_vehicle_id = None
+        if driver_id_val is not None:
+            user = db.query(User).filter(User.id == driver_id_val).first()
+            if user:
+                prof = db.query(DriverProfile).filter(DriverProfile.user_id == user.id).first()
+                if not prof:
+                    prof = DriverProfile(user_id=user.id, license_type="Heavy Vehicle", phone="077-0000000", assigned_vehicle_id=vehicle.id)
+                    db.add(prof)
+                else:
+                    prof.assigned_vehicle_id = vehicle.id
         
     db.commit()
     db.refresh(vehicle)
-    return vehicle
+    return vehicle_to_response(vehicle)
+
+@router.post("/vehicles/{vehicle_id}/assign-driver", response_model=VehicleResponse)
+def assign_vehicle_driver(
+    vehicle_id: int,
+    payload: VehicleDriverAssignRequest,
+    db: Session = Depends(get_db),
+) -> Any:
+    """
+    Assign or unassign a driver from a vehicle.
+    """
+    vehicle = (
+        db.query(Vehicle)
+        .options(joinedload(Vehicle.driver).joinedload(DriverProfile.user))
+        .filter(Vehicle.id == vehicle_id)
+        .first()
+    )
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+
+    driver_user_id = payload.driver_user_id
+
+    # Clear current driver assigned to this vehicle
+    current_assignments = db.query(DriverProfile).filter(DriverProfile.assigned_vehicle_id == vehicle.id).all()
+    for prof in current_assignments:
+        prof.assigned_vehicle_id = None
+
+    driver_name = "Unassigned"
+    if driver_user_id is not None:
+        user = db.query(User).filter(User.id == driver_user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="Driver user account not found")
+
+        # Assign this vehicle to driver's profile
+        profile = db.query(DriverProfile).filter(DriverProfile.user_id == user.id).first()
+        if not profile:
+            profile = DriverProfile(
+                user_id=user.id,
+                license_type="Heavy Vehicle",
+                phone="077-0000000",
+                assigned_vehicle_id=vehicle.id,
+            )
+            db.add(profile)
+        else:
+            profile.assigned_vehicle_id = vehicle.id
+        driver_name = user.full_name
+
+    db.commit()
+    db.refresh(vehicle)
+
+    try:
+        from app.api.v1.endpoints.admin import record_audit
+        record_audit(
+            action_type="FLEET_MUTATION",
+            entity_name="Vehicle Driver Assignment",
+            entity_id=str(vehicle.id),
+            summary=f"Assigned driver '{driver_name}' to vehicle {vehicle.code}.",
+            severity="INFO",
+        )
+    except Exception:
+        pass
+
+    return vehicle_to_response(vehicle)
 
 @router.patch("/vehicles/{vehicle_id}/status", response_model=VehicleResponse)
 def update_vehicle_status(

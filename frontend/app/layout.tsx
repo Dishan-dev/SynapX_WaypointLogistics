@@ -22,6 +22,8 @@ export const viewport: Viewport = {
   maximumScale: 1,
 };
 
+import { AuthProvider } from "@/lib/auth-context";
+
 export default function RootLayout({
   children,
 }: {
@@ -30,9 +32,11 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full font-sans antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col bg-background text-foreground" suppressHydrationWarning>
-        <OfflineSyncBanner />
-        <main className="flex-1 flex flex-col">{children}</main>
-        <Toaster position="top-right" richColors />
+        <AuthProvider>
+          <OfflineSyncBanner />
+          <main className="flex-1 flex flex-col">{children}</main>
+          <Toaster position="top-right" richColors />
+        </AuthProvider>
       </body>
     </html>
   );

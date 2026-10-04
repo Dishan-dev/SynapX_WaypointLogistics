@@ -16,14 +16,19 @@ export function LiveRouteMap({ run }: LiveRouteMapProps) {
   }
 
   // Derive points from stop_sequence
-  const stops = run.stop_sequence && run.stop_sequence.length > 0
+  const deliveryStops = run.stop_sequence && run.stop_sequence.length > 0
     ? run.stop_sequence
-    : Array.from({ length: Math.max(run.stop_count, 2) }, (_, i) => `Stop ${i + 1}`);
+    : Array.from({ length: Math.max(run.stop_count, 1) }, (_, i) => `Stop ${i + 1}`);
+
+  // Logically, a run starts at the Depot. If stops_completed is 0, it is at the Depot.
+  const stops = [{ name: `${(run.depot_name || "Depot").toUpperCase()} DEPOT` }, ...deliveryStops];
 
   const N = stops.length;
   // Fallback to 2 points if N < 2 to avoid division by zero or weird paths
   const pointCount = Math.max(N, 2); 
-  const currentStopIndex = Math.min(run.stops_completed, N - 1);
+  const currentStopIndex = run.status === "en_route" || run.status === "completed" 
+    ? Math.min(run.stops_completed, N - 1) 
+    : 0; // If scheduled or ready, it is at the Depot (index 0)
 
   // Distribute X from 80 to 720
   const startX = 80;
@@ -36,7 +41,7 @@ export function LiveRouteMap({ run }: LiveRouteMapProps) {
     // Base frequency so that a typical run has 1 or 1.5 waves across the width
     const normalized = i / (pointCount - 1 || 1);
     const y = 150 + Math.sin(normalized * Math.PI * 2.5) * 45;
-    return { x, y, name: typeof stop === 'string' ? stop : (stop as any).name || `Stop ${i + 1}` };
+    return { x, y, name: typeof stop === 'string' ? stop : (stop as any).name || `Stop ${i}` };
   });
 
   // Helper to generate a smooth bezier path through points
@@ -86,7 +91,7 @@ export function LiveRouteMap({ run }: LiveRouteMapProps) {
 
         {/* Draw the stops */}
         {points.map((p, i) => {
-          const isDone = i < currentStopIndex;
+          const isDone = i <= run.stops_completed;
           const isCurrent = i === currentStopIndex;
           return (
             <g key={i}>

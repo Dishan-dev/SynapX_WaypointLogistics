@@ -1,5 +1,6 @@
 import { apiFetch, ApiError } from "@/components/store/api/client";
-import { STORE_DATA_SOURCE, STORE_OUTLET_ID } from "@/components/store/api/config";
+import { STORE_DATA_SOURCE } from "@/components/store/api/config";
+import { getStoreOrder, getStoreSession } from "@/components/store/api/store-data";
 
 export interface StoreIssue {
   id: string;
@@ -52,11 +53,11 @@ export interface ApiDeliveryIssue {
 export function fromApiIssue(api: ApiDeliveryIssue): StoreIssue {
   return {
     id: `ISS${String(api.id).padStart(7, "0")}`,
-    orderId: api.order_number || (api.order_id ? `ORD${String(api.order_id).padStart(7, "0")}` : "ORD0000001"),
+    orderId: api.order_number ?? "",
     type: (api.issue_type as StoreIssue["type"]) || "Damaged Goods",
     title: api.title,
-    affectedItem: api.affected_item || "General Consignment",
-    sku: api.sku || "N/A",
+    affectedItem: api.affected_item || "Whole delivery",
+    sku: api.sku || "",
     expectedUnits: api.expected_units ?? 0,
     receivedUnits: api.received_units ?? 0,
     description: api.description,
@@ -70,7 +71,7 @@ export function fromApiIssue(api: ApiDeliveryIssue): StoreIssue {
       hour: "2-digit",
       minute: "2-digit",
     }),
-    reportedBy: api.reported_by || "Sarah Jenkins (Store Manager)",
+    reportedBy: api.reported_by || "Store Manager",
     status: api.status,
     resolutionNotes: api.resolution_notes || undefined,
     claimedAmount: api.claimed_amount || undefined,
@@ -141,137 +142,49 @@ export const initialMockIssues: StoreIssue[] = [
   },
 ];
 
-const STORAGE_KEY = "waypoint_store_issues";
+// ── Reading and logging issues ──────────────────────────────────────────────────────────────────────────
+// Live data only: the backend scopes issues to the signed-in manager's outlet. Nothing is kept in the
+// browser, so every device and the Dispatcher see the same list. initialMockIssues is for mock mode only.
 
-export function getStoredIssues(): StoreIssue[] {
-  if (typeof window === "undefined") return initialMockIssues;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initialMockIssues));
-      return initialMockIssues;
-    }
-    return JSON.parse(raw);
-  } catch {
-    return initialMockIssues;
-  }
-}
-
-/** Async fetch from DB with fallback to localStorage */
+/** The outlet's delivery issues, newest first. */
 export async function fetchStoreIssues(): Promise<StoreIssue[]> {
-  try {
-    const apiIssues = await apiFetch<ApiDeliveryIssue[]>(`/issues?outlet_id=${STORE_OUTLET_ID}`);
-    if (apiIssues && apiIssues.length > 0) {
-      const mapped = apiIssues.map(fromApiIssue);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(mapped));
-      }
-      return mapped;
-    }
-  } catch {
-    // fallback to local storage
-  }
-  return getStoredIssues();
+  if (STORE_DATA_SOURCE !== "api") return initialMockIssues;
+  const { outlet } = await getStoreSession();
+  const issues = await apiFetch<ApiDeliveryIssue[]>(`/issues?outlet_id=${outlet.id}`);
+  return issues.map(fromApiIssue);
 }
 
-/** Save an issue to DB + cache in localStorage */
-export async function saveIssueAsync(
-  issue: Omit<StoreIssue, "id" | "reportedAt" | "reportedBy" | "status">
-): Promise<StoreIssue> {
-  // 1. Try sending to backend API
-  try {
-    const numericOrderId = parseInt(issue.orderId.replace(/\D/g, ""), 10) || null;
-    const created = await apiFetch<ApiDeliveryIssue>("/issues", {
-      method: "POST",
-      body: JSON.stringify({
-        order_id: numericOrderId,
-        order_number: issue.orderId,
-        outlet_id: STORE_OUTLET_ID,
-        issue_type: issue.type,
-        title: issue.title,
-        affected_item: issue.affectedItem,
-        sku: issue.sku,
-        expected_units: issue.expectedUnits,
-        received_units: issue.receivedUnits,
-        description: issue.description,
-        photo_url: issue.photoUrl || null,
-        photo_name: issue.photoName || null,
-        photo_size: issue.photoSize || null,
-        driver_name: issue.driverName || null,
-        vehicle_id: issue.vehicleId || null,
-        claimed_amount: issue.claimedAmount || null,
-      }),
-    });
-    const mapped = fromApiIssue(created);
-    saveToLocalStorage(mapped);
-    return mapped;
-  } catch {
-    // 2. Offline / local fallback
-    return saveIssue(issue);
+export type NewStoreIssue = Omit<StoreIssue, "id" | "reportedAt" | "reportedBy" | "status">;
+
+/** Logs an issue against one of the outlet's orders. Throws (ApiError) if the server doesn't accept it. */
+export async function createStoreIssue(issue: NewStoreIssue): Promise<StoreIssue> {
+  if (STORE_DATA_SOURCE !== "api") {
+    throw new ApiError("Issue reporting needs the Waypoint server. Switch to live data.", 400);
   }
-}
-
-function saveToLocalStorage(newIssue: StoreIssue) {
-  if (typeof window === "undefined") return;
-  const current = getStoredIssues().filter((i) => i.id !== newIssue.id);
-  const updated = [newIssue, ...current];
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    window.dispatchEvent(new Event("waypoint_issues_updated"));
-  } catch (e) {
-    console.error("Failed to save issue to localStorage", e);
+  const [{ outlet }, order] = await Promise.all([
+    getStoreSession(),
+    issue.orderId ? getStoreOrder(issue.orderId) : Promise.resolve(null),
+  ]);
+  if (issue.orderId && !order) {
+    throw new ApiError(`${issue.orderId} isn't one of your orders.`, 404);
   }
-}
-
-export function saveIssue(issue: Omit<StoreIssue, "id" | "reportedAt" | "reportedBy" | "status">): StoreIssue {
-  const current = getStoredIssues();
-  let maxId = 0;
-  current.forEach((i) => {
-    const num = parseInt(i.id.replace(/\D/g, ""), 10);
-    if (!isNaN(num) && num > maxId) maxId = num;
-  });
-  const nextNum = maxId + 1;
-  const newIssue: StoreIssue = {
-    ...issue,
-    id: `ISS${String(nextNum).padStart(7, "0")}`,
-    reportedAt: new Date().toLocaleString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
-    reportedBy: "Sarah Jenkins (Store Manager)",
-    status: "open",
-  };
-
-  saveToLocalStorage(newIssue);
-
-  // Background fire and forget sync to DB if reachable
-  const numericOrderId = parseInt(issue.orderId.replace(/\D/g, ""), 10) || null;
-  apiFetch<ApiDeliveryIssue>("/issues", {
+  const created = await apiFetch<ApiDeliveryIssue>("/issues", {
     method: "POST",
     body: JSON.stringify({
-      order_id: numericOrderId,
-      order_number: issue.orderId,
-      outlet_id: STORE_OUTLET_ID,
+      // The real order id, not the digits of the order number.
+      order_id: order?.id ?? null,
+      order_number: order?.orderNumber ?? null,
+      outlet_id: outlet.id,
       issue_type: issue.type,
       title: issue.title,
-      affected_item: issue.affectedItem,
-      sku: issue.sku,
+      affected_item: issue.affectedItem || null,
+      sku: issue.sku || null,
       expected_units: issue.expectedUnits,
       received_units: issue.receivedUnits,
       description: issue.description,
-      photo_url: issue.photoUrl || null,
-      photo_name: issue.photoName || null,
-      photo_size: issue.photoSize || null,
-      driver_name: issue.driverName || null,
-      vehicle_id: issue.vehicleId || null,
+      // Photos are only kept on this device for now (no upload storage yet), so no link is sent.
       claimed_amount: issue.claimedAmount || null,
     }),
-  }).catch(() => {
-    // Ignored in offline mode
   });
-
-  return newIssue;
+  return fromApiIssue(created);
 }

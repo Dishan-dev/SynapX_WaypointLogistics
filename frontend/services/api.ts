@@ -26,6 +26,10 @@ export interface ReceiptCreatePayload {
 import { apiFetch, ApiError } from "@/components/store/api/client";
 
 // --- Receipts API & Offline Helpers ---
+// apiFetch sends the signed-in user's token (the backend scopes receipts to their outlet) and finds the API.
+
+/** The server refused the receipt (as opposed to the connection dropping). */
+export class ReceiptRejectedError extends Error {}
 
 export async function submitDeliveryReceipt(payload: ReceiptCreatePayload): Promise<{ receipt?: DeliveryReceipt; isOffline?: boolean }> {
   try {
@@ -35,16 +39,9 @@ export async function submitDeliveryReceipt(payload: ReceiptCreatePayload): Prom
     });
     return { receipt, isOffline: false };
   } catch (err: unknown) {
-    if (err instanceof ApiError) {
-      if (err.status === 409 || err.message.includes("already submitted")) {
-        throw err;
-      }
-    }
-    const message = err instanceof Error ? err.message : "";
-    if (message.includes("already submitted")) {
-      throw err;
-    }
-    // Queue in localStorage for offline sync
+    // The server answered and said no (already received, not dispatched yet, another outlet's order): show why.
+    if (err instanceof ApiError && !err.isNetworkError) throw new ReceiptRejectedError(err.message);
+    // Only a dropped connection is queued; OfflineSyncBanner sends it when the connection is back.
     saveOfflineReceipt({ ...payload, synced_from_offline: true });
     return { isOffline: true };
   }
@@ -63,10 +60,10 @@ export async function syncOfflineReceipts(receipts: ReceiptCreatePayload[]): Pro
 
 export async function getDeliveryReceipt(orderId: number | string): Promise<DeliveryReceipt | null> {
   try {
-    const receipt = await apiFetch<DeliveryReceipt>(`/receipts/${orderId}`);
-    return receipt ?? null;
-  } catch {
-    return null;
+    return await apiFetch<DeliveryReceipt>(`/receipts/${orderId}`);
+  } catch (err: unknown) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
   }
 }
 

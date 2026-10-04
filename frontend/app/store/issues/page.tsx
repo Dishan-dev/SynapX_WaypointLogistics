@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StorePill, StorePillTone } from "@/components/store/status-pill";
 import { StoreMetricCard } from "@/components/store/store-cards";
-import { getStoredIssues, fetchStoreIssues, saveIssue, StoreIssue } from "@/services/issues-store";
+import { createStoreIssue, fetchStoreIssues, StoreIssue } from "@/services/issues-store";
 
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
@@ -56,25 +56,22 @@ function ExceptionsAndIssuesContent() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
   const loadIssues = async () => {
-    // Initial quick load from local storage
-    setIssues(getStoredIssues());
-    // Live update from backend DB
     try {
-      const data = await fetchStoreIssues();
-      if (data && data.length > 0) {
-        setIssues(data);
-      }
+      setIssues(await fetchStoreIssues());
+      setLoadError(null);
     } catch {
-      // Handled via local storage
+      setLoadError("Couldn't load your issues. Check your connection and refresh.");
     }
   };
 
   useEffect(() => {
-    loadIssues();
-    const handleUpdate = () => loadIssues();
-    window.addEventListener("waypoint_issues_updated", handleUpdate);
-    return () => window.removeEventListener("waypoint_issues_updated", handleUpdate);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads once on mount
+    void loadIssues();
   }, []);
 
   useEffect(() => {
@@ -148,11 +145,15 @@ function ExceptionsAndIssuesContent() {
     }
   };
 
-  const handleCreateIssue = (e: React.FormEvent) => {
+  const handleCreateIssue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDescription.trim()) return;
 
-    const created = saveIssue({
+    setIsSaving(true);
+    setSaveError(null);
+    let created: StoreIssue;
+    try {
+      created = await createStoreIssue({
       orderId: newOrderId,
       type: newType,
       title: `${newType}: ${newItemName || "Order Discrepancy"}`,
@@ -164,11 +165,15 @@ function ExceptionsAndIssuesContent() {
       photoUrl: newPhoto?.url,
       photoName: newPhoto?.name,
       photoSize: newPhoto?.size,
-      driverName: "Marcus Vance",
-      vehicleId: "VEH001",
     });
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Couldn't log the issue. Try again.");
+      setIsSaving(false);
+      return;
+    }
+    setIsSaving(false);
 
-    loadIssues();
+    await loadIssues();
     setSelectedIssue(created);
     setShowCreateModal(false);
     setNewDescription("");
@@ -228,6 +233,12 @@ function ExceptionsAndIssuesContent() {
       </div>
 
       {/* 4 Metric Cards (Figma 16:828) */}
+      {loadError && (
+        <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive-muted p-4 text-sm font-medium text-destructive">
+          {loadError}
+        </p>
+      )}
+
       <section aria-label="Exceptions Summary" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <StoreMetricCard
           label="Total Issues"
@@ -766,13 +777,18 @@ function ExceptionsAndIssuesContent() {
                 )}
               </div>
 
+              {saveError && (
+                <p role="alert" className="text-sm font-medium text-destructive">
+                  {saveError}
+                </p>
+              )}
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/60">
                 <Button type="button" variant="outline" onClick={() => setShowCreateModal(false)}>
                   Cancel
                 </Button>
                 <Button
                   type="submit"
-                  disabled={!newDescription.trim()}
+                  disabled={!newDescription.trim() || isSaving}
                   className="bg-primary text-primary-foreground font-bold hover:bg-primary/90"
                 >
                   Submit Issue Report

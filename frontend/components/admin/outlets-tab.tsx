@@ -16,6 +16,9 @@ import {
   AlertCircle,
   FileText,
   Warehouse,
+  UserCheck,
+  User,
+  Phone,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -47,10 +50,11 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
-import { OutletRecord, adminService } from "@/services/admin-service";
+import { OutletRecord, AdminUser, adminService } from "@/services/admin-service";
 
 interface OutletsTabProps {
   outlets: OutletRecord[];
+  users?: AdminUser[];
   isLoading: boolean;
   onRefresh: () => void;
 }
@@ -67,11 +71,28 @@ interface CSVPreviewRow {
   window_close_time: string;
 }
 
-export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
+export function OutletsTab({ outlets, users = [], isLoading, onRefresh }: OutletsTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [brandFilter, setBrandFilter] = useState("ALL");
   const [depotFilter, setDepotFilter] = useState("ALL");
   const [accessFilter, setAccessFilter] = useState("ALL");
+
+  // Store Managers list from users
+  const storeManagers = (users || []).filter(
+    (u) =>
+      u.role === "WAREHOUSE_MANAGER" ||
+      u.role === "STORE_MANAGER" ||
+      u.role_display?.toLowerCase().includes("manager")
+  );
+
+  // Store Manager Assignment State
+  const [isAssignManagerOpen, setIsAssignManagerOpen] = useState(false);
+  const [assigningOutlet, setAssigningOutlet] = useState<OutletRecord | null>(null);
+  const [selectedManagerUserId, setSelectedManagerUserId] = useState<string>("none");
+  const [customManagerName, setCustomManagerName] = useState("");
+  const [customManagerPhone, setCustomManagerPhone] = useState("");
+  const [isSubmittingAssign, setIsSubmittingAssign] = useState(false);
+  const [assignError, setAssignError] = useState("");
 
   // Export State
   const [isExporting, setIsExporting] = useState(false);
@@ -103,6 +124,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
     van_only: false,
     window_start: "06:00",
     window_end: "18:00",
+    store_manager: "",
+    store_manager_phone: "",
   });
   const [isSubmittingCreate, setIsSubmittingCreate] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -120,6 +143,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
     van_only: false,
     window_start: "06:00",
     window_end: "18:00",
+    store_manager: "",
+    store_manager_phone: "",
   });
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [editError, setEditError] = useState("");
@@ -251,6 +276,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
         code: createForm.code.toUpperCase(),
         van_only: createForm.parking_constraint === "van_only",
         mall_window: createForm.mall_window || undefined,
+        store_manager: createForm.store_manager || undefined,
+        store_manager_phone: createForm.store_manager_phone || undefined,
       });
       setIsCreateOpen(false);
       setCreateForm({
@@ -265,6 +292,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
         van_only: false,
         window_start: "06:00",
         window_end: "18:00",
+        store_manager: "",
+        store_manager_phone: "",
       });
       onRefresh();
     } catch (err: unknown) {
@@ -287,6 +316,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
       van_only: outlet.van_only,
       window_start: outlet.window_start || "06:00",
       window_end: outlet.window_end || "18:00",
+      store_manager: outlet.store_manager || "",
+      store_manager_phone: outlet.store_manager_phone || "",
     });
     setEditError("");
     setIsEditOpen(true);
@@ -310,6 +341,8 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
         van_only: editForm.parking_constraint === "van_only",
         window_start: editForm.window_start,
         window_end: editForm.window_end,
+        store_manager: editForm.store_manager || null,
+        store_manager_phone: editForm.store_manager_phone || null,
       });
       setIsEditOpen(false);
       onRefresh();
@@ -317,6 +350,43 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
       setEditError(err instanceof Error ? err.message : "Update failed");
     } finally {
       setIsSubmittingEdit(false);
+    }
+  };
+
+  // Handle Assign Manager Submit
+  const handleAssignManagerSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assigningOutlet) return;
+    setIsSubmittingAssign(true);
+    setAssignError("");
+    try {
+      if (selectedManagerUserId === "none") {
+        await adminService.assignOutletManager(assigningOutlet.id, {
+          user_id: null,
+          store_manager: null,
+          contact_phone: null,
+        });
+      } else if (selectedManagerUserId === "custom") {
+        await adminService.assignOutletManager(assigningOutlet.id, {
+          store_manager: customManagerName,
+          contact_phone: customManagerPhone,
+        });
+      } else {
+        const uId = Number(selectedManagerUserId);
+        const matched = storeManagers.find((m) => m.id === uId);
+        await adminService.assignOutletManager(assigningOutlet.id, {
+          user_id: uId,
+          store_manager: matched?.full_name,
+          contact_phone: customManagerPhone || "077-0000000",
+        });
+      }
+      setIsAssignManagerOpen(false);
+      setAssigningOutlet(null);
+      onRefresh();
+    } catch (err: unknown) {
+      setAssignError(err instanceof Error ? err.message : "Failed to assign store manager");
+    } finally {
+      setIsSubmittingAssign(false);
     }
   };
 
@@ -484,6 +554,7 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
               <TableHead className="text-xs font-semibold">Outlet Code &amp; Name</TableHead>
               <TableHead className="text-xs font-semibold">Brand &amp; District</TableHead>
               <TableHead className="text-xs font-semibold">Assigned Depot</TableHead>
+              <TableHead className="text-xs font-semibold">Store Manager</TableHead>
               <TableHead className="text-xs font-semibold">Delivery &amp; Mall Window</TableHead>
               <TableHead className="text-xs font-semibold">Dock &amp; Constraint</TableHead>
               <TableHead className="text-xs font-semibold text-right">Actions</TableHead>
@@ -492,13 +563,13 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-xs text-muted-foreground">
+                <TableCell colSpan={7} className="text-center py-8 text-xs text-muted-foreground">
                   Loading outlets...
                 </TableCell>
               </TableRow>
             ) : filteredOutlets.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-xs text-muted-foreground">
+                <TableCell colSpan={7} className="text-center py-8 text-xs text-muted-foreground">
                   No outlets found matching filters.
                 </TableCell>
               </TableRow>
@@ -525,6 +596,41 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
                     </Badge>
                   </TableCell>
                   <TableCell className="py-3">
+                    {outlet.store_manager ? (
+                      <div className="flex items-center gap-2">
+                        <div className="h-7 w-7 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-bold text-xs shrink-0">
+                          {outlet.store_manager.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold text-foreground flex items-center gap-1">
+                            <span>{outlet.store_manager}</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                            <Phone className="size-2.5 text-muted-foreground" />
+                            <span>{outlet.store_manager_phone || "Contact"}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setAssigningOutlet(outlet);
+                          setSelectedManagerUserId("none");
+                          setCustomManagerName("");
+                          setCustomManagerPhone("");
+                          setAssignError("");
+                          setIsAssignManagerOpen(true);
+                        }}
+                        className="h-6 px-2 text-[11px] text-muted-foreground border-dashed hover:text-primary hover:border-primary"
+                      >
+                        <Plus className="size-3 mr-1" />
+                        <span>Assign Manager</span>
+                      </Button>
+                    )}
+                  </TableCell>
+                  <TableCell className="py-3">
                     <div className="space-y-1">
                       <div className="text-xs font-medium font-mono text-foreground flex items-center gap-1.5">
                         <Clock className="size-3 text-muted-foreground" />
@@ -546,15 +652,43 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
                     </div>
                   </TableCell>
                   <TableCell className="py-3 text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openEditModal(outlet)}
-                      className="text-xs gap-1 h-7 text-primary hover:bg-slate-100"
-                    >
-                      <Edit2 className="size-3" />
-                      <span>Edit</span>
-                    </Button>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAssigningOutlet(outlet);
+                          const matched = storeManagers.find(
+                            (m) => m.full_name.toLowerCase() === (outlet.store_manager || "").toLowerCase()
+                          );
+                          if (matched) {
+                            setSelectedManagerUserId(String(matched.id));
+                          } else if (outlet.store_manager) {
+                            setSelectedManagerUserId("custom");
+                            setCustomManagerName(outlet.store_manager);
+                          } else {
+                            setSelectedManagerUserId("none");
+                          }
+                          setCustomManagerPhone(outlet.store_manager_phone || "");
+                          setAssignError("");
+                          setIsAssignManagerOpen(true);
+                        }}
+                        className="text-xs gap-1 h-7 text-blue-700 hover:bg-blue-50"
+                        title="Assign Store Manager"
+                      >
+                        <UserCheck className="size-3" />
+                        <span className="hidden xl:inline">Manager</span>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openEditModal(outlet)}
+                        className="text-xs gap-1 h-7 text-primary hover:bg-slate-100"
+                      >
+                        <Edit2 className="size-3" />
+                        <span>Edit</span>
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -883,6 +1017,59 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
               />
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Store Manager (Optional)</Label>
+                <Select
+                  value={
+                    storeManagers.some((m) => m.full_name === createForm.store_manager)
+                      ? createForm.store_manager
+                      : createForm.store_manager
+                      ? "custom"
+                      : "none"
+                  }
+                  onValueChange={(val) => {
+                    if (val === "none") {
+                      setCreateForm({ ...createForm, store_manager: "", store_manager_phone: "" });
+                    } else if (val === "custom") {
+                      setCreateForm({ ...createForm, store_manager: "Store Manager" });
+                    } else {
+                      setCreateForm({
+                        ...createForm,
+                        store_manager: val,
+                        store_manager_phone: createForm.store_manager_phone || "077-0000000",
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="text-xs">
+                    <SelectValue placeholder="Select Store Manager..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      <span className="text-muted-foreground italic">No Manager Assigned</span>
+                    </SelectItem>
+                    {storeManagers.map((m) => (
+                      <SelectItem key={m.id} value={m.full_name}>
+                        {m.full_name} ({m.email})
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="custom">Other / Custom Name...</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Manager Phone</Label>
+                <Input
+                  className="text-xs font-mono"
+                  placeholder="e.g. 077-1234567"
+                  value={createForm.store_manager_phone}
+                  onChange={(e) => setCreateForm({ ...createForm, store_manager_phone: e.target.value })}
+                />
+              </div>
+            </div>
+
             <DialogFooter className="pt-2">
               <Button
                 type="button"
@@ -1032,6 +1219,59 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
               />
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Store Manager</Label>
+                <Select
+                  value={
+                    storeManagers.some((m) => m.full_name === editForm.store_manager)
+                      ? editForm.store_manager
+                      : editForm.store_manager
+                      ? "custom"
+                      : "none"
+                  }
+                  onValueChange={(val) => {
+                    if (val === "none") {
+                      setEditForm({ ...editForm, store_manager: "", store_manager_phone: "" });
+                    } else if (val === "custom") {
+                      setEditForm({ ...editForm, store_manager: "Store Manager" });
+                    } else {
+                      setEditForm({
+                        ...editForm,
+                        store_manager: val,
+                        store_manager_phone: editForm.store_manager_phone || "077-0000000",
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger className="text-xs">
+                    <SelectValue placeholder="Select Store Manager..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      <span className="text-muted-foreground italic">No Manager Assigned</span>
+                    </SelectItem>
+                    {storeManagers.map((m) => (
+                      <SelectItem key={m.id} value={m.full_name}>
+                        {m.full_name} ({m.email})
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="custom">Other / Custom Name...</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Manager Phone</Label>
+                <Input
+                  className="text-xs font-mono"
+                  placeholder="e.g. 077-1234567"
+                  value={editForm.store_manager_phone}
+                  onChange={(e) => setEditForm({ ...editForm, store_manager_phone: e.target.value })}
+                />
+              </div>
+            </div>
+
             <DialogFooter className="pt-2">
               <Button
                 type="button"
@@ -1049,6 +1289,130 @@ export function OutletsTab({ outlets, isLoading, onRefresh }: OutletsTabProps) {
                 className="bg-primary text-primary-foreground text-xs font-semibold"
               >
                 {isSubmittingEdit ? "Saving..." : "Save Changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Store Manager Dialog */}
+      <Dialog open={isAssignManagerOpen} onOpenChange={setIsAssignManagerOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <UserCheck className="size-4 text-blue-600" />
+              <span>Assign Store Manager to {assigningOutlet?.name}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Assign an operational manager to oversee deliveries, dock access, and check-ins at this outlet destination.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleAssignManagerSubmit} className="space-y-4 py-2">
+            {assignError && (
+              <div className="p-2.5 rounded text-xs bg-red-50 text-red-800 border border-red-200">
+                {assignError}
+              </div>
+            )}
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-md text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Outlet Code:</span>
+                <span className="font-mono font-bold text-foreground">{assigningOutlet?.code}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Location:</span>
+                <span className="text-foreground">{assigningOutlet?.name} &bull; {assigningOutlet?.district}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Serving Depot:</span>
+                <span className="capitalize text-foreground">{assigningOutlet?.depot} Depot</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Current Manager:</span>
+                <span className="font-semibold text-foreground">
+                  {assigningOutlet?.store_manager || "None (Unassigned)"}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Store Manager Account</Label>
+              <Select
+                value={selectedManagerUserId}
+                onValueChange={(val) => {
+                  setSelectedManagerUserId(val);
+                  if (val !== "custom" && val !== "none") {
+                    const matched = storeManagers.find((m) => String(m.id) === val);
+                    if (matched) {
+                      setCustomManagerName(matched.full_name);
+                    }
+                  }
+                }}
+              >
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Choose a manager..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">
+                    <span className="text-muted-foreground italic">None (Unassign Manager)</span>
+                  </SelectItem>
+                  {storeManagers.map((m) => (
+                    <SelectItem key={m.id} value={String(m.id)}>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{m.full_name}</span>
+                        <span className="text-muted-foreground text-[11px]">({m.email})</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="custom">Other / Custom Manager...</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedManagerUserId === "custom" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Manager Name</Label>
+                <Input
+                  className="text-xs"
+                  placeholder="e.g. Kasun Perera"
+                  value={customManagerName}
+                  onChange={(e) => setCustomManagerName(e.target.value)}
+                  required
+                />
+              </div>
+            )}
+
+            {selectedManagerUserId !== "none" && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Contact Phone</Label>
+                <Input
+                  className="text-xs font-mono"
+                  placeholder="e.g. 077-1234567"
+                  value={customManagerPhone}
+                  onChange={(e) => setCustomManagerPhone(e.target.value)}
+                />
+              </div>
+            )}
+
+            <DialogFooter className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setIsAssignManagerOpen(false)}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSubmittingAssign}
+                className="bg-primary text-primary-foreground text-xs font-semibold gap-1.5"
+              >
+                <UserCheck className="size-3.5" />
+                <span>{isSubmittingAssign ? "Saving..." : "Confirm Manager"}</span>
               </Button>
             </DialogFooter>
           </form>

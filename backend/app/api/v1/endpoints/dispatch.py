@@ -6,10 +6,12 @@ from app.api import deps
 from app.models.shipment import DispatchTrip
 from app.models.allocation import Allocation, AllocationStatus
 from app.models.fleet import DriverProfile
+from app.models.reference import Depot
 from app.schemas.shipment import DispatchTripCreate, DispatchTripRead, DeliveryRunResponse, DeliveryRunUpdate, LoadingEventIn
 from app.models.order import Order, OrderItem
 from app.services.loader_service import loader_service
 
+from app.services.order_service import order_service
 router = APIRouter()
 
 def _with_loader(db: Session, trips: List[DispatchTrip]) -> List[DeliveryRunResponse]:
@@ -64,9 +66,10 @@ def list_delivery_runs(
     depot: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
-    db: Session = Depends(deps.get_db)
+    db: Session = Depends(deps.get_db),
+    depot_scope: Depot = Depends(deps.get_dispatcher_depot),
 ):
-    query = db.query(DispatchTrip)
+    query = db.query(DispatchTrip).filter(DispatchTrip.depot_name == depot_scope.value)
     if status:
         query = query.filter(DispatchTrip.status == status)
     if depot:
@@ -77,7 +80,10 @@ def list_delivery_runs(
 
 
 @router.get("/live")
-def get_live_runs(db: Session = Depends(deps.get_db)):
+def get_live_runs(
+    db: Session = Depends(deps.get_db),
+    depot_scope: Depot = Depends(deps.get_dispatcher_depot),
+):
     """
     Returns all actively moving runs (en_route) enriched with sync health status.
     Used by the Live Tracking page to show real-time dispatcher visibility.
@@ -85,6 +91,7 @@ def get_live_runs(db: Session = Depends(deps.get_db)):
     runs = (
         db.query(DispatchTrip)
         .filter(DispatchTrip.status.in_(["en_route", "scheduled", "ready"]))
+        .filter(DispatchTrip.depot_name == depot_scope.value)
         .order_by(DispatchTrip.departure_time.asc())
         .all()
     )
@@ -119,8 +126,12 @@ def get_live_runs(db: Session = Depends(deps.get_db)):
 
 
 @router.get("/{id}", response_model=DeliveryRunResponse)
-def get_delivery_run(id: int, db: Session = Depends(deps.get_db)):
-    run = db.query(DispatchTrip).filter(DispatchTrip.id == id).first()
+def get_delivery_run(
+    id: int,
+    db: Session = Depends(deps.get_db),
+    depot_scope: Depot = Depends(deps.get_dispatcher_depot),
+):
+    run = db.query(DispatchTrip).filter(DispatchTrip.id == id, DispatchTrip.depot_name == depot_scope.value).first()
     if not run:
         raise HTTPException(status_code=404, detail="Delivery run not found")
     return _with_loader(db, [run])[0]
@@ -151,6 +162,7 @@ def update_delivery_run(
         raise HTTPException(status_code=404, detail="Delivery run not found")
 
     update_data = trip_in.model_dump(exclude_unset=True)
+    previous_status = run.status
     for field, value in update_data.items():
         setattr(run, field, value)
 
@@ -159,6 +171,14 @@ def update_delivery_run(
 
     db.add(run)
     db.commit()
+
+    # Tell the stores: the truck leaving makes its orders "On the way", finishing the run makes them delivered.
+    if run.status != previous_status:
+        if run.status == "en_route":
+            order_service.mark_trip_departed(db, run.allocation_id)
+        elif run.status == "completed":
+            order_service.mark_trip_delivered(db, run.allocation_id)
+
     db.refresh(run)
     return run
 
@@ -208,6 +228,26 @@ def create_run_from_allocation(
     vehicle_number = vehicle.code if vehicle else "UNKNOWN"
     depot_name = vehicle.depot_name if vehicle else None
 
+    # Fetch orders to compute totals and stop sequence
+    from app.models.order import Order
+    orders = db.query(Order).options(joinedload(Order.outlet)).filter(Order.allocation_id == allocation.id).all()
+    total_weight = sum(o.weight_kg for o in orders if o.weight_kg)
+    total_volume = sum(o.volume_m3 for o in orders if o.volume_m3)
+    
+    stop_sequence = []
+    seen_outlets = set()
+    for o in orders:
+        if o.outlet and o.outlet.id not in seen_outlets:
+            seen_outlets.add(o.outlet.id)
+            stop_sequence.append({
+                "id": str(o.outlet.id),   # cast to str — frontend DeliveryRunStop.id is string
+                "outlet_code": o.outlet.code,
+                "name": o.outlet.name,
+                "eta": "00:00",
+                "sla_ok": True,
+                "sla_note": "On time"
+            })
+
     trip = DispatchTrip(
         trip_code=trip_code,
         allocation_id=allocation.id,
@@ -220,11 +260,11 @@ def create_run_from_allocation(
         depot_name=depot_name,
         status="scheduled",
         departure_time=allocation.departure_time,
-        total_weight_kg=0.0,
-        total_volume_m3=0.0,
-        stop_count=0,
+        total_weight_kg=total_weight,
+        total_volume_m3=total_volume,
+        stop_count=len(stop_sequence),
         stops_completed=0,
-        stop_sequence=[],
+        stop_sequence=stop_sequence,
         open_shortfalls=0,
         loading_events=[
             {
@@ -376,6 +416,14 @@ def mark_stop_complete(
 
     run.updated_at = datetime.now(timezone.utc)
     db.commit()
+
+    # The stop just completed is that outlet's delivery: its orders become delivered for the store.
+    stops = run.stop_sequence or []
+    if 0 < run.stops_completed <= len(stops):
+        stop_outlet = stops[run.stops_completed - 1].get("id")
+        if str(stop_outlet).isdigit():
+            order_service.mark_trip_delivered(db, run.allocation_id, int(stop_outlet))
+
     db.refresh(run)
     return run
 
