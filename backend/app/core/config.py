@@ -26,13 +26,21 @@ class Settings(BaseSettings):
     @classmethod
     def assemble_db_connection(cls, v: Optional[str]) -> Optional[str]:
         if isinstance(v, str) and v.strip():
-            # Use psycopg (v3) driver — required for Neon SSL compatibility
+            # Check which driver is available: psycopg (v3) or psycopg2 (v2)
+            try:
+                import psycopg  # noqa: F401
+                preferred = "postgresql+psycopg://"
+            except ImportError:
+                preferred = "postgresql+psycopg2://"
+
+            if v.startswith("postgresql+psycopg://") and preferred == "postgresql+psycopg2://":
+                return v.replace("postgresql+psycopg://", "postgresql+psycopg2://", 1)
             if v.startswith("postgresql+psycopg2://"):
-                return v.replace("postgresql+psycopg2://", "postgresql+psycopg://", 1)
+                return v
             if v.startswith("postgresql://"):
-                return v.replace("postgresql://", "postgresql+psycopg://", 1)
+                return v.replace("postgresql://", preferred, 1)
             if v.startswith("postgres://"):
-                return v.replace("postgres://", "postgresql+psycopg://", 1)
+                return v.replace("postgres://", preferred, 1)
         return v
 
     # Keycloak Configuration
@@ -43,6 +51,22 @@ class Settings(BaseSettings):
     KEYCLOAK_ALGORITHM: str = "RS256"
     KEYCLOAK_AUDIENCE: str = "account"
     KEYCLOAK_DEV_MODE: bool = True  # Allows local / test bypass when Keycloak container is offline
+
+    # Temporary operational scope while Keycloak depot claims are being wired.
+    # Requests without an explicit depot scope stay in Peliyagoda, never a
+    # combined cross-depot view.
+    DISPATCHER_DEFAULT_DEPOT: str = "peliyagoda"
+
+    # Allocation policy. Counts are calculated from allocations, never from the
+    # denormalized `vehicles.trips_today` presentation field.
+    ALLOCATION_MAX_TRIPS_PER_DAY: int = 2
+    SERVICE_ALLOWANCE_CSV: str = "app/reference_data/service_allowance.csv"
+    DISTRICT_TRAVEL_CSV: str = "app/reference_data/district_travel.csv"
+
+    # Loader module
+    # Mounts /loader/dev/* which simulates dispatcher actions while there is no
+    # dispatcher UI. Never mounted when ENVIRONMENT == "production".
+    LOADER_DEV_ENDPOINTS: bool = True
 
     # JWT / Fallback Secret for Dev and Testing
     SECRET_KEY: str = "change-this-in-production-super-secret-key-32chars"

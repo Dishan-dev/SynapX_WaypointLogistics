@@ -4,11 +4,10 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { MetricCard } from "@/components/dispatcher/MetricCard";
 import { FilterBar } from "@/components/dispatcher/FilterBar";
 import { AllocationTable } from "@/components/dispatcher/AllocationTable";
-import { AllocationFormDrawer } from "@/components/dispatcher/AllocationFormDrawer";
 import { AllocationDetailDrawer } from "@/components/dispatcher/AllocationDetailDrawer";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
 import { type Allocation } from "@/components/dispatcher/AllocationTable";
+import { fetchWithFallback } from "@/lib/api";
 
 const STATUS_OPTIONS = [
   { label: "All Statuses", value: "" },
@@ -33,9 +32,7 @@ export default function AllocationsPage() {
   const [fetchError, setFetchError] = useState(false);
 
   // Drawer states
-  const [isFormDrawerOpen, setIsFormDrawerOpen] = useState(false);
   const [selectedAllocation, setSelectedAllocation] = useState<Allocation | null>(null);
-  const [isReassignDrawerOpen, setIsReassignDrawerOpen] = useState(false);
 
   // Filter states
   const [searchQuery, setSearchQuery] = useState("");
@@ -45,7 +42,7 @@ export default function AllocationsPage() {
   const fetchAllocations = useCallback(async () => {
     setFetchError(false);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5001"}/api/v1/allocations/`);
+      const response = await fetchWithFallback("/api/v1/allocations/");
       if (response.ok) {
         const data = await response.json();
         setAllocations(data);
@@ -69,7 +66,7 @@ export default function AllocationsPage() {
   // Use real data from API; show empty on API error so backend issues are visible
   const rawData = useMemo(() => (fetchError ? [] : allocations), [fetchError, allocations]);
 
-  // Filter logic (client-side filtering for now)
+  // Filter logic (client-side filtering)
   const filteredData = useMemo(() => {
     return rawData.filter((alloc) => {
       const search = searchQuery.toLowerCase();
@@ -79,14 +76,15 @@ export default function AllocationsPage() {
         alloc.driver?.user?.full_name?.toLowerCase().includes(search) ||
         alloc.run_id?.toLowerCase().includes(search);
 
-      const matchesStatus = !statusFilter || alloc.status.toLowerCase() === statusFilter;
+      // Normalise both sides to lowercase so "READY" === "ready" works
+      const matchesStatus = !statusFilter || alloc.status?.toLowerCase() === statusFilter.toLowerCase();
       const matchesType = !typeFilter || alloc.vehicle?.vehicle_type?.toLowerCase().includes(typeFilter);
 
       return matchesSearch && matchesStatus && matchesType;
     });
   }, [rawData, searchQuery, statusFilter, typeFilter]);
 
-  // Dynamic metric counts derived from raw data
+  // Dynamic metric counts — normalise status to lowercase before comparing
   const metrics = useMemo(() => {
     const counts = { available: 0, allocated: 0, loading: 0, ready: 0, unavailable: 0 };
     rawData.forEach((a) => {
@@ -104,12 +102,6 @@ export default function AllocationsPage() {
     setSelectedAllocation(allocation);
   };
 
-  const handleReassignDriver = () => {
-    // Close detail drawer and open the reassign/form drawer
-    setSelectedAllocation(null);
-    setIsReassignDrawerOpen(true);
-  };
-
   return (
     <div className="space-y-6 flex flex-col h-full">
       {/* Page Header */}
@@ -119,15 +111,6 @@ export default function AllocationsPage() {
           <p className="text-sm text-muted-foreground mt-1">
             Review today&apos;s fleet assignments, capacity usage, drivers, and allocation readiness.
           </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button 
-            onClick={() => setIsFormDrawerOpen(true)}
-            style={{ backgroundColor: "#1c355e", color: "#ffffff" }}
-            className="hover:opacity-90 transition-opacity border-transparent shadow-none"
-          >
-            <Plus className="mr-2 h-4 w-4" /> New Allocation
-          </Button>
         </div>
       </div>
 
@@ -151,35 +134,22 @@ export default function AllocationsPage() {
           onTypeChange={setTypeFilter}
         />
 
-        {isLoading ? (
-          <div className="flex items-center justify-center h-64 text-muted-foreground">
-            Loading allocations...
+        {fetchError && !isLoading ? (
+          <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+            <p className="text-sm font-medium text-destructive">Failed to load allocations from server.</p>
+            <p className="text-xs text-muted-foreground">Check the backend is running, then retry.</p>
+            <Button variant="outline" size="sm" onClick={fetchAllocations}>Retry</Button>
           </div>
         ) : (
-          <AllocationTable allocations={filteredData} onViewClick={handleViewClick} />
+          <AllocationTable allocations={filteredData} isLoading={isLoading} onViewClick={handleViewClick} />
         )}
       </div>
-
-      {/* New Allocation Form Drawer */}
-      <AllocationFormDrawer
-        open={isFormDrawerOpen}
-        onOpenChange={setIsFormDrawerOpen}
-        onSuccess={fetchAllocations}
-      />
-
-      {/* Reassign Driver quick-open */}
-      <AllocationFormDrawer
-        open={isReassignDrawerOpen}
-        onOpenChange={setIsReassignDrawerOpen}
-        onSuccess={fetchAllocations}
-      />
 
       {/* Detail Drawer — opens when View is clicked */}
       <AllocationDetailDrawer
         open={!!selectedAllocation}
         onOpenChange={(open) => { if (!open) setSelectedAllocation(null); }}
         allocation={selectedAllocation}
-        onReassignDriver={handleReassignDriver}
         onSuccess={fetchAllocations}
       />
     </div>

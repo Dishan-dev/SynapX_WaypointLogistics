@@ -7,7 +7,6 @@ from app.schemas.order import OrderRead
 
 class AllocationBase(BaseModel):
     vehicle_id: int
-    driver_id: Optional[int] = None
     run_id: Optional[str] = None
     load_percentage: float = 0.0
     volume_percentage: float = 0.0
@@ -18,7 +17,6 @@ class AllocationCreate(AllocationBase):
     pass
 
 class AllocationUpdate(BaseModel):
-    driver_id: Optional[int] = None
     run_id: Optional[str] = None
     load_percentage: Optional[float] = None
     volume_percentage: Optional[float] = None
@@ -27,6 +25,9 @@ class AllocationUpdate(BaseModel):
 
 class AllocationResponse(AllocationBase):
     id: int
+    driver_id: Optional[int] = None
+    planned_stop_codes: Optional[List[str]] = None
+    route_plan: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
     

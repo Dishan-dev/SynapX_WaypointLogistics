@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 from app.models.shipment import ShipmentStatus
@@ -10,20 +10,60 @@ class DispatchTripBase(BaseModel):
     driver_name: str
     origin: str
     destination: str
+    depot_name: Optional[str] = None
 
 
 class DispatchTripCreate(DispatchTripBase):
+    allocation_id: Optional[int] = None
+    vehicle_id: Optional[int] = None
+    driver_id: Optional[int] = None
+    status: Optional[str] = "scheduled"
     departure_time: Optional[datetime] = None
     estimated_arrival: Optional[datetime] = None
+    total_weight_kg: float = 0.0
+    total_volume_m3: float = 0.0
+    stop_count: int = 0
+    stops_completed: int = 0
+    stop_sequence: Optional[List[Any]] = None
+    open_shortfalls: int = 0
+    loading_events: Optional[List[Dict[str, Any]]] = None
 
 
 class DispatchTripRead(DispatchTripBase):
     id: int
+    allocation_id: Optional[int] = None
+    vehicle_id: Optional[int] = None
+    driver_id: Optional[int] = None
+    status: str
     departure_time: Optional[datetime] = None
     estimated_arrival: Optional[datetime] = None
     actual_arrival: Optional[datetime] = None
+    total_weight_kg: float = 0.0
+    total_volume_m3: float = 0.0
+    stop_count: int = 0
+    stops_completed: int = 0
+    stop_sequence: Optional[List[Any]] = None
+    open_shortfalls: int = 0
+    loading_events: Optional[List[Dict[str, Any]]] = None
+    created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DeliveryRunResponse(DispatchTripRead):
+    route_plan: Optional[Dict[str, Any]] = None
+    loader: Optional[Dict[str, Any]] = None
+    loader_warning: Optional[str] = None
+
+
+class DeliveryRunUpdate(BaseModel):
+    status: Optional[str] = None
+    stops_completed: Optional[int] = None
+    stop_sequence: Optional[List[Any]] = None
+    actual_arrival: Optional[datetime] = None
+    departure_time: Optional[datetime] = None
+    open_shortfalls: Optional[int] = None
+    loading_events: Optional[List[Dict[str, Any]]] = None
 
 
 class ShipmentBase(BaseModel):
@@ -54,3 +94,10 @@ class ShipmentRead(ShipmentBase):
     dispatch_trip: Optional[DispatchTripRead] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class LoadingEventIn(BaseModel):
+    event: str
+    time: str         # "HH:mm"
+    note: str = ""
+    status: str = "ok"   # ok | error | warning | pending

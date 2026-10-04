@@ -1,0 +1,187 @@
+// This tablet's loader session, kept in localStorage so a reload or an
+// offline restart stays signed in. The PIN is never stored: sign-in needs the
+// server. Also keeps the last user list (names work offline) and session ends
+// that could not be sent yet.
+
+import { clearSessionCaches } from "./offline/run-pages";
+import { NetworkError, type Transport } from "./offline/transport";
+import type { LoaderSession, LoaderUser, SessionEndReason } from "./types";
+
+/** Figma 00: "Signs out after 10 min idle." */
+export const IDLE_SIGN_OUT_MS = 10 * 60_000;
+/** "Still there?" shows this long before the idle sign-out. Not in Figma. */
+export const IDLE_WARNING_MS = 30_000;
+
+/**
+ * The depot this tablet signs into; its loaders see every dock of it. Set per
+ * device (tablets are no longer tied to a dock).
+ */
+export const TABLET_DEPOT = process.env.NEXT_PUBLIC_LOADER_DEPOT ?? "peliyagoda";
+
+export interface StoredSession {
+  session: LoaderSession;
+  /** The user picked at sign-in, for the full name and initials. */
+  user: LoaderUser;
+}
+
+export interface TabletPlace {
+  depot: string;
+}
+
+const SESSION_KEY = "waypoint-loader-session";
+const PLACE_KEY = "waypoint-loader-place";
+const USERS_KEY = "waypoint-loader-users";
+const ENDS_KEY = "waypoint-loader-session-ends";
+const CHANGE_EVENT = "waypoint-loader-session";
+
+function read(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function write(key: string, value: string | null) {
+  try {
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch {
+    // Storage blocked: the session lasts until the page closes.
+  }
+}
+
+function parse<T>(raw: string | null): T | undefined {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+// ---- Session ------------------------------------------------------------
+
+let cachedRaw: string | null = null;
+let cachedSession: StoredSession | null = null;
+
+/** The signed-in session's id, for the X-Loader-Session header on tablet reads. */
+export function currentSessionId(): number | undefined {
+  return readSession()?.session.session_id;
+}
+
+/** The stored session; the same object until it changes (for useSyncExternalStore). */
+export function readSession(): StoredSession | null {
+  const raw = read(SESSION_KEY);
+  if (raw !== cachedRaw) {
+    cachedRaw = raw;
+    cachedSession = parse<StoredSession>(raw) ?? null;
+  }
+  return cachedSession;
+}
+
+export function subscribeSession(onChange: () => void): () => void {
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === SESSION_KEY) onChange();
+  };
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(CHANGE_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(CHANGE_EVENT, onChange);
+  };
+}
+
+// Why this tab's session last ended, so sign-in can say so. In memory only:
+// another tab that sees the session go just asks the next loader to sign in.
+let lastEndReason: SessionEndReason | undefined;
+
+/** How this tab's last session ended, until someone signs in again. */
+export function endReason(): SessionEndReason | undefined {
+  return lastEndReason;
+}
+
+export function saveSession(stored: StoredSession) {
+  lastEndReason = undefined;
+  write(SESSION_KEY, JSON.stringify(stored));
+  write(PLACE_KEY, JSON.stringify({ depot: stored.session.depot }));
+  window.dispatchEvent(new Event(CHANGE_EVENT));
+}
+
+function clearSession() {
+  write(SESSION_KEY, null);
+  window.dispatchEvent(new Event(CHANGE_EVENT));
+}
+
+let cachedPlaceRaw: string | null = null;
+let cachedPlace: TabletPlace | null = null;
+
+/**
+ * The depot from this tablet's last session, which the sign-in screen shows
+ * before anyone signs in. The same object until it changes.
+ */
+export function lastPlace(): TabletPlace | null {
+  const raw = read(PLACE_KEY);
+  if (raw !== cachedPlaceRaw) {
+    cachedPlaceRaw = raw;
+    cachedPlace = parse<TabletPlace>(raw) ?? null;
+  }
+  return cachedPlace;
+}
+
+// ---- Users ----------------------------------------------------------------
+
+/** The last GET /loader/users response, so names can be searched offline. */
+export function cachedUsers(): LoaderUser[] {
+  return parse<LoaderUser[]>(read(USERS_KEY)) ?? [];
+}
+
+export function saveUsers(users: LoaderUser[]) {
+  write(USERS_KEY, JSON.stringify(users));
+}
+
+// ---- Ending a session ---------------------------------------------------------
+
+interface PendingEnd {
+  session_id: number;
+  reason: SessionEndReason;
+}
+
+const pendingEnds = () => parse<PendingEnd[]>(read(ENDS_KEY)) ?? [];
+
+/**
+ * Sign out now, whatever the connection: the session is cleared locally at
+ * once and DELETE /loader/session/{id} is sent, or kept for flushSessionEnds
+ * when the server cannot be reached. Queued writes keep the old session id;
+ * the server accepts an ended session.
+ */
+export async function endSession(transport: Transport, reason: SessionEndReason): Promise<void> {
+  const stored = readSession();
+  lastEndReason = reason;
+  clearSession();
+  // The saved logs (L9) and cached run pages go with the session; the outbox stays.
+  void clearSessionCaches();
+  if (!stored) return;
+  const end = { session_id: stored.session.session_id, reason };
+  try {
+    await transport.endSession(end.session_id, end.reason);
+  } catch (err) {
+    if (!(err instanceof NetworkError)) throw err;
+    write(ENDS_KEY, JSON.stringify([...pendingEnds(), end]));
+  }
+}
+
+/** Send session ends saved while offline, oldest first. Stops at the first network error. */
+export async function flushSessionEnds(transport: Transport): Promise<void> {
+  const ends = pendingEnds();
+  while (ends.length > 0) {
+    try {
+      await transport.endSession(ends[0].session_id, ends[0].reason);
+    } catch (err) {
+      if (err instanceof NetworkError) break;
+      throw err;
+    }
+    ends.shift();
+    write(ENDS_KEY, ends.length ? JSON.stringify(ends) : null);
+  }
+}

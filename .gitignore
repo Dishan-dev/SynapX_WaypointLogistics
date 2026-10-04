@@ -33,8 +33,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
 lib64/
+!frontend/lib/
 parts/
 sdist/
 var/
@@ -66,3 +67,21 @@ graphify-out/
 
 # Antigravity Agents
 .agents/mcp_config.json
+
+# Scratch scripts
+analyze.py
+render*.py
+backend/add_enums.py
+backend/check_enum.py
+backend/grant.py
+backend/reset_db.py
+backend/seed_orders_to_allocations.py
+backend/seed_trips.py
+backend/seed_docks.py
+backend/scratch.py
+backend/scratch_allocation_test.py
+
+# Reference data from the brief (outlets, calendar, vehicles). Shared privately, not committed.
+docs/*.csv
+docs/stock_uploads/
+backend/app/static/uploads/
