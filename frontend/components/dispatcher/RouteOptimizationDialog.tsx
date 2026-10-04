@@ -23,8 +23,7 @@ export function RouteOptimizationDialog({ run, onClose, onApply }: RouteOptimiza
   const [proposedStops, setProposedStops] = useState<DeliveryRunStop[]>(() => {
     const passing = currentStops.filter(s => s.sla_ok);
     const failing = currentStops.filter(s => !s.sla_ok);
-    const first = passing[0] || currentStops[0];
-    return first ? [first, ...failing.filter(s => s.id !== first.id), ...passing.slice(1)] : [];
+    return [...failing, ...passing.sort((a, b) => a.name.localeCompare(b.name))];
   });
 
   const moveStop = (index: number, direction: -1 | 1) => {
@@ -34,23 +33,6 @@ export function RouteOptimizationDialog({ run, onClose, onApply }: RouteOptimiza
       return next;
     });
   };
-  // Group stops: first by SLA urgency, then within groups by district-order
-  // Since stops don't directly carry district, use SLA as primary sort and
-  // cluster consecutive stops from the same name prefix (district approximation)
-
-  // Step 1: separate urgent (SLA failing) from passing
-  const passing = currentStops.filter(s => s.sla_ok);
-  const failing = currentStops.filter(s => !s.sla_ok);
-
-  // Step 2: cluster passing stops - sort alphabetically by name to group 
-  // nearby destinations (same district typically sorts together)
-  const sortedPassing = [...passing].sort((a, b) => a.name.localeCompare(b.name));
-
-  // Step 3: urgent stops go first, then clustered passing stops
-  const proposedStops: DeliveryRunStop[] = currentStops.length > 0
-    ? [...failing, ...sortedPassing]
-    : [];
-
   // Mark moved-earlier stops as "SLA recovered"
   const proposedWithSLA = proposedStops.map((stop, i) => {
     const originalIdx = currentStops.findIndex(s => s.id === stop.id);

@@ -46,11 +46,8 @@ const navItems = [
 
 export function AppSidebar() {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
-  const displayName = user?.name || user?.username || "Dispatcher";
-  const initials = displayName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
+  const { logout } = useAuth();
   const [userName, setUserName] = React.useState<string>("Dispatcher");
-  const [userRole, setUserRole] = React.useState<string>("DISPATCHER");
   const [depot, setDepot] = React.useState<DispatcherDepot>(getDispatcherDepot());
   const [isAssigned, setIsAssigned] = React.useState<boolean>(true);
 
@@ -60,7 +57,6 @@ export function AppSidebar() {
         if (!res.ok) return;
         const data = await res.json();
         if (data.user_name) setUserName(data.user_name);
-        if (data.user_role) setUserRole(data.user_role);
         if (data.depot) setDepot(data.depot);
         if (data.is_assigned !== undefined) setIsAssigned(data.is_assigned);
       })
@@ -118,14 +114,6 @@ export function AppSidebar() {
           })}
         </SidebarMenu>
       </SidebarContent>
-      <SidebarFooter className="p-4 border-t border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <div className="size-8 rounded-full bg-accent flex items-center justify-center text-accent-foreground font-semibold text-xs border border-border">
-            {initials}
-          </div>
-          <div className="flex flex-col flex-1 overflow-hidden">
-            <span className="text-sm font-medium text-sidebar-foreground truncate">{displayName}</span>
-            <span className="text-xs text-sidebar-foreground/70 truncate">{user?.email || "Dispatch Portal"}</span>
       <SidebarFooter className="p-3 border-t border-sidebar-border">
         {/* Dynamic User Account Footer */}
         <div className="flex items-center gap-2.5">

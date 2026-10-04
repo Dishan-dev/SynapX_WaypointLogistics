@@ -97,12 +97,6 @@ export default function DeliveryRunsPage() {
     const initial = setTimeout(() => { void fetchRuns(); }, 0);
     let interval: NodeJS.Timeout;
     if (hasSelectedRun) {
-      interval = setInterval(fetchRuns, 15000);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { 
-    fetchRuns(false); 
-    let interval: NodeJS.Timeout;
-    if (selectedRun) {
       interval = setInterval(() => fetchRuns(true), 15000);
     }
     return () => {
