@@ -1,3 +1,6 @@
+import base64
+import logging
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 from sqlalchemy.orm import Session
@@ -10,7 +13,28 @@ from app.schemas.delivery_issue import DeliveryIssueCreate, DeliveryIssueUpdate
 from app.schemas.store_order import summarise_delivery
 from app.services.notification_service import notification_service
 from app.services.user_notification_service import notify_role
+from app.services import photo_storage
 from app.models.user import UserRole
+
+logger = logging.getLogger(__name__)
+
+
+def _process_photo_url(raw_url: Optional[str]) -> Optional[str]:
+    if not raw_url:
+        return None
+    if raw_url.startswith("http://") or raw_url.startswith("https://") or raw_url.startswith("/static/"):
+        return raw_url
+    match = re.match(r"^data:(image\/[a-zA-Z0-9.+_-]+);base64,(.+)$", raw_url)
+    if match:
+        content_type = match.group(1)
+        b64_data = match.group(2)
+        try:
+            image_bytes = base64.b64decode(b64_data)
+            return photo_storage.save_photo(image_bytes, content_type, folder="store")
+        except Exception as e:
+            logger.warning("Failed to decode base64 photo for issue: %s", e)
+            return raw_url
+    return raw_url
 
 
 class IssueService:
@@ -66,7 +90,7 @@ class IssueService:
             expected_units=payload.expected_units,
             received_units=payload.received_units,
             description=payload.description,
-            photo_url=payload.photo_url,
+            photo_url=_process_photo_url(payload.photo_url),
             photo_name=payload.photo_name,
             photo_size=payload.photo_size,
             reported_by=payload.reported_by or "Store Manager",
@@ -103,6 +127,8 @@ class IssueService:
     def update_issue(db: Session, issue_id: int, payload: DeliveryIssueUpdate) -> DeliveryIssue:
         issue = IssueService.get_issue(db, issue_id)
         update_data = payload.model_dump(exclude_unset=True)
+        if "photo_url" in update_data:
+            update_data["photo_url"] = _process_photo_url(update_data["photo_url"])
         for key, value in update_data.items():
             setattr(issue, key, value)
         db.commit()
