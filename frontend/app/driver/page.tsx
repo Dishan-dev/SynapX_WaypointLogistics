@@ -10,6 +10,7 @@ import { cachedGet, keepPageOffline, writeCache } from "@/lib/driverCache";
 import { colomboNow, greeting, READY_CUTOFF_HOUR } from "@/lib/colomboTime";
 import DeviceClock, { useColomboClock } from "@/components/driver/DeviceClock";
 import SyncStatus from "@/components/driver/SyncStatus";
+import { UserNotificationBell } from "@/components/notifications/user-notification-bell";
 
 // "I'm ready" for the next working day, saved on the server for the dispatcher.
 interface ReadyState {
@@ -128,11 +129,14 @@ export default function DriverDashboard() {
               {loading ? "Loading..." : `${greeting(clock)}, ${profile?.full_name?.split(' ')[0] || 'Driver'} · DRV-${profile?.id?.toString().padStart(4, '0') || '0000'}`}
             </p>
           </div>
+          <div className="flex items-center gap-1">
+          <UserNotificationBell />
           <Link href="/driver/profile">
             <div className="flex justify-center items-center w-10 h-10 rounded-full shrink-0" style={{ backgroundColor: "#EAF2FF" }}>
               <User size={20} color="#2167D5" />
             </div>
           </Link>
+          </div>
         </div>
       </div>
 

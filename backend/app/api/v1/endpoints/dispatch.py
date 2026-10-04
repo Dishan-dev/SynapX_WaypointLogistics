@@ -22,6 +22,7 @@ class PlanSyncRequest(BaseModel):
 from app.models.order import Order, OrderItem, OrderStatus
 from app.services.loader_service import loader_service
 from app.services.order_service import order_service
+from app.services.user_notification_service import notify_user
 
 from app.services.order_service import order_service
 router = APIRouter()
@@ -391,6 +392,13 @@ def create_run_from_allocation(
              "note": f"Sent to {dock_run.dock.name}", "status": "ok"},
         ]
 
+    if allocation.driver and allocation.driver.user_id:
+        notify_user(
+            db, recipient_user_id=allocation.driver.user_id, event_key=f"dispatch-trip:{trip.id}",
+            category="delivery", title=f"Trip {trip.trip_code} assigned",
+            message=f"Your delivery trip from {depot_name or 'the depot'} is scheduled.",
+            target_url="/driver",
+        )
     db.commit()
     db.refresh(trip)
     return _with_loader(db, [trip])[0]
