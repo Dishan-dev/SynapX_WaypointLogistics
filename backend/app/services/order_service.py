@@ -12,6 +12,7 @@ from app.schemas.store_order import GoodsRequestCreate
 from app.services import order_rules
 from app.services.calendar_service import calendar_service
 from app.services.notification_service import notification_service
+from app.email.service import queue_store_change
 
 # Statuses that hold a slot for the outlet on its delivery date (Fresh dual-order rule).
 BLOCKING_STATUSES = {
@@ -364,6 +365,9 @@ class OrderService:
             target_item.quantity_sent = quantity_sent
             target_item.dispatcher_note = reason
             order.deferral_reason = f"Partial fulfillment: {quantity_sent} of {target_item.quantity} assigned for {target_item.item_name} ({reason})"
+            db.flush()
+            queue_store_change(db, order, partial=True, reason=reason, item_name=target_item.item_name,
+                               assigned=quantity_sent, requested=target_item.quantity)
             db.commit()
             db.refresh(order)
 
@@ -401,6 +405,8 @@ class OrderService:
             order.operating_date = new_delivery_date.isoformat()
             order.cutoff_at = order_rules.cutoff_for(new_delivery_date)
 
+        db.flush()
+        queue_store_change(db, order, partial=False, reason=reason)
         db.commit()
         db.refresh(order)
         if order.outlet_id:

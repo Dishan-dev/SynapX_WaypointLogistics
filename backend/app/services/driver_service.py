@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
 from app.models.driver import DriverTrip, DeliveryStop, ProofOfDelivery, DriverTripStatus, DeliveryStopStatus
 from app.models.shipment import DispatchTrip
+from app.email.service import queue_driver_issue, queue_sos
 
 
 def get_today_trips(db: Session, driver_id: int) -> List[DriverTrip]:
@@ -157,6 +158,8 @@ def report_issue(db: Session, trip_id: int, issue_data: dict, driver_id: int) ->
         photo_url=issue_data.get("photo_url")
     )
     db.add(issue)
+    db.flush()
+    queue_driver_issue(db, issue)
     db.commit()
     db.refresh(issue)
     return issue
@@ -181,6 +184,8 @@ def trigger_sos(db: Session, driver_id: int, sos_data: dict) -> SOSAlert:
         message=sos_data.get("message")
     )
     db.add(alert)
+    db.flush()
+    queue_sos(db, alert)
     db.commit()
     db.refresh(alert)
     return alert
