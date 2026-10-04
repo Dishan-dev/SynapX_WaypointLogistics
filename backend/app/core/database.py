@@ -13,6 +13,8 @@ if settings.DATABASE_URL.startswith("sqlite"):
 else:
     pool_kwargs["pool_size"] = 10
     pool_kwargs["max_overflow"] = 20
+    pool_kwargs["pool_recycle"] = 300  # Recycle connections every 5 minutes to avoid Neon idle drop
+    pool_kwargs["pool_timeout"] = 30
 
 engine = create_engine(
     settings.DATABASE_URL,

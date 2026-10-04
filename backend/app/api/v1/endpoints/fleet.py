@@ -199,6 +199,8 @@ def vehicle_to_response(v: Vehicle) -> VehicleResponse:
         item.assigned_driver_phone = v.driver.phone
     return item
 
+from app.core.cache import memory_cache
+
 @router.get("/vehicles", response_model=List[VehicleResponse])
 def get_vehicles(
     db: Session = Depends(get_db),
@@ -212,6 +214,11 @@ def get_vehicles(
     """
     Retrieve vehicles with assigned driver info. Optionally filter by status or depot.
     """
+    cache_key = f"fleet:vehicles:{current_user.id}:{status}:{skip}:{limit}:{depot}:{x_waypoint_depot}"
+    cached = memory_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     query = db.query(Vehicle).options(
         joinedload(Vehicle.driver).joinedload(DriverProfile.user)
     )
@@ -226,7 +233,9 @@ def get_vehicles(
     if status and status != "ALL":
         query = query.filter(Vehicle.status == status.upper())
     vehicles = query.offset(skip).limit(limit).all()
-    return [vehicle_to_response(v) for v in vehicles]
+    results = [vehicle_to_response(v) for v in vehicles]
+    memory_cache.set(cache_key, results, ttl_seconds=30)
+    return results
 
 @router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
 def create_vehicle(

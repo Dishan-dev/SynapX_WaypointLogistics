@@ -7,6 +7,7 @@ from app.models.order import Order, OrderStatus
 from app.models.reference import Depot
 from app.models.allocation import Allocation, AllocationStatus
 from app.models.fleet import Vehicle
+from app.models.shipment import Shipment
 from app.schemas.order import OrderCreate, OrderRead, OrderUpdate
 from app.services.order_service import TRANSITIONS, order_service
 from pydantic import BaseModel
@@ -26,12 +27,19 @@ class DeferOrderRequest(BaseModel):
     quantity_sent: Optional[int] = None
 
 
+from app.core.cache import memory_cache
+
 @router.get("/metrics", response_model=Dict[str, int])
 def get_order_metrics(
     operating_date: Optional[str] = None,
     db: Session = Depends(deps.get_db),
     depot: Depot = Depends(deps.get_dispatcher_depot),
 ):
+    cache_key = f"orders:metrics:{depot.value}:{operating_date}"
+    cached = memory_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     query = db.query(Order).filter(Order.depot == depot)
     if operating_date:
         query = query.filter(Order.operating_date == operating_date)
@@ -55,7 +63,7 @@ def get_order_metrics(
     priority = query.filter(Order.is_priority == True).count()
     late = query.filter(Order.is_late == True).count()
 
-    return {
+    result = {
         "total_orders": total_orders,
         "confirmed": confirmed,
         "unallocated": unallocated,
@@ -64,6 +72,8 @@ def get_order_metrics(
         "priority": priority,
         "late": late,
     }
+    memory_cache.set(cache_key, result, ttl_seconds=15)
+    return result
 
 
 @router.get("/", response_model=List[OrderRead])
@@ -82,7 +92,21 @@ def list_orders(
     db: Session = Depends(deps.get_db),
     depot: Depot = Depends(deps.get_dispatcher_depot),
 ):
-    query = db.query(Order).options(selectinload(Order.items), selectinload(Order.outlet)).filter(Order.depot == depot)
+    cache_key = f"orders:list:{depot.value}:{status}:{brand}:{district}:{temperature_zone}:{is_priority}:{is_late}:{operating_date}:{search}:{sort_order}:{skip}:{limit}"
+    cached = memory_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    query = (
+        db.query(Order)
+        .options(
+            selectinload(Order.items),
+            selectinload(Order.outlet),
+            selectinload(Order.shipment).selectinload(Shipment.dispatch_trip),
+            selectinload(Order.allocation).selectinload(Allocation.dispatch_trips),
+        )
+        .filter(Order.depot == depot)
+    )
 
     if is_late is not None:
         query = query.filter(Order.is_late == is_late)
@@ -132,7 +156,11 @@ def list_orders(
         )
 
     ordering = (Order.created_at.asc(), Order.id.asc()) if sort_order == "oldest" else (Order.created_at.desc(), Order.id.desc())
-    return query.order_by(*ordering).offset(skip).limit(limit).all()
+    orders = query.order_by(*ordering).offset(skip).limit(limit).all()
+    # Serialize to Pydantic models for safe cached retention
+    serialized = [OrderRead.model_validate(o) for o in orders]
+    memory_cache.set(cache_key, serialized, ttl_seconds=15)
+    return serialized
 
 
 @router.post("/", response_model=OrderRead, status_code=status.HTTP_201_CREATED)
@@ -146,7 +174,9 @@ def create_order(
         raise HTTPException(status_code=400, detail="Order number already exists")
     # Depot belongs to the dispatcher scope, never to an arbitrary request body.
     order_in.depot = depot
-    return order_service.create_order(db=db, order_in=order_in)
+    created = order_service.create_order(db=db, order_in=order_in)
+    memory_cache.invalidate_prefix("orders:")
+    return created
 
 
 @router.post("/bulk-allocate")
@@ -203,6 +233,7 @@ def bulk_allocate_orders(
             if order.status != OrderStatus.ALLOCATED:
                 order_service.update_order_status(db, order.id, OrderStatus.ALLOCATED, commit=False)
         db.commit()
+        memory_cache.invalidate_prefix("orders:")
         return {"message": f"Successfully allocated {len(orders)} orders", "count": len(orders)}
     except Exception:
         db.rollback()
@@ -220,7 +251,7 @@ def defer_order(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     
-    return order_service.defer_order(
+    result = order_service.defer_order(
         db,
         order_id,
         req.reason,
@@ -228,6 +259,8 @@ def defer_order(
         item_sku=req.item_sku,
         quantity_sent=req.quantity_sent,
     )
+    memory_cache.invalidate_prefix("orders:")
+    return result
 
 
 @router.get("/{order_id}", response_model=OrderRead)
@@ -257,4 +290,5 @@ def update_order(
         setattr(order, field, val)
     db.commit()
     db.refresh(order)
+    memory_cache.invalidate_prefix("orders:")
     return order
