@@ -116,6 +116,11 @@ def _depot_hhmm(value: datetime) -> str:
 
 # The derived last line of a gated-out run's log, once its driver trip is done.
 TRIP_COMPLETED_EVENT = "trip_completed"
+
+# What the driver app's own "I've arrived" (POST /driver/trips/{id}/at-dock,
+# driver_service.report_at_dock) logs. Until it calls mark_arrived, that entry
+# also counts as the truck arriving at the planned dock (LoaderService.log).
+DRIVER_AT_DOCK_EVENT = "driver_at_dock"
 TRIP_COMPLETED_MESSAGE = "Trip complete · back at depot"
 
 # A stop that arrives this close to the end of the outlet's window is "closing".
@@ -2748,6 +2753,9 @@ class LoaderService:
             message=message,
         )
         db.add(entry)
+        if event_type == DRIVER_AT_DOCK_EVENT and run.arrived_at is None:
+            run.arrived_at = _naive_utc(at)
+            run.arrived_dock_id = run.dock_id
         return entry
 
     # --- publishing a plan ------------------------------------------------

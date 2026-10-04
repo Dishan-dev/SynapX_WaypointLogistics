@@ -567,3 +567,19 @@ def test_a_reopened_and_released_again_run_is_told_again(strict_loader_client, p
     assert notes[0]["message"].endswith("3 of 3 orders. Start the trip when you're ready.")
     assert len(dispatcher_notes(client, picked)) == 2
     assert db.query(Notification).count() == 4
+
+
+def test_the_driver_apps_own_at_dock_also_shows_the_run(strict_loader_client, day):
+    """POST /driver/trips/{id}/at-dock (driver_service.report_at_dock) counts as
+    the truck arriving at the planned dock until it calls mark_arrived itself."""
+    client, headers = strict_loader_client, auth(day["driver"])
+    day["run"].departs_at = datetime.utcnow() + timedelta(hours=3)  # on today's list
+    day["db"].flush()
+    [trip] = client.get("/api/v1/driver/trips/today", headers=headers).json()
+
+    response = client.post(f"/api/v1/driver/trips/{trip['id']}/at-dock", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert queue_codes(client, day["saman"]) == {CODE: "Dock 3"}
+    assert day["run"].arrived_dock_id == day["run"].dock_id
+    assert arrive(client, day, dock="DOCK4").json()["replayed"] is True  # the first arrival stands
