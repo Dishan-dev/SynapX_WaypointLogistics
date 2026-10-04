@@ -13,8 +13,6 @@ import SyncStatus from "@/components/driver/SyncStatus";
 import DockArrival from "@/components/driver/DockArrival";
 import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
 import { UserNotificationBell } from "@/components/notifications/user-notification-bell";
-import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
-import DockArrival from "@/components/driver/DockArrival";
 
 // "I'm ready" for the next working day, saved on the server for the dispatcher.
 interface ReadyState {
@@ -274,7 +272,7 @@ export default function DriverDashboard() {
                   {atDock && (
                     <DockArrival
                       trip={trip}
-                      onArrived={(updated: any) => setTrips((list) => list.map((t) => (t.id === updated.id ? updated : t)))}
+                      onArrived={(updated) => setTrips((list) => list.map((t) => (t.id === updated.id ? updated : t)))}
                     />
                   )}
 
