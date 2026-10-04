@@ -6,6 +6,7 @@ export type RequestTab =
   | "arrived"
   | "in_progress"
   | "completed"
+  | "deferred"
   | "cancelled"
   | "shortfalls"
   | "all";
@@ -17,6 +18,7 @@ const TAB_STATUSES: Partial<Record<RequestTab, OrderStatus[]>> = {
   arrived: ["delivered"],
   in_progress: ["processing", "ready_for_dispatch"],
   completed: ["completed"],
+  deferred: ["deferred"],
   cancelled: ["cancelled"],
 };
 
@@ -26,6 +28,7 @@ export const requestTabs: { value: RequestTab; label: string }[] = [
   { value: "arrived", label: "Arrived" },
   { value: "in_progress", label: "In Progress" },
   { value: "completed", label: "Completed" },
+  { value: "deferred", label: "Deferred" },
   { value: "cancelled", label: "Cancelled" },
   { value: "shortfalls", label: "Shortfalls" },
   { value: "all", label: "All" },
@@ -85,6 +88,7 @@ export function getRequestSummary(orders: StoreOrder[], now: Date) {
     inPreparation: orders.filter((order) => order.status === "processing").length,
     inTransit: inTransit.length,
     nextInTransit: inTransit.find((order) => order.eta),
+    deferred: orders.filter((order) => order.status === "deferred").length,
     completed30d: orders.filter(
       (order) => order.status === "completed" && differenceInCalendarDays(now, parseISO(order.orderDate)) <= 30
     ).length,

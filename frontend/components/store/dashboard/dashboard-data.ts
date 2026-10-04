@@ -15,7 +15,8 @@ const UPCOMING_DELIVERY_STATUSES: OrderStatus[] = ["ready_for_dispatch", "dispat
 
 export type AttentionItem =
   | { kind: "arrival"; order: StoreOrder }
-  | { kind: "issue"; issue: StoreIssue };
+  | { kind: "issue"; issue: StoreIssue }
+  | { kind: "deferred"; order: StoreOrder };
 
 export function getDashboardData(orders: StoreOrder[], issues: StoreIssue[]) {
   const active = orders.filter((order) => ACTIVE_STATUSES.includes(order.status));
@@ -24,6 +25,7 @@ export function getDashboardData(orders: StoreOrder[], issues: StoreIssue[]) {
     .sort((a, b) => a.orderDate.localeCompare(b.orderDate) || a.id - b.id);
   const inTransit = upcomingDeliveries.filter((order) => order.status !== "delivered");
   const awaitingConfirmation = orders.filter((order) => order.status === "delivered");
+  const deferredOrders = orders.filter((order) => order.status === "deferred");
   const openIssues = issues.filter((issue) => issue.isOpen);
   const nextDelivery = inTransit.find((order) => order.eta);
   const recentRequests = orders
@@ -32,6 +34,7 @@ export function getDashboardData(orders: StoreOrder[], issues: StoreIssue[]) {
     .slice(0, 3);
   const attentionItems: AttentionItem[] = [
     ...awaitingConfirmation.map((order) => ({ kind: "arrival" as const, order })),
+    ...deferredOrders.map((order) => ({ kind: "deferred" as const, order })),
     ...openIssues.map((issue) => ({ kind: "issue" as const, issue })),
   ];
 
@@ -40,6 +43,7 @@ export function getDashboardData(orders: StoreOrder[], issues: StoreIssue[]) {
     inTransit,
     upcomingDeliveries,
     awaitingConfirmation,
+    deferredOrders,
     openIssues,
     nextDelivery,
     recentRequests,

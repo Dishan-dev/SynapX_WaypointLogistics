@@ -89,7 +89,7 @@ export function RequestDetailView({
   const [cancelOpen, setCancelOpen] = useState(false);
 
   const deliveryDate = parseISO(order.orderDate);
-  const stepIndex = currentStepIndex(order.status);
+  const stepIndex = currentStepIndex(order);
   const canCancel = (order.status === "submitted" || order.status === "confirmed") && !isPastCutoff(deliveryDate, now);
   const totalRequested = order.items.reduce((sum, item) => sum + item.quantity, 0);
   const sentValues = order.items.map((item) => sentQuantity(order, item));
@@ -104,6 +104,10 @@ export function RequestDetailView({
     const step = PROGRESS_STEPS[index];
     const at = order.statusTimes?.[step.key] ?? (step.key === "submitted" ? order.submittedAt : undefined);
     if (at) return stepTime(at, now);
+    if (step.key === "arriving" && order.eta) return `ETA ${stepTime(order.eta, now).replace("Today", "today")}`;
+    if (step.key === "delivered" && (order.arrivedAt || order.delivery?.actualArrival)) {
+      return stepTime(order.arrivedAt ?? order.delivery!.actualArrival!, now);
+    }
     if (step.key === "delivered" && order.eta) return `Est. ${stepTime(order.eta, now).replace("Today", "today")}`;
     if (step.key === "completed") return "After store check";
     return "—";

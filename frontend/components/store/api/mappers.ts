@@ -205,6 +205,7 @@ export function toStoreOrder(order: ApiStoreOrder): StoreOrder {
     submittedAt: order.submitted_at ?? order.created_at,
     notes: order.notes ?? undefined,
     deferralReason: order.deferral_reason ?? undefined,
+    deferralCount: order.deferral_count,
     deliveryWindow: parseWindow(order.delivery_window),
     delivery: order.delivery
       ? {
