@@ -40,6 +40,7 @@ def list_operation_exceptions(db: Session = Depends(get_db), _user: User = Depen
             "outlet_name": issue.outlet.name if issue.outlet else None,
             "reported_by": issue.reported_by,
             "affected_item": issue.affected_item,
+            "photo_url": issue.photo_url,
         })
         entries.append(entry)
 
