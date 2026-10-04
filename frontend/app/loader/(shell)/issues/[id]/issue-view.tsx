@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CircleCheck, Hourglass, WifiOff } from "lucide-react";
@@ -14,6 +15,8 @@ import { useStoredSession } from "@/components/loader/loader-session";
 import { useLoaderShell } from "@/components/loader/loader-shell";
 import { TrackerStep } from "@/components/loader/tracker-step";
 import { formatTime, ISSUE_TYPE_LABELS, isIssueWaiting } from "@/lib/loader/format";
+import { PHOTO_QUEUE_EVENT, queuedPhotoFor } from "@/lib/loader/offline/photo-queue";
+import { photoSrc } from "@/lib/loader/photo";
 import type { IssueStatus, LoaderIssue } from "@/lib/loader/types";
 import { useIssue } from "./use-issue";
 
@@ -107,6 +110,7 @@ export function IssueView({ id }: { id: number }) {
                     {issue.note && <p className="text-sm text-foreground">{issue.note}</p>}
                   </LoaderCard>
                 )}
+                <PhotoCard issue={issue} />
               </div>
               <div className="flex flex-col gap-4">
                 {!isIssueWaiting(issue) && <OutcomeCard issue={issue} />}
@@ -252,5 +256,42 @@ function IssueFooter({ issue, onContinue }: { issue: LoaderIssue; onContinue: ()
         {waiting ? `Back to ${issue.run_code}` : "Got it · continue loading"}
       </LoaderButton>
     </div>
+  );
+}
+
+/**
+ * The flag's photo: the uploaded one (photo_url), or this tablet's copy while
+ * it still waits in the photo queue. Nothing when the flag has no photo.
+ */
+function PhotoCard({ issue }: { issue: LoaderIssue & { photo_url?: string | null } }) {
+  const [queued, setQueued] = React.useState<string>();
+
+  React.useEffect(() => {
+    if (issue.photo_url) return;
+    let url: string | undefined;
+    let cancelled = false;
+    const load = () =>
+      void queuedPhotoFor(issue.run_code, issue.order_number).then((photo) => {
+        if (cancelled) return;
+        if (url) URL.revokeObjectURL(url);
+        url = photo ? URL.createObjectURL(photo.blob) : undefined;
+        setQueued(url);
+      });
+    load();
+    window.addEventListener(PHOTO_QUEUE_EVENT, load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(PHOTO_QUEUE_EVENT, load);
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [issue.photo_url, issue.run_code, issue.order_number]);
+
+  const src = issue.photo_url ? photoSrc(issue.photo_url) : queued;
+  if (!src) return null;
+  return (
+    <LoaderCard title="Photo" description={issue.photo_url ? "Sent with the flag" : "Waiting to upload · sends after the next sync"}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- R2, the API's uploads folder or a local blob */}
+      <img src={src} alt={`Photo of ${issue.order_number}`} className="max-h-80 w-full rounded-lg border border-border object-contain" />
+    </LoaderCard>
   );
 }

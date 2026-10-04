@@ -61,13 +61,14 @@ def _save_locally(name: str, contents: bytes) -> str:
     return f"/static/uploads/{name}"
 
 
-def save_photo(contents: bytes, content_type: str) -> str:
-    """Stores one photo under a random name and returns its address."""
+def save_photo(contents: bytes, content_type: str, folder: str = "driver") -> str:
+    """Stores one photo under a random name and returns its address. folder is the
+    R2 prefix (the loader passes "loader" for flag photos)."""
     name = f"{uuid4().hex}.{EXTENSIONS.get(content_type, 'jpg')}"
     settings = r2_settings()
     if not settings.configured:
         return _save_locally(name, contents)
-    key = f"driver/{datetime.now(timezone.utc):%Y-%m-%d}/{name}"
+    key = f"{folder}/{datetime.now(timezone.utc):%Y-%m-%d}/{name}"
     try:
         r2_client().put_object(Bucket=settings.R2_BUCKET, Key=key, Body=contents, ContentType=content_type)
     except Exception as exc:  # network, keys, bucket: keep the photo anyway

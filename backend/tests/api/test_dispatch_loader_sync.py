@@ -147,7 +147,7 @@ def test_unbuildable_dock_run_keeps_trip_and_exposes_retry_warning(loader_client
     assert db_session.query(DispatchTrip).filter_by(allocation_id=allocation.id).count() == 1
     assert db_session.query(DeliveryRun).filter_by(dispatch_trip_id=body["id"]).count() == 0
     db_session.refresh(allocation)
-    assert allocation.status == AllocationStatus.DISPATCHED
+    assert allocation.status == AllocationStatus.LOADING
     publish = loader_client.patch(f"/api/v1/delivery-runs/{body['id']}", json={"status": "en_route"})
     assert publish.status_code == 409
 
@@ -183,7 +183,7 @@ def test_taken_run_code_keeps_dispatch_trip(loader_client, trip_setup):
     assert "already exists" in body["loader_warning"]
     assert db.query(DispatchTrip).filter_by(allocation_id=allocation.id).count() == 1
     db.refresh(allocation)
-    assert allocation.status == AllocationStatus.DISPATCHED
+    assert allocation.status == AllocationStatus.LOADING
 
 
 def test_order_on_another_run_keeps_dispatch_trip(loader_client, trip_setup):
@@ -205,7 +205,7 @@ def test_order_on_another_run_keeps_dispatch_trip(loader_client, trip_setup):
     assert "already on another loader run" in body["loader_warning"]
     assert db.query(DispatchTrip).filter_by(allocation_id=allocation.id).count() == 1
     db.refresh(allocation)
-    assert allocation.status == AllocationStatus.DISPATCHED
+    assert allocation.status == AllocationStatus.LOADING
 
 
 def test_unexpected_loader_error_keeps_dispatch_trip(loader_client, db_session, monkeypatch):
@@ -231,4 +231,4 @@ def test_unexpected_loader_error_keeps_dispatch_trip(loader_client, db_session, 
     assert body["loader_warning"] == "Loader temporarily unavailable"
     assert db_session.query(DispatchTrip).filter_by(allocation_id=allocation.id).count() == 1
     db_session.refresh(allocation)
-    assert allocation.status == AllocationStatus.DISPATCHED
+    assert allocation.status == AllocationStatus.LOADING

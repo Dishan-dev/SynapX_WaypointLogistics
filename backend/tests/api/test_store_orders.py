@@ -441,7 +441,7 @@ def test_outside_dev_mode_only_store_managers_and_admins_open_a_store(client, ou
     assert client.get("/api/v1/store/me").status_code == 422  # an admin has to say which store
 
 
-def test_dispatcher_run_moves_store_orders_on_the_way_then_delivered(client, clock, outlets, db_session):
+def test_dispatcher_run_moves_store_orders_on_the_way_then_delivered(client, clock, outlets, db_session, monkeypatch):
     from app.models.allocation import Allocation, AllocationStatus
     from app.models.fleet import Vehicle
     from app.models.order import Order, OrderStatus
@@ -473,7 +473,10 @@ def test_dispatcher_run_moves_store_orders_on_the_way_then_delivered(client, clo
     detail = client.get(f"/api/v1/orders/store/{chilled['order_number']}").json()
     assert detail["delivery"]["vehicle_code"] == "VEH099" and detail["delivery"]["trip_status"] == "scheduled"
 
-    # The truck leaves: both stores see "On the way".
+    # The truck leaves: both stores see "On the way". (A run must have a dock run before it goes en route;
+    # that rule is the dispatcher's, so it's satisfied here rather than building a whole dock plan.)
+    from app.services.loader_service import loader_service
+    monkeypatch.setattr(loader_service, "run_for_dispatch_trip", lambda db, trip_id: object())
     assert client.patch(f"/api/v1/delivery-runs/{trip.id}", json={"status": "en_route"}).status_code == 200
     statuses = {o["order_number"]: o["status"] for o in client.get("/api/v1/orders/store", params={"outlet_id": fresh.id}).json()}
     assert statuses[chilled["order_number"]] == "DISPATCHED"
