@@ -13,8 +13,6 @@ import SyncStatus from "@/components/driver/SyncStatus";
 import DockArrival from "@/components/driver/DockArrival";
 import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
 import { UserNotificationBell } from "@/components/notifications/user-notification-bell";
-import { LOADER_CHECK_MS, waitingForLoader } from "@/lib/driverStop";
-import DockArrival from "@/components/driver/DockArrival";
 
 // "I'm ready" for the next working day, saved on the server for the dispatcher.
 interface ReadyState {
