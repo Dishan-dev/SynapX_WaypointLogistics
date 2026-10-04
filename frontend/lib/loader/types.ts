@@ -56,6 +56,9 @@ export type Wave = "night" | "day";
  */
 export type StopStatus = "pending" | "loading" | "complete";
 
+/** Where a run is in the depot's day; the queue only lists runs whose truck arrived. */
+export type RunStage = "awaiting_truck" | "at_dock" | "loading" | "ready" | "gated_out";
+
 // ---- Built (L0): GET /loader/runs/{code} ---------------------------------
 
 export interface Vehicle {
@@ -166,7 +169,15 @@ export interface Run {
   departs_at: string;
   status: RunStatus;
   current_plan_version: number;
+  /** The dock the truck is at ("Dock 3"). */
   dock: string;
+  /** awaiting_truck (never in the queue) -> at_dock -> loading -> ready -> gated_out. */
+  stage?: RunStage;
+  /** The driver's "Arrived at dock" tap. */
+  arrived_at?: string | null;
+  /** Short name of the loader holding the run, while their session is live. */
+  picked_by?: string | null;
+  picked_at?: string | null;
   vehicle: Vehicle;
   capacity: RunCapacity;
   plan: RunPlan;
@@ -309,7 +320,9 @@ export interface LoaderUser {
 export interface LoaderSession {
   session_id: number;
   loader: { id: number; short_name: string };
-  dock: string;
+  /** Always null: a loader sees every dock of their depot. */
+  dock?: string | null;
+  /** The loader's depot slug ("peliyagoda"). */
   depot: string;
   started_at: string;
 }
@@ -318,8 +331,8 @@ export interface LoaderSession {
 export interface SessionRequest {
   loader_user_id: number;
   pin: string;
-  /** Which tablet is signing in; the server knows its dock. */
-  dock_tablet_label: string;
+  /** The depot this tablet signs into; a loader of another depot is refused (403). */
+  depot: string;
 }
 
 /** end_reason of DELETE /loader/session/{id}. */
@@ -336,6 +349,17 @@ export interface RunAlert {
 
 export interface RunSummary {
   code: string;
+  /** The dock the truck is at. */
+  dock?: string;
+  /** awaiting_truck (never in the queue) -> at_dock -> loading -> ready -> gated_out. */
+  stage?: RunStage;
+  /** The driver's "Arrived at dock" tap. */
+  arrived_at?: string | null;
+  /** Short name of the loader holding the run, while their session is live. */
+  picked_by?: string | null;
+  picked_at?: string | null;
+  /** The signed-in loader holds it: "You're loading". */
+  picked_by_me?: boolean;
   vehicle_code: string;
   vehicle_type: VehicleType;
   temp_capability: TempCapability;
@@ -362,19 +386,25 @@ export interface RunSummary {
   alert: RunAlert | null;
 }
 
-export interface RunGroup {
-  label: string;
-  brand: Brand;
-  wave: Wave;
+/** One dock of the depot, with the runs whose truck is at it, by arrival. */
+export interface DockQueue {
+  dock: string;
+  dock_code: string;
   runs: RunSummary[];
 }
 
+/** GET /loader/runs: every dock of the loader's depot. */
 export interface RunQueue {
-  groups: RunGroup[];
+  depot: string;
+  docks: DockQueue[];
 }
 
 export interface QueueSummary {
-  dock: string;
+  /** The depot slug; the summary covers every dock of it. */
+  depot: string;
+  /** Set only for a one-dock summary (?dock=). */
+  dock?: string | null;
+  dock_count?: number;
   date: string;
   day_label: string;
   next_holiday: { date: string; label: string } | null;
@@ -382,7 +412,7 @@ export interface QueueSummary {
   loading: { count: number; loaders: string[] };
   issues: { count: number; label: string };
   ready: { count: number; run_codes: string[] };
-  /** Latest plan publish across the dock ("Plan from Dispatcher · updated 02:14"); null when none. */
+  /** Latest plan publish across the depot ("Plan from Dispatcher · updated 02:14"); null when none. */
   plan_updated_at?: string | null;
 }
 
@@ -436,6 +466,8 @@ export type QueuedActionStatus = "pending" | "conflict" | "failed";
  * - CLIENT_ACTION_ID_REUSED: the id was already used for another action (a client bug).
  * - INVALID_STATE_TRANSITION: the row or run no longer allows it (for undo:
  *   the run is no longer ready to depart).
+ * - RUN_PICKED_BY_OTHER: another loader has picked the run; detail.picked_by.
+ * - RUN_NOT_PICKED: nobody holds the run for this loader (put back, or never picked).
  */
 export type ConflictCode =
   | "PLAN_VERSION_STALE"
@@ -443,7 +475,14 @@ export type ConflictCode =
   | "RELEASE_LOCKED"
   | "UNDO_WINDOW_EXPIRED"
   | "CLIENT_ACTION_ID_REUSED"
-  | "INVALID_STATE_TRANSITION";
+  | "INVALID_STATE_TRANSITION"
+  | "RUN_PICKED_BY_OTHER"
+  | "RUN_NOT_PICKED";
+
+/** Refused because another loader holds the run, or this one no longer does. */
+export function isPickConflict(code: ConflictCode | undefined): boolean {
+  return code === "RUN_PICKED_BY_OTHER" || code === "RUN_NOT_PICKED";
+}
 
 /** Refused because the plan moved on: the refetch brings the plan-change takeover. */
 export function isPlanConflict(code: ConflictCode | undefined): boolean {
@@ -451,9 +490,9 @@ export function isPlanConflict(code: ConflictCode | undefined): boolean {
 }
 
 /**
- * Every write carries the loader session. Null until L2 sign-in exists: the
- * server applies the write and leaves checked_by empty. An id the server does
- * not know is a 404.
+ * Every write carries the loader session, which must hold the run's pick.
+ * Null (no one signed in) or an id the server does not know is refused for
+ * good: 422 or 404, never retried.
  */
 export interface SessionPayload {
   loader_session_id: number | null;

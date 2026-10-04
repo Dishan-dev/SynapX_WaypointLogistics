@@ -4,13 +4,15 @@
 // adapting here.
 
 import { getCachedRun } from "@/lib/loader/offline/db";
-import { NetworkError, type Transport } from "@/lib/loader/offline/transport";
+import { NetworkError, RunPickedError, type Transport } from "@/lib/loader/offline/transport";
 import type { Run } from "@/lib/loader/types";
 
 export type LoadResult =
   | { kind: "ok"; run: Run }
   | { kind: "not_found" }
-  | { kind: "unavailable" };
+  | { kind: "unavailable" }
+  /** Another loader holds the run (409 RUN_PICKED_BY_OTHER): not opened, not cached. */
+  | { kind: "picked"; pickedBy: string };
 
 /**
  * The run from the server, or this tablet's cached copy when the server
@@ -22,6 +24,7 @@ export async function loadRun(code: string, transport: Transport): Promise<LoadR
     const run = await transport.fetchRun(code);
     return run ? { kind: "ok", run } : { kind: "not_found" };
   } catch (err) {
+    if (err instanceof RunPickedError) return { kind: "picked", pickedBy: err.pickedBy };
     if (!(err instanceof NetworkError)) throw err;
   }
   try {

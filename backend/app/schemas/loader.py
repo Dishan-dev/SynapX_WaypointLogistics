@@ -15,7 +15,7 @@ from app.models.loader_activity import ActorKind
 from app.models.loader_issue import IssueStatus, IssueType
 from app.models.loader_user import SessionEndReason
 from app.models.plan_revision import PlanChangeKind
-from app.models.reference import Brand, DockType, TempCapability, TemperatureClass, VehicleType
+from app.models.reference import Brand, Depot, DockType, TempCapability, TemperatureClass, VehicleType
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -233,7 +233,16 @@ class RunDetailRead(BaseModel):
     released_at: Optional[UtcDateTime] = None
     released_by: Optional[LoaderRefRead] = None
     current_plan_version: int
+    # The dock the truck is at (or will be): follows the truck on arrival.
     dock: str
+    # Where the run is in the depot's day: awaiting_truck (hidden from the
+    # loader queue) -> at_dock -> loading -> ready -> gated_out.
+    stage: str
+    # The driver's "Arrived at dock" tap.
+    arrived_at: Optional[UtcDateTime] = None
+    # The loader holding the pick lock, while it is live.
+    picked_by: Optional[str] = None
+    picked_at: Optional[UtcDateTime] = None
     vehicle: VehicleRead
     capacity: CapacityRead
     plan: Optional[PlanRevisionRead] = None
@@ -370,7 +379,8 @@ class OrderActionRequest(BaseModel):
 
     client_action_id: UUID
     plan_version: int
-    loader_session_id: Optional[int] = None
+    # The loader holding the run's pick lock; their name goes on the check.
+    loader_session_id: int
 
     model_config = ConfigDict(extra="ignore")
 
@@ -381,15 +391,13 @@ class AcknowledgePlanRequest(BaseModel):
     plan_version must match the version in the path; it is carried in the body
     too so every tablet write has the same shape.
 
-    loader_session_id is who the Dispatcher sees as "received by". It is
-    optional until L2 sign-in lands; without it the acknowledgement is recorded
-    with no loader.
-    TODO(L2): make loader_session_id required once sign-in is merged.
+    loader_session_id is who the Dispatcher sees as "received by", and must
+    hold the run's pick lock.
     """
 
     client_action_id: UUID
     plan_version: int
-    loader_session_id: Optional[int] = None
+    loader_session_id: int
 
     model_config = ConfigDict(extra="ignore")
 
@@ -405,7 +413,7 @@ class FlagIssueRequest(BaseModel):
 
     client_action_id: UUID
     plan_version: int
-    loader_session_id: Optional[int] = None
+    loader_session_id: int
     run_code: str
     order_number: str
     issue_type: IssueType
@@ -422,7 +430,7 @@ class ReleaseRequest(BaseModel):
 
     client_action_id: UUID
     plan_version: int
-    loader_session_id: Optional[int] = None
+    loader_session_id: int
 
     model_config = ConfigDict(extra="ignore")
 
@@ -478,12 +486,17 @@ class LoaderUserRead(BaseModel):
 
 
 class SessionRequest(BaseModel):
-    """POST /loader/session. The PIN is checked here only."""
+    """POST /loader/session. The PIN is checked here only.
+
+    depot is the depot the tablet signs into; a loader of another depot is
+    refused. The loader's own depot decides what they see. A tablet label is
+    optional now that tablets are not tied to a dock.
+    """
 
     loader_user_id: int
     pin: str
-    # The tablet, not the loader, decides the dock: "Dock tablet 3".
-    dock_tablet_label: str
+    depot: Optional[Depot] = None
+    dock_tablet_label: Optional[str] = None
 
 
 class SessionLoaderRead(BaseModel):
@@ -500,7 +513,8 @@ class LoaderSessionRead(BaseModel):
 
     session_id: int
     loader: SessionLoaderRead
-    dock: str
+    # Always null now: a loader sees every dock of their depot.
+    dock: Optional[str] = None
     depot: str
     started_at: UtcDateTime
     ended_at: Optional[UtcDateTime] = None
@@ -531,6 +545,17 @@ class RunSummaryRead(BaseModel):
     """One queue card (RunSummary)."""
 
     code: str
+    dock: str
+    # Where the run is in the depot's day: awaiting_truck (hidden from the
+    # loader queue) -> at_dock -> loading -> ready -> gated_out.
+    stage: str
+    # The driver's "Arrived at dock" tap.
+    arrived_at: Optional[UtcDateTime] = None
+    # The loader holding the pick lock, while it is live.
+    picked_by: Optional[str] = None
+    picked_at: Optional[UtcDateTime] = None
+    # True when the signed-in loader holds it: "You're loading".
+    picked_by_me: bool = False
     vehicle_code: str
     vehicle_type: VehicleType
     temp_capability: TempCapability
@@ -560,10 +585,19 @@ class RunGroupRead(BaseModel):
     runs: List[RunSummaryRead]
 
 
-class RunQueueRead(BaseModel):
-    """GET /loader/runs?dock=."""
+class DockQueueRead(BaseModel):
+    """One dock of the depot and the runs whose truck is at it, by arrival."""
 
-    groups: List[RunGroupRead]
+    dock: str
+    dock_code: str
+    runs: List[RunSummaryRead]
+
+
+class RunQueueRead(BaseModel):
+    """GET /loader/runs: every dock of the loader's depot (or ?dock=)."""
+
+    depot: str
+    docks: List[DockQueueRead]
 
 
 class HolidayRead(BaseModel):
@@ -587,9 +621,12 @@ class ReadyCountRead(BaseModel):
 
 
 class QueueSummaryRead(BaseModel):
-    """GET /loader/summary?dock=: the queue's metric cards (QueueSummary)."""
+    """GET /loader/summary: the queue's metric cards (QueueSummary), depot-wide."""
 
-    dock: str
+    depot: str
+    # Set only when the summary was asked for one dock (?dock=).
+    dock: Optional[str] = None
+    dock_count: int
     date: date
     day_label: str
     next_holiday: Optional[HolidayRead] = None
@@ -628,7 +665,16 @@ class DispatcherLoadingRead(BaseModel):
 
     run_code: str
     status: RunStatus
-    dock: str
+    dock: str  # the dock code
+    dock_name: str
+    # Where the run is in the depot's day: awaiting_truck (hidden from the
+    # loader queue) -> at_dock -> loading -> ready -> gated_out.
+    stage: str
+    # The driver's "Arrived at dock" tap.
+    arrived_at: Optional[UtcDateTime] = None
+    # The loader holding the pick lock, while it is live.
+    picked_by: Optional[str] = None
+    picked_at: Optional[UtcDateTime] = None
     departs_at: UtcDateTime
     plan_version: int
     plan_acknowledged: bool
@@ -645,6 +691,51 @@ class DispatcherLoadingRead(BaseModel):
     released_by: Optional[LoaderRefRead] = None
     last_update_at: Optional[UtcDateTime] = None
     loading_events: List[DispatcherLoadingEventRead]
+
+
+class PickRequest(BaseModel):
+    """POST /loader/runs/{code}/pick and /unpick."""
+
+    loader_session_id: int
+    client_action_id: Optional[UUID] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class DockRead(BaseModel):
+    """GET /loader/docks: one dock of a depot."""
+
+    code: str
+    name: str
+    depot: Depot
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ArrivedRequest(BaseModel):
+    """POST /loader/dispatch-trips/{id}/arrived: only where and when; the run's
+    orders came from the dispatcher already. arrived_at is the phone's tap time
+    (a queued offline tap); never later than now."""
+
+    dock_code: str
+    arrived_at: Optional[UtcDateTime] = None
+
+
+class ArrivedRead(BaseModel):
+    dispatch_trip_id: int
+    run_code: str
+    dock: str
+    dock_code: str
+    arrived_at: UtcDateTime
+    stage: str
+    # True when the truck had already arrived: nothing changed.
+    replayed: bool
+
+
+class DockChangeRequest(BaseModel):
+    """POST /loader/dispatch-trips/{id}/dock: the dispatcher's dock."""
+
+    dock_code: str
 
 
 class DispatchTripRunRead(BaseModel):

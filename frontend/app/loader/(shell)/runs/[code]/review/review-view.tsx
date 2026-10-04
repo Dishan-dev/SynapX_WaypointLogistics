@@ -58,14 +58,14 @@ export function ReviewView({ code }: { code: string }) {
  */
 function Review({ initial }: { initial: Run }) {
   const router = useRouter();
-  const { user, dockLabel } = useLoaderShell();
+  const { user } = useLoaderShell();
   const { sync, checkConnection } = useLoaderSync();
   const { run, act, rejected, dismissRejected } = useOfflineRun(initial, user.shortName);
   const issues = useRunIssues(run.code);
   const [releasing, setReleasing] = React.useState(false);
   const [openedAt] = React.useState(() => new Date().toISOString());
 
-  const dockName = dockLabel.split(" · ").pop() ?? dockLabel;
+  const dockName = run.dock;
   const status = STATUS_PILL[run.status];
   const capacity = runCapacity(run);
   const spare = Math.max(0, run.capacity.max_volume_m3 - run.capacity.loaded_volume_m3);

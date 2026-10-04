@@ -3,7 +3,7 @@
 import * as React from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { dockLabel, userLabel } from "@/lib/loader/format";
+import { depotLabel, userLabel } from "@/lib/loader/format";
 import type { CachedQueue } from "@/lib/loader/offline/db";
 import { ISSUES_EVENT } from "@/lib/loader/offline/issues-cache";
 import { cachedQueue, QUEUE_EVENT } from "@/lib/loader/offline/queue-cache";
@@ -41,7 +41,7 @@ function useHydrated(): boolean {
 export function SessionGate({ children }: { children: React.ReactNode }) {
   const stored = useStoredSession();
   const hydrated = useHydrated();
-  const issueCount = useIssueCount(stored?.session.dock);
+  const issueCount = useIssueCount(stored?.session.depot);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -59,8 +59,8 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
   return (
     <LoaderShell
       user={user}
-      dockLabel={dockLabel(stored.session)}
-      dock={stored.session.dock}
+      depotLabel={depotLabel(stored.session)}
+      depot={stored.session.depot}
       sessionId={stored.session.session_id}
       issueCount={issueCount}
     >
@@ -71,24 +71,24 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Open issues at the dock for the Issues tab badge: the last summary this
+ * Open issues at the depot for the Issues tab badge: the last summary this
  * tablet loaded, updated whenever the queue or the Issues list loads again.
  */
-function useIssueCount(dock: string | undefined): number | undefined {
+function useIssueCount(depot: string | undefined): number | undefined {
   const [count, setCount] = React.useState<number>();
   React.useEffect(() => {
-    if (!dock) return;
+    if (!depot) return;
     let cancelled = false;
-    void cachedQueue(dock).then((cached) => {
+    void cachedQueue(depot).then((cached) => {
       if (!cancelled && cached) setCount(cached.summary.issues.count);
     });
     const onQueue = (e: Event) => {
       const loaded = (e as CustomEvent<CachedQueue>).detail;
-      if (loaded.dock === dock) setCount(loaded.summary.issues.count);
+      if (loaded.depot === depot) setCount(loaded.summary.issues.count);
     };
     const onIssues = (e: Event) => {
-      const loaded = (e as CustomEvent<{ dock: string; waiting: number }>).detail;
-      if (loaded.dock === dock) setCount(loaded.waiting);
+      const loaded = (e as CustomEvent<{ depot: string; waiting: number }>).detail;
+      if (loaded.depot === depot) setCount(loaded.waiting);
     };
     window.addEventListener(QUEUE_EVENT, onQueue);
     window.addEventListener(ISSUES_EVENT, onIssues);
@@ -97,7 +97,7 @@ function useIssueCount(dock: string | undefined): number | undefined {
       window.removeEventListener(QUEUE_EVENT, onQueue);
       window.removeEventListener(ISSUES_EVENT, onIssues);
     };
-  }, [dock]);
+  }, [depot]);
   return count;
 }
 

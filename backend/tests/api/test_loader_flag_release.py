@@ -12,6 +12,7 @@ from app.models.reference import DockTablet
 from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     build_run_021,
     loader_client,
+    strict_loader_client,
     make_loader,
 )
 
@@ -105,7 +106,7 @@ def test_a_flag_is_filed_locks_release_and_is_listed(loader_client, db_session):
     assert loader_client.get(f"{BASE}/issues", params={"dock": "3", "run": RUN}).json() == listed
 
 
-def test_the_issue_list_is_newest_first_and_needs_a_known_dock(loader_client, db_session):
+def test_the_issue_list_is_newest_first_and_needs_a_session(loader_client, strict_loader_client, db_session):
     run, _ = build_run_021(db_session)
     session = signed_in(db_session, run)
     first = flag(loader_client, session.id, order="ORD0092302").json()
@@ -114,7 +115,7 @@ def test_the_issue_list_is_newest_first_and_needs_a_known_dock(loader_client, db
     listed = loader_client.get(f"{BASE}/issues", params={"dock": "Dock 3"}).json()
 
     assert [i["id"] for i in listed] == [second["id"], first["id"]]
-    assert loader_client.get(f"{BASE}/issues").status_code == 422
+    assert strict_loader_client.get(f"{BASE}/issues").status_code == 422
     assert loader_client.get(f"{BASE}/issues", params={"dock": "9"}).status_code == 404
     assert loader_client.get(f"{BASE}/issues", params={"dock": "3", "run": "RUN-999"}).status_code == 404
 

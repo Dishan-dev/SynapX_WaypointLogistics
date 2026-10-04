@@ -283,7 +283,8 @@ def test_the_409_is_raised_by_the_service_too(trip_setup):
 # --- dispatcher_view -------------------------------------------------------------
 
 VIEW_KEYS = {
-    "run_code", "status", "dock", "departs_at", "plan_version", "plan_acknowledged",
+    "run_code", "status", "dock", "dock_name", "stage", "arrived_at", "picked_by", "picked_at",
+    "departs_at", "plan_version", "plan_acknowledged",
     "stop_count", "stops_completed", "orders_checked", "orders_total", "open_shortfalls",
     "planned_weight_kg", "loaded_weight_kg", "planned_volume_m3", "loaded_volume_m3",
     "released_at", "released_by", "last_update_at", "loading_events",

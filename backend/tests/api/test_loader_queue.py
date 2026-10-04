@@ -1,4 +1,7 @@
-"""L3: GET /loader/runs?dock= (the queue) and GET /loader/summary?dock=.
+"""L3: GET /loader/runs (the queue) and GET /loader/summary, depot-wide.
+
+The queue lists every dock of the loader's depot, each with the runs whose
+truck has arrived, in arrival order; ?dock= narrows it to one dock.
 
 Test times go through conftest's at(), which stores naive UTC: at("21:40") on
 2026-05-28 is 03:10 depot time on Fri 29 May.
@@ -7,13 +10,14 @@ from datetime import date, timedelta
 
 from app.models.delivery_run import RunStatus
 from app.models.loader_activity import ActorKind
-from app.models.reference import Brand, CalendarDay, DockType, TempCapability, VehicleType
+from app.models.reference import Brand, CalendarDay, Depot, DockType, TempCapability, VehicleType
 from app.schemas.loader import SimulatedPlanChangeRequest
 from app.services.loader_service import LoaderService
 from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     at,
     build_run_021,
     loader_client,
+    strict_loader_client,
     make_dock,
     make_issue,
     make_loader,
@@ -29,22 +33,24 @@ from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
 BASE = "/api/v1/loader"
 
 
-def queue(client, dock="Dock 3", **params):
-    return client.get(f"{BASE}/runs", params={"dock": dock, **params})
+def queue(client, dock=None, **params):
+    return client.get(f"{BASE}/runs", params={**({"dock": dock} if dock else {}), **params})
 
 
-def summary(client, dock="Dock 3"):
-    return client.get(f"{BASE}/summary", params={"dock": dock})
+def summary(client, dock=None):
+    return client.get(f"{BASE}/summary", params={"dock": dock} if dock else {})
 
 
 def cards(body):
-    return {card["code"]: card for group in body["groups"] for card in group["runs"]}
+    return {card["code"]: card for group in body["docks"] for card in group["runs"]}
 
 
 def other_run(db, dock, code, departs, brand=Brand.FRESH, wave="night", status=RunStatus.NOT_STARTED,
-              vehicle=None, trip_number=1):
+              vehicle=None, trip_number=1, arrived="01:00"):
     vehicle = vehicle or make_vehicle(db, code=f"V-{code}")
-    run = make_run(db, vehicle, dock, code=code, status=status, plan_version=1, departs=departs)
+    run = make_run(
+        db, vehicle, dock, code=code, status=status, plan_version=1, departs=departs, arrived=arrived
+    )
     run.brand, run.wave, run.trip_number = brand, wave, trip_number
     db.flush()
     return run
@@ -66,40 +72,51 @@ def test_cards_match_the_run_read_they_open(loader_client, db_session):
     assert (card["vehicle_code"], card["vehicle_type"], card["temp_capability"]) == ("VEH001", "truck", "reefer")
     assert card["chips"] == ["Truck", "Reefer", "5,510 kg · 26.4 m³"]
     assert card["loader"] == "Saman J."  # who checked last; nothing logged yet
+    assert (card["dock"], card["stage"], card["arrived_at"]) == ("Dock 3", "loading", "2026-05-28T01:00:00Z")
+    assert (card["picked_by"], card["picked_by_me"]) == (None, False)
     assert card["plan_updated_at"] == "2026-05-28T21:40:00Z"
     assert (card["released_at"], card["released_by"], card["pre_stage_note"], card["alert"]) == (None, None, None, None)
 
 
-def test_groups_by_brand_and_wave_in_departure_order(loader_client, db_session):
-    run, _ = build_run_021(db_session)  # fresh, night, 03:30
+def test_groups_every_dock_of_the_depot_in_arrival_order(loader_client, db_session):
+    run, _ = build_run_021(db_session)  # arrived 01:00
     dock = run.dock
-    other_run(db_session, dock, "RUN-031", "06:00", brand=Brand.STYLE, wave="day")
-    other_run(db_session, dock, "RUN-029", "05:20")
-    other_run(db_session, dock, "RUN-033", "06:30", brand=Brand.TECH, wave="day")
+    dock4 = make_dock(db_session, "DOCK4", "Dock 4")
+    make_dock(db_session, "DOCK5", "Dock 5")  # no truck in
+    other_run(db_session, dock, "RUN-031", "06:00", brand=Brand.STYLE, wave="day", arrived="00:40")
+    other_run(db_session, dock, "RUN-029", "05:20", arrived="01:20")
+    other_run(db_session, dock4, "RUN-040", "02:00")
     other_run(db_session, dock, "RUN-020", "01:00", status=RunStatus.GATED_OUT)
-    other_run(db_session, make_dock(db_session, "DOCK4", "Dock 4"), "RUN-040", "02:00")
+    other_run(db_session, dock, "RUN-050", "04:00", arrived=None)  # truck not here yet
+    kandy = make_dock(db_session, "KDOCK1", "Kandy Dock 1", depot=Depot.KANDY)
+    other_run(db_session, kandy, "RUN-060", "02:00")
     db_session.flush()
 
     body = queue(loader_client).json()
 
-    assert [(g["label"], g["brand"], g["wave"]) for g in body["groups"]] == [
-        ("Fresh · night wave", "fresh", "night"),
-        ("Style · day wave", "style", "day"),
-        ("Tech · day wave", "tech", "day"),
+    assert body["depot"] == "peliyagoda"
+    assert [(d["dock"], d["dock_code"]) for d in body["docks"]] == [
+        ("Dock 3", "DOCK3"), ("Dock 4", "DOCK4"), ("Dock 5", "DOCK5"),
     ]
-    assert [c["code"] for c in body["groups"][0]["runs"]] == ["RUN-021", "RUN-029"]
+    assert [c["code"] for c in body["docks"][0]["runs"]] == ["RUN-031", "RUN-021", "RUN-029"]
+    assert [c["code"] for c in body["docks"][1]["runs"]] == ["RUN-040"]
+    assert body["docks"][2]["runs"] == []
     assert "RUN-020" not in cards(body)  # gated out: the driver's now
-    assert "RUN-040" not in cards(body)  # another dock
+    assert "RUN-050" not in cards(body)  # awaiting its truck: hidden
+    assert "RUN-060" not in cards(body)  # another depot
 
 
 def test_brand_filters_and_dock_accepts_number_code_or_name(loader_client, db_session):
     run, _ = build_run_021(db_session)
     other_run(db_session, run.dock, "RUN-031", "06:00", brand=Brand.STYLE, wave="day")
+    other_run(db_session, make_dock(db_session, "DOCK4", "Dock 4"), "RUN-040", "02:00")
     db_session.flush()
 
     assert list(cards(queue(loader_client, brand="style").json())) == ["RUN-031"]
     for dock in ("3", "DOCK3", "Dock 3"):
-        assert set(cards(queue(loader_client, dock=dock).json())) == {"RUN-021", "RUN-031"}
+        body = queue(loader_client, dock=dock).json()
+        assert [d["dock"] for d in body["docks"]] == ["Dock 3"]
+        assert set(cards(body)) == {"RUN-021", "RUN-031"}
 
 
 def test_an_unread_plan_puts_the_plan_change_alert_on_the_card(loader_client, db_session):
@@ -195,14 +212,16 @@ def test_the_third_chip_is_van_only_then_reload_then_capacity(loader_client, db_
     assert body["RUN-029"]["stop_count"] == 0 and body["RUN-029"]["orders_total"] == 0
 
 
-def test_the_queue_needs_a_known_dock(loader_client, db_session):
+def test_the_queue_needs_a_session_and_a_dock_of_the_depot(loader_client, strict_loader_client, db_session):
     make_dock(db_session)
+    make_dock(db_session, "KDOCK1", "Kandy Dock 1", depot=Depot.KANDY)
     db_session.flush()
 
-    assert loader_client.get(f"{BASE}/runs").status_code == 422
+    assert strict_loader_client.get(f"{BASE}/runs").status_code == 422
     missing = queue(loader_client, dock="9")
     assert missing.status_code == 404
     assert missing.json()["detail"]["entity"] == "Dock"
+    assert queue(loader_client, dock="KDOCK1").status_code == 404  # a Kandy dock
 
 
 # --- GET /loader/summary -----------------------------------------------------------
@@ -232,7 +251,9 @@ def test_summary_counts_the_same_runs_as_the_queue(loader_client, db_session):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body == {
-        "dock": "Dock 3",
+        "depot": "peliyagoda",
+        "dock": None,
+        "dock_count": 1,
         "date": "2026-05-28",  # 03:30 UTC departure is 09:00 depot time the same day
         "day_label": "Thu 28 May",
         "next_holiday": {"date": "2026-05-30", "label": "Poson Sat 30 May"},
@@ -257,6 +278,11 @@ def test_summary_of_an_empty_dock(loader_client, db_session):
     assert body["plan_updated_at"] is None
 
 
-def test_summary_needs_a_known_dock(loader_client, db_session):
-    assert loader_client.get(f"{BASE}/summary").status_code == 422
+def test_summary_needs_a_session_and_a_known_dock(loader_client, strict_loader_client, db_session):
+    make_dock(db_session)
+    db_session.flush()
+
+    assert strict_loader_client.get(f"{BASE}/summary").status_code == 422
     assert summary(loader_client, dock="9").status_code == 404
+    one = summary(loader_client, dock="3").json()
+    assert (one["dock"], one["dock_count"]) == ("Dock 3", 1)

@@ -228,6 +228,29 @@ checklist, with no `✕` and no tap-outside.
 
 ## Built — live on `loader`
 
+### Depot queue, truck arrival and the pick lock (Oct 2026)
+
+This supersedes the per-dock wording further down (`?dock=` required, "Dock tablet 3", the queue grouped by brand and wave).
+
+- **Loaders belong to a depot** (`loader_users.depot`) and see every dock of it. `GET /loader/users?depot=peliyagoda` (required) lists one depot's loaders. `POST /loader/session` takes `{loader_user_id, pin, depot}`; `dock_tablet_label` is optional. A loader with no depot gets **403 `LOADER_NO_DEPOT`**, and one from another depot gets **403 `LOADER_OTHER_DEPOT`**. The session's `dock` is always `null`.
+- **Tablet reads carry the session** in the `X-Loader-Session` header: `GET /loader/runs`, `/summary`, `/runs/{code}`, `/runs/{code}/activity`, `/activity`, `/issues` and `/issues/{id}`. Without the header the response is 422. An ended session gets **403 `LOADER_SESSION_ENDED`**, and anything at another depot gets **404**. Each read marks the session as seen.
+- **Hidden until arrival.** The run (plan v1, built from the dispatcher's trip) exists from dispatch but is not in the queue until `POST /loader/dispatch-trips/{id}/arrived` (driver only) with `{dock_code, arrived_at?}`.
+  - It only records time and dock. It is idempotent: the first arrival wins and a repeat returns `replayed: true`.
+  - Another dock at the same depot moves the run there and is logged as "Arrived at Dock 2 (planned Dock 3)". Another depot's dock is **422 `DOCK_NOT_AT_DEPOT`**. Anyone but the trip's driver gets **403**.
+  - Dispatcher plan changes before arrival still apply to the hidden run.
+- **Stage** (derived; `RunStatus` is unchanged): `awaiting_truck` → `at_dock` → `loading` → `ready` → `gated_out`. It is on the card, the run read and the dispatcher's `loading` view, together with `arrived_at`, `picked_by` and `picked_at`. Cards also carry `dock` and `picked_by_me`.
+- **`GET /loader/runs`** returns `{depot, docks: [{dock, dock_code, runs}]}`: every dock of the depot (empty ones too), with runs in arrival order. `?dock=` and `?brand=` are optional filters. **`GET /loader/summary`** returns `{depot, dock, dock_count, ...}`, depot-wide, or for one dock with `?dock=`.
+- **Pick lock.** `POST /loader/runs/{code}/pick` and `/unpick` take `{loader_session_id}`.
+  - While another loader holds the run, every tablet write (check, uncheck, recheck, unload, acknowledge, flag, release, undo), the open (`GET /runs/{code}`) and pick/unpick get **409 `RUN_PICKED_BY_OTHER`** with `picked_by`.
+  - The lock is live while the holding session is open and was seen in the last 11 minutes. It lifts on sign-out, switch user, idle timeout, or `unpick`.
+  - A write on a run nobody holds gets **409 `RUN_NOT_PICKED`**. The exception is the loader who picked it last, so their offline taps still sync after an idle sign-out.
+  - Replays (a known `client_action_id`) are answered before the lock is checked.
+  - `loader_session_id` is required on every write (422 without it).
+- **Docks.** `GET /loader/docks?depot=` lists a depot's docks. `POST /loader/dispatch-trips/{id}/dock` with `{dock_code}` lets the dispatcher move the run before the truck arrives: **409 `TRUCK_ALREADY_ARRIVED`** after arrival, **422 `DOCK_NOT_AT_DEPOT`** for another depot's dock.
+- **Release notification.** Once the 10 s + 2 s undo window has closed, the trip's driver and the depot's dispatcher each get one in-app notification of type `run_released`.
+  - An undone release sends nothing. A reopen followed by a new release sends it again.
+  - Read them with `GET /notifications/driver` (driver token) and `GET /notifications/dispatcher` (dispatcher depot scope). Mark them read with `PATCH /notifications/driver/{id}/read` and `PATCH /notifications/dispatcher/{id}/read`.
+
 ### `GET /loader/runs/{code}` — L4 checklist
 
 `stops` is ordered by **`load_position`, not `stop_sequence`**. The loader works

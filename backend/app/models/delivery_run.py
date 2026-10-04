@@ -90,11 +90,29 @@ class DeliveryRun(Base):
     # The dispatcher's trip this run was built from (docs/loader/INTEGRATION_DESIGN.md).
     dispatch_trip_id = Column(Integer, ForeignKey("dispatch_trips.id"), nullable=True)
 
+    # The driver's "Arrived at dock" tap. Until then the run is built (plan v1
+    # from the dispatcher) but hidden from the loader queue. On arrival dock_id
+    # follows the truck, so arrived_dock_id is where it actually pulled in.
+    arrived_at = Column(DateTime, nullable=True)
+    arrived_dock_id = Column(Integer, ForeignKey("docks.id"), nullable=True)
+
+    # The pick lock: one loader works a run at a time. Live while that
+    # session is open and recently seen (LoaderService.pick_holder).
+    picked_by_id = Column(Integer, ForeignKey("loader_users.id"), nullable=True)
+    picked_session_id = Column(Integer, ForeignKey("loader_sessions.id"), nullable=True)
+    picked_at = Column(DateTime, nullable=True)
+
+    # When the driver and dispatcher were told about the current release.
+    release_notified_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     vehicle = relationship("Vehicle")
-    dock = relationship("Dock")
-    released_by = relationship("LoaderUser")
+    dock = relationship("Dock", foreign_keys=[dock_id])
+    arrived_dock = relationship("Dock", foreign_keys=[arrived_dock_id])
+    released_by = relationship("LoaderUser", foreign_keys=[released_by_id])
+    picked_by = relationship("LoaderUser", foreign_keys=[picked_by_id])
+    picked_session = relationship("LoaderSession", foreign_keys=[picked_session_id])
     stops = relationship(
         "RunStop",
         back_populates="run",

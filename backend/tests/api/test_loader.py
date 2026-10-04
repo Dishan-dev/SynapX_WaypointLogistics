@@ -3,11 +3,13 @@ import importlib
 
 from app.models.delivery_run import RunStatus
 from app.models.loader_activity import ActorKind
+from app.models.reference import Depot
 from app.services.loader_service import LoaderService
 from tests.conftest_loader import (  # noqa: F401  (loader_client is a fixture)
     at,
     build_run_021,
     loader_client,
+    strict_loader_client,
     make_dock,
     make_issue,
     make_loader,
@@ -327,20 +329,20 @@ def test_dock_activity_404s_for_an_unknown_dock(loader_client, db_session):
     assert response.json()["detail"]["entity"] == "Dock"
 
 
-def test_dock_activity_404s_when_the_run_is_at_another_dock(loader_client, db_session):
+def test_activity_404s_when_the_run_is_at_another_depot(loader_client, db_session):
     run, _ = build_run_021(db_session)
-    other_dock = make_dock(db_session, code="DOCK4", name="Dock 4")
-    make_run(db_session, run.vehicle, other_dock, code="RUN-099")
+    kandy = make_dock(db_session, code="KDOCK1", name="Kandy Dock 1", depot=Depot.KANDY)
+    make_run(db_session, run.vehicle, kandy, code="RUN-099")
     db_session.flush()
 
-    response = loader_client.get(f"{BASE}/activity?dock=3&run_code=RUN-099")
+    response = loader_client.get(f"{BASE}/activity?run_code=RUN-099")
 
     assert response.status_code == 404
     assert response.json()["detail"]["entity"] == "DeliveryRun"
 
 
-def test_dock_activity_requires_a_dock(loader_client, db_session):
-    response = loader_client.get(f"{BASE}/activity")
+def test_activity_needs_a_signed_in_tablet(strict_loader_client, db_session):
+    response = strict_loader_client.get(f"{BASE}/activity")
 
     assert response.status_code == 422
 
@@ -390,6 +392,11 @@ def test_dev_endpoints_are_not_mounted_in_production(monkeypatch):
             "/runs",
             "/summary",
             "/runs/{code}",
+            "/runs/{code}/pick",
+            "/runs/{code}/unpick",
+            "/docks",
+            "/dispatch-trips/{trip_id}/arrived",
+            "/dispatch-trips/{trip_id}/dock",
             "/runs/{code}/activity",
             "/activity",
             "/issues/{issue_id}",

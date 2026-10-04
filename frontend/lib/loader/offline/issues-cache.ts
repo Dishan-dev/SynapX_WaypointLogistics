@@ -1,4 +1,4 @@
-// The Issues tab's list: GET /loader/issues for the dock, with this tablet's
+// The Issues tab's list: GET /loader/issues for the depot, with this tablet's
 // last copy for offline use, plus flags still in the outbox (not sent yet, or
 // refused), which have no server id.
 
@@ -8,7 +8,7 @@ import { NetworkError, type Transport } from "./transport";
 
 const KEY_PREFIX = "waypoint-loader-issues:";
 
-/** Fired on window after a fresh list loads; detail is { dock, waiting }, for the Issues badge. */
+/** Fired on window after a fresh list loads; detail is { depot, waiting }, for the Issues badge. */
 export const ISSUES_EVENT = "waypoint-loader-issues";
 
 export interface LoadedIssues {
@@ -17,40 +17,40 @@ export interface LoadedIssues {
   source: "server" | "cache";
 }
 
-function readCache(dock: string): LoadedIssues | undefined {
+function readCache(depot: string): LoadedIssues | undefined {
   try {
-    const raw = window.localStorage.getItem(KEY_PREFIX + dock);
+    const raw = window.localStorage.getItem(KEY_PREFIX + depot);
     return raw ? { ...(JSON.parse(raw) as Omit<LoadedIssues, "source">), source: "cache" } : undefined;
   } catch {
     return undefined;
   }
 }
 
-function writeCache(dock: string, entry: Omit<LoadedIssues, "source">) {
+function writeCache(depot: string, entry: Omit<LoadedIssues, "source">) {
   try {
-    window.localStorage.setItem(KEY_PREFIX + dock, JSON.stringify(entry));
+    window.localStorage.setItem(KEY_PREFIX + depot, JSON.stringify(entry));
   } catch {
     // Storage blocked: the list still shows, it just is not kept.
   }
 }
 
-/** This tablet's last copy of the dock's issues. */
-export function cachedIssues(dock: string): LoadedIssues | undefined {
-  return readCache(dock);
+/** This tablet's last copy of the depot's issues. */
+export function cachedIssues(depot: string): LoadedIssues | undefined {
+  return readCache(depot);
 }
 
-/** The dock's issues from the server, or the last copy when it cannot be reached. */
-export async function loadIssues(transport: Transport, dock: string): Promise<LoadedIssues | undefined> {
+/** The depot's issues from the server, or the last copy when it cannot be reached. */
+export async function loadIssues(transport: Transport, depot: string): Promise<LoadedIssues | undefined> {
   try {
-    const issues = await transport.fetchIssues({ dock });
+    const issues = await transport.fetchIssues({});
     const entry = { issues, fetchedAt: new Date().toISOString() };
-    writeCache(dock, entry);
+    writeCache(depot, entry);
     const waiting = issues.filter((i) => i.status === "sent" || i.status === "seen").length;
-    window.dispatchEvent(new CustomEvent(ISSUES_EVENT, { detail: { dock, waiting } }));
+    window.dispatchEvent(new CustomEvent(ISSUES_EVENT, { detail: { depot, waiting } }));
     return { ...entry, source: "server" };
   } catch (err) {
     if (!(err instanceof NetworkError)) throw err;
-    return readCache(dock);
+    return readCache(depot);
   }
 }
 
